@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  CSSProperties,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import type { BlockKind, Placement } from "./model";
 import { BLOCK_KINDS, BLOCK_LABELS, COLUMNS, TRACKS, canPlace } from "./model";
 import { useExperimentStore } from "./store";
 import { KIND_DURATION_MS, TimelineSession } from "./execution";
+import { WORKSPACES } from "./workspaces";
 import type {
   BlockState,
   TimelinePhase,
@@ -39,6 +44,12 @@ interface CreationState {
   readonly current: number;
 }
 
+interface ContextMenuState {
+  readonly blockId: string;
+  readonly x: number;
+  readonly y: number;
+}
+
 const gridVariables = {
   "--cell-width": `${CELL_WIDTH}px`,
   "--track-height": `${TRACK_HEIGHT}px`,
@@ -49,13 +60,18 @@ export function App() {
   const selectedKind = useExperimentStore((state) => state.selectedKind);
   const selectedId = useExperimentStore((state) => state.selectedId);
   const setKind = useExperimentStore((state) => state.setKind);
+  const setBlockKind = useExperimentStore((state) => state.setBlockKind);
   const create = useExperimentStore((state) => state.create);
   const remove = useExperimentStore((state) => state.remove);
   const clear = useExperimentStore((state) => state.clear);
+  const select = useExperimentStore((state) => state.select);
   const setCooperativeSkip = useExperimentStore(
     (state) => state.setCooperativeSkip,
   );
+  const workspace = useExperimentStore((state) => state.workspace);
+  const setWorkspace = useExperimentStore((state) => state.setWorkspace);
   const [creation, setCreation] = useState<CreationState | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [session, setSession] = useState<TimelineSession | null>(null);
   const [snapshot, setSnapshot] = useState<TimelineSnapshot | null>(null);
   const [activity, setActivity] = useState<string | null>(null);
@@ -64,6 +80,7 @@ export function App() {
   const editable = session === null;
   const phase: TimelinePhase = snapshot?.phase ?? "idle";
   const running = phase === "running";
+  const isStaging = workspace === "staging";
 
   useEffect(() => {
     return () => {
@@ -73,7 +90,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!editable) {
+    if (!editable || !isStaging) {
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -89,7 +106,33 @@ export function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [editable]);
+  }, [editable, isStaging]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+        useExperimentStore.getState().select(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+    const close = () => setContextMenu(null);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [contextMenu]);
 
   const runBlocks = useMemo(
     () => new Map((snapshot?.blocks ?? []).map((block) => [block.id, block])),
@@ -104,6 +147,9 @@ export function App() {
   });
 
   const selected = blocks.find((block) => block.id === selectedId) ?? null;
+  const menuBlock = contextMenu
+    ? (blocks.find((block) => block.id === contextMenu.blockId) ?? null)
+    : null;
 
   const blocksById = useMemo(
     () => new Map(blocks.map((block) => [block.id, block])),
@@ -198,6 +244,26 @@ export function App() {
     }
   };
 
+  const openBlockContextMenu = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    block: Placement,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    select(block.id);
+    if (!editable) {
+      setContextMenu(null);
+      return;
+    }
+    setContextMenu({ blockId: block.id, x: event.clientX, y: event.clientY });
+  };
+
+  const handleGridContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setContextMenu(null);
+    select(null);
+  };
+
   const previewStart = creation ? Math.min(creation.anchor, creation.current) : 0;
   const previewLength = creation
     ? Math.abs(creation.current - creation.anchor) + 1
@@ -213,29 +279,56 @@ export function App() {
       length: previewLength,
     });
 
-  const hint = editable
-    ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its right edge to stretch it. Delete removes the selected block."
-    : running
-      ? "Running. Dialogue and animation effects appear in the stage below the timeline. Press OK to finish a dialogue. Skip delivers a skip request to running blocks; the barrier still waits for them to complete."
-      : "Timeline ended. Reset to edit and run again.";
+  const hint = isStaging
+    ? editable
+      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its right edge to stretch it. Click a block to select it; right-click a block for actions. Delete removes the selected block."
+      : running
+        ? "Running. Dialogue and animation effects appear in the stage below the timeline. Press OK to finish a dialogue. Skip delivers a skip request to running blocks; the barrier still waits for them to complete."
+        : "Timeline ended. Reset to edit and run again."
+    : editable
+      ? "Preview gives the stage the workspace. Switch to Staging to place or edit blocks, or press Run to play the arrangement."
+      : running
+        ? "Running. The status bar shows logical time and the blocks blocking it; switching workspaces does not interrupt the run."
+        : "Timeline ended. Reset to run again, or switch to Staging to edit.";
 
   return (
     <main className="app" style={gridVariables}>
+      <nav className="workspace-bar" role="tablist" aria-label="Workspaces">
+        {WORKSPACES.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            aria-selected={workspace === entry.id}
+            className={`workspace-tab${workspace === entry.id ? " is-active" : ""}`}
+            onClick={() => {
+              setContextMenu(null);
+              setCreation(null);
+              setWorkspace(entry.id);
+            }}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </nav>
+
       <header className="toolbar">
-        <div className="palette" role="group" aria-label="Block kinds">
-          {BLOCK_KINDS.map((kind) => (
-            <button
-              type="button"
-              key={kind}
-              className={`palette-button palette-${kind}${kind === selectedKind ? " is-active" : ""}`}
-              aria-pressed={kind === selectedKind}
-              disabled={!editable}
-              onClick={() => setKind(kind)}
-            >
-              {BLOCK_LABELS[kind]}
-            </button>
-          ))}
-        </div>
+        {isStaging ? (
+          <div className="palette" role="group" aria-label="Block kinds">
+            {BLOCK_KINDS.map((kind) => (
+              <button
+                type="button"
+                key={kind}
+                className={`palette-button palette-${kind}${kind === selectedKind ? " is-active" : ""}`}
+                aria-pressed={kind === selectedKind}
+                disabled={!editable}
+                onClick={() => setKind(kind)}
+              >
+                {BLOCK_LABELS[kind]}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="run-controls">
           <button
             type="button"
@@ -256,89 +349,97 @@ export function App() {
             Reset
           </button>
         </div>
-        <div className="toolbar-actions">
-          <button
-            type="button"
-            onClick={() => selectedId && remove(selectedId)}
-            disabled={!editable || !selectedId}
-          >
-            Delete selected
-          </button>
-          <button
-            type="button"
-            onClick={clear}
-            disabled={!editable || blocks.length === 0}
-          >
-            Clear all
-          </button>
-        </div>
+        {isStaging ? (
+          <div className="toolbar-actions">
+            <button
+              type="button"
+              onClick={() => selectedId && remove(selectedId)}
+              disabled={!editable || !selectedId}
+            >
+              Delete selected
+            </button>
+            <button
+              type="button"
+              onClick={clear}
+              disabled={!editable || blocks.length === 0}
+            >
+              Clear all
+            </button>
+          </div>
+        ) : null}
       </header>
 
       <p className="hint">{hint}</p>
 
-      <div className="table">
-        <div className="track-labels">
-          <div className="ruler-spacer" />
-          {TRACKS.map((track) => (
-            <div key={track.id} className="track-label" title={track.label}>
-              {track.label}
-            </div>
-          ))}
-        </div>
-        <div className="grid-scroll">
-          <div className="grid-content">
-            <div className="ruler">
-              {Array.from({ length: COLUMNS }, (_, column) => (
-                <span
-                  key={column}
-                  className={`ruler-cell${running && snapshot?.time === column ? " is-current" : ""}`}
-                >
-                  {column}
-                </span>
-              ))}
-            </div>
-            <div className="tracks-area">
-              {TRACKS.map((track) => (
-                <div
-                  key={track.id}
-                  className="track-row"
-                  onPointerDown={(event) => handleRowPointerDown(event, track.id)}
-                  onPointerMove={handleRowPointerMove}
-                  onPointerUp={finishCreation}
-                  onPointerCancel={cancelCreation}
-                />
-              ))}
-              <div className="block-layer">
-                {blocks.map((block) => (
-                  <BlockView
-                    key={block.id}
-                    block={block}
-                    selected={block.id === selectedId}
-                    editable={editable}
-                    state={runBlocks.get(block.id)?.state}
-                    blocking={blockingIds.has(block.id)}
+      {isStaging ? (
+        <div className="table">
+          <div className="track-labels">
+            <div className="ruler-spacer" />
+            {TRACKS.map((track) => (
+              <div key={track.id} className="track-label" title={track.label}>
+                {track.label}
+              </div>
+            ))}
+          </div>
+          <div className="grid-scroll">
+            <div className="grid-content">
+              <div className="ruler">
+                {Array.from({ length: COLUMNS }, (_, column) => (
+                  <span
+                    key={column}
+                    className={`ruler-cell${running && snapshot?.time === column ? " is-current" : ""}`}
+                  >
+                    {column}
+                  </span>
+                ))}
+              </div>
+              <div className="tracks-area" onContextMenu={handleGridContextMenu}>
+                {TRACKS.map((track) => (
+                  <div
+                    key={track.id}
+                    className="track-row"
+                    onPointerDown={(event) => handleRowPointerDown(event, track.id)}
+                    onPointerMove={handleRowPointerMove}
+                    onPointerUp={finishCreation}
+                    onPointerCancel={cancelCreation}
                   />
                 ))}
-                {creation ? (
-                  <div
-                    className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
-                    style={{
-                      left: previewStart * CELL_WIDTH + 3,
-                      top: previewTrackIndex * TRACK_HEIGHT + 3,
-                      width: previewLength * CELL_WIDTH - 6,
-                      height: TRACK_HEIGHT - 6,
-                    }}
-                  >
-                    <span className="block-label">{BLOCK_LABELS[creation.kind]}</span>
-                  </div>
-                ) : null}
+                <div className="block-layer">
+                  {blocks.map((block) => (
+                    <BlockView
+                      key={block.id}
+                      block={block}
+                      selected={block.id === selectedId}
+                      editable={editable}
+                      state={runBlocks.get(block.id)?.state}
+                      blocking={blockingIds.has(block.id)}
+                      onContextMenu={(event) => openBlockContextMenu(event, block)}
+                    />
+                  ))}
+                  {creation ? (
+                    <div
+                      className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
+                      style={{
+                        left: previewStart * CELL_WIDTH + 3,
+                        top: previewTrackIndex * TRACK_HEIGHT + 3,
+                        width: previewLength * CELL_WIDTH - 6,
+                        height: TRACK_HEIGHT - 6,
+                      }}
+                    >
+                      <span className="block-label">{BLOCK_LABELS[creation.kind]}</span>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : null}
 
-      <section className="stage" aria-label="Stage below the timeline">
+      <section
+        className={`stage${isStaging ? "" : " is-expanded"}`}
+        aria-label="Stage"
+      >
         <div className="stage-heading">Stage</div>
         <div className="stage-content">
           {runningDialogues.map((block) => (
@@ -380,30 +481,32 @@ export function App() {
       </section>
 
       <footer className="status">
-        <div className="status-selection">
-          {selected ? (
-            <>
-              Selected <strong>{BLOCK_LABELS[selected.kind]}</strong> on{" "}
-              {TRACKS.find((track) => track.id === selected.trackId)?.label ??
-                selected.trackId}{" "}
-              at t={selected.start}–{selected.start + selected.length} (
-              {selected.length} {selected.length === 1 ? "cell" : "cells"})
-              <label className="coop-toggle">
-                <input
-                  type="checkbox"
-                  checked={selected.cooperativeSkip}
-                  disabled={!editable}
-                  onChange={(event) =>
-                    setCooperativeSkip(selected.id, event.target.checked)
-                  }
-                />
-                Cooperative skip
-              </label>
-            </>
-          ) : (
-            "Nothing selected"
-          )}
-        </div>
+        {isStaging ? (
+          <div className="status-selection">
+            {selected ? (
+              <>
+                Selected <strong>{BLOCK_LABELS[selected.kind]}</strong> on{" "}
+                {TRACKS.find((track) => track.id === selected.trackId)?.label ??
+                  selected.trackId}{" "}
+                at t={selected.start}–{selected.start + selected.length} (
+                {selected.length} {selected.length === 1 ? "cell" : "cells"})
+                <label className="coop-toggle">
+                  <input
+                    type="checkbox"
+                    checked={selected.cooperativeSkip}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      setCooperativeSkip(selected.id, event.target.checked)
+                    }
+                  />
+                  Cooperative skip
+                </label>
+              </>
+            ) : (
+              "Nothing selected"
+            )}
+          </div>
+        ) : null}
         <div className={`status-run status-${phase}`}>
           {snapshot ? (
             <>
@@ -419,6 +522,73 @@ export function App() {
         </div>
         <span className="status-count">{blocks.length} blocks</span>
       </footer>
+      {contextMenu && menuBlock ? (
+        <div
+          className="context-menu"
+          role="menu"
+          aria-label={`Actions for ${BLOCK_LABELS[menuBlock.kind]} at ${menuBlock.start}`}
+          style={{
+            left: clamp(contextMenu.x, 8, window.innerWidth - 228),
+            top: clamp(contextMenu.y, 8, window.innerHeight - 324),
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="context-menu-title">
+            {BLOCK_LABELS[menuBlock.kind]} at t={menuBlock.start}–
+            {menuBlock.start + menuBlock.length}
+          </div>
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={menuBlock.cooperativeSkip}
+            className="context-menu-item"
+            onClick={() => {
+              setCooperativeSkip(menuBlock.id, !menuBlock.cooperativeSkip);
+              setContextMenu(null);
+            }}
+          >
+            <span className="context-menu-check">
+              {menuBlock.cooperativeSkip ? "✓" : ""}
+            </span>
+            Cooperative skip
+          </button>
+          <div className="context-menu-separator" role="separator" />
+          <div className="context-menu-label">Change kind</div>
+          {BLOCK_KINDS.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              role="menuitemradio"
+              aria-checked={menuBlock.kind === kind}
+              className="context-menu-item"
+              onClick={() => {
+                setBlockKind(menuBlock.id, kind);
+                setContextMenu(null);
+              }}
+            >
+              <span className="context-menu-check">
+                {menuBlock.kind === kind ? "✓" : ""}
+              </span>
+              <span className={`context-menu-swatch palette-${kind}`} />
+              {BLOCK_LABELS[kind]}
+            </button>
+          ))}
+          <div className="context-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item is-danger"
+            onClick={() => {
+              remove(menuBlock.id);
+              setContextMenu(null);
+            }}
+          >
+            <span className="context-menu-check" />
+            Delete
+          </button>
+        </div>
+      ) : null}
       {activity ? <p className="activity">{activity}</p> : null}
     </main>
   );
@@ -430,12 +600,14 @@ function BlockView({
   editable,
   state,
   blocking,
+  onContextMenu,
 }: {
   block: Placement;
   selected: boolean;
   editable: boolean;
   state: BlockState | undefined;
   blocking: boolean;
+  onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => void;
 }) {
   const move = useExperimentStore((store) => store.move);
   const resize = useExperimentStore((store) => store.resize);
@@ -451,8 +623,8 @@ function BlockView({
     }
     event.stopPropagation();
     event.preventDefault();
+    select(block.id);
     if (!editable) {
-      select(block.id);
       return;
     }
     const target = event.target as HTMLElement;
@@ -522,6 +694,7 @@ function BlockView({
         height: TRACK_HEIGHT - 6,
       }}
       title={block.cooperativeSkip ? "Cooperative skip" : undefined}
+      onContextMenu={onContextMenu}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={finishDrag}

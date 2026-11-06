@@ -12,6 +12,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   messages to the UI.
 - The UI renders engine snapshots and sends commands (`start`, `requestSkip`,
   `advanceDialogue`) to the session. It does not advance logical time itself.
+- Workspaces are preset layouts selected in a top tab bar. Staging shows the
+  palette, grid, stage, and selection status. Preview hides the grid and the
+  editing controls and gives the stage the available space. The workspace is
+  UI state; the document, selection, and running session are shared.
 - Per-kind execution, for observation only:
   - Dialogue shows a dialog with the text "lazy dog jumps ..." and an OK button
     in the stage below the timeline. Pressing OK completes the block.
@@ -43,7 +47,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 - `pnpm build:1b`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
-- Pending: the User must run `pnpm dev:1b` and judge the integration visually.
+- `pnpm typecheck`, `pnpm test` (59 tests), and `pnpm build:1b` pass with the
+  workspace tabs.
+- Pending: the User must run `pnpm dev:1b` and judge the integration and the
+  workspace tabs visually.
 
 ## What Was Decided
 
@@ -64,6 +71,19 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 7. Effects produced by running blocks are rendered in a stage area below the
    timeline, not as overlays, so the grid and the blocking state stay visible
    while a dialogue waits for OK.
+8. Selection is single-block. Pressing a block selects it, including the start
+   of a move or stretch; Escape or a right-click on empty grid clears it. The
+   selection is shown in the status bar.
+9. Right-clicking a block opens a context menu with the block's cooperative
+   skip toggle, its kind, and Delete. The menu is only available while editing;
+   during a run a right-click selects the block but does not open editing
+   actions.
+10. Workspaces are view-layer layout presets over the same store and session,
+    selected at the top tab bar. The active workspace is UI state, not document
+    state: switching does not change placements, selection, logical time, or the
+    running session. Staging is the editing layout; Preview hides the grid and
+    editing controls and expands the stage. The Preview workspace is where the
+    PixiJS game preview can live later.
 
 ## Carry-Over
 
@@ -72,3 +92,7 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 - How a failed block should be surfaced; the current UI has no way to make one
   fail.
 - Whether editing should remain possible while a run is paused or rewound.
+- Per-workspace view state (scroll position, zoom, panel widths) and whether the
+  active workspace should persist across reloads.
+- Which additional workspaces are justified once more views exist (PixiJS
+  preview, slots and wires, phase editing), and whether tabs confuse beginners.

@@ -2,11 +2,13 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { BlockKind, Placement } from "./model";
 import { canPlace } from "./model";
+import type { WorkspaceId } from "./workspaces";
 
 interface ExperimentState {
   blocks: Placement[];
   selectedKind: BlockKind;
   selectedId: string | null;
+  workspace: WorkspaceId;
   create: (trackId: string, kind: BlockKind, start: number, length: number) => void;
   move: (id: string, trackId: string, start: number) => void;
   resize: (id: string, length: number) => void;
@@ -14,7 +16,9 @@ interface ExperimentState {
   clear: () => void;
   select: (id: string | null) => void;
   setKind: (kind: BlockKind) => void;
+  setBlockKind: (id: string, kind: BlockKind) => void;
   setCooperativeSkip: (id: string, value: boolean) => void;
+  setWorkspace: (id: WorkspaceId) => void;
 }
 
 let nextId = 1;
@@ -24,6 +28,7 @@ export const useExperimentStore = create<ExperimentState>()(
     blocks: [],
     selectedKind: "dialogue",
     selectedId: null,
+    workspace: "staging",
     create: (trackId, kind, start, length) =>
       set((state) => {
         const id = `placement-${nextId}`;
@@ -91,12 +96,23 @@ export const useExperimentStore = create<ExperimentState>()(
       set((state) => {
         state.selectedKind = kind;
       }),
+    setBlockKind: (id, kind) =>
+      set((state) => {
+        const block = state.blocks.find((candidate) => candidate.id === id);
+        if (block) {
+          block.kind = kind;
+        }
+      }),
     setCooperativeSkip: (id, value) =>
       set((state) => {
         const block = state.blocks.find((candidate) => candidate.id === id);
         if (block) {
           block.cooperativeSkip = value;
         }
+      }),
+    setWorkspace: (id) =>
+      set((state) => {
+        state.workspace = id;
       }),
   })),
 );
