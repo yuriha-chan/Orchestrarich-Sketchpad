@@ -14,6 +14,7 @@ interface ExperimentState {
   clear: () => void;
   select: (id: string | null) => void;
   setKind: (kind: BlockKind) => void;
+  setCooperativeSkip: (id: string, value: boolean) => void;
 }
 
 let nextId = 1;
@@ -32,6 +33,7 @@ export const useExperimentStore = create<ExperimentState>()(
           kind,
           start,
           length,
+          cooperativeSkip: false,
         };
         if (!canPlace(state.blocks, candidate)) {
           return;
@@ -88,6 +90,13 @@ export const useExperimentStore = create<ExperimentState>()(
     setKind: (kind) =>
       set((state) => {
         state.selectedKind = kind;
+      }),
+    setCooperativeSkip: (id, value) =>
+      set((state) => {
+        const block = state.blocks.find((candidate) => candidate.id === id);
+        if (block) {
+          block.cooperativeSkip = value;
+        }
       }),
   })),
 );

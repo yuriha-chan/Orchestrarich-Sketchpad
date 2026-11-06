@@ -9,6 +9,7 @@ function placement(overrides: Partial<Placement> = {}): Placement {
     kind: "dialogue",
     start: 0,
     length: 1,
+    cooperativeSkip: false,
     ...overrides,
   };
 }

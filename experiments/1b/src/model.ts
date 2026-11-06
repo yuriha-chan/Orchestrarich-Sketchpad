@@ -11,6 +11,7 @@ export interface Placement {
   kind: BlockKind;
   start: number;
   length: number;
+  cooperativeSkip: boolean;
 }
 
 export interface PlacementShape {
