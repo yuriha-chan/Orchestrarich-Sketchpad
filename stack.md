@@ -1,23 +1,23 @@
-- **ドキュメントモデル**: トラック、ブロック、スロット、マーカー、フェーズの定義とシリアライズ。
-- **静的検証器**: 所有権、スロットの二重代入、ループ・分岐をまたぐ所有区間、ブロックの配置制約(3.5)。4.4 の編集時バリデーションと、「どの線が切れているか」の診断もここが担います。
-- **実行系**: 列ごとのバリア同期、スキップ、終了処理、失敗時の停止。
+- **Document model**: Definition and serialization of tracks, blocks, slots, markers, and phases.
+- **Static verifier**: Ownership, double assignment to slots, ownership sections spanning loops and branches, and block placement constraints (3.5). This also handles the edit-time validation in 4.4 and diagnostics for "which line is broken".
+- **Execution engine**: Column-by-column barrier synchronization, skip, termination processing, and stopping on failure.
 
-これらは DOM にもフレームワークにも依存しない純粋な TypeScript として書き、UI は状態を描画して操作をコマンドとして投げるだけにします。そうすれば、UI の技術選択を後から変えられますし、検証器と実行系を単体テストで固められます。ゲーム側ランタイムにそのまま同梱でき、エディタなしで実行もできます。TypeScript を選ぶ理由は、Promise ベースの実行モデルが JavaScript と相性がよく、型付きのモデル定義がそのまま検証器の土台になるからです。
+These are written as pure TypeScript independent of the DOM and frameworks. The UI only renders state and sends operations as commands. That way, the UI technology choice can be changed later, and the verifier and execution engine can be solidified with unit tests. It can be bundled as-is into the game-side runtime and run without the editor. The reason for choosing TypeScript is that the Promise-based execution model meshes well with JavaScript, and typed model definitions become the foundation of the verifier as-is.
 
-## UI 層に React 
+## React for the UI Layer
 
-- **状態管理との組み合わせ**: Zustand + Immer で、ドキュメントを不変データとして扱えます。これで Undo/Redo と、論理時刻境界での状態スナップショット(セーブ、巻き戻し、列単位のステップ実行)が素直に実装できます。
+- **Combination with state management**: Zustand + Immer allows the document to be treated as immutable data. This makes Undo/Redo and state snapshots at logical time boundaries (save, rewind, column-by-column stepping) straightforward to implement.
 
-## 描画方式
+## Rendering Approach
 
-タイムライン本体はグリッドなので、次のように分担させるのがよいと思います。
+Since the timeline itself is a grid, I think it is good to divide responsibilities as follows.
 
-- **ブロックとセル**: DOM(またはSVG)。可変長ブロック、フェーズのハンドル、スロットの接続点を、ポインタイベントで直接扱えます。
-- **生存期間の線とワイヤー**: SVG のオーバーレイ。太線、彩度の違い、型ごとの色分けは SVG が簡単です。
-- **ゲームプレビュー**: PixiJS などの Canvas/WebGL。メディアブロックの表示・フェードを描画します。エディタ UI とは別レイヤーに分けます。
+- **Blocks and cells**: DOM (or SVG). Variable-length blocks, phase handles, and slot connection points can be handled directly with pointer events.
+- **Lifetime lines and wires**: SVG overlay. Thick lines, saturation differences, and color-coding by type are easy with SVG.
+- **Game preview**: Canvas/WebGL such as PixiJS. Renders media block display and fade. Separate it into a different layer from the editor UI.
 
-ドラッグ操作は、dnd-kit のような汎用ライブラリより、グリッドへのスナップやエッジのリサイズが必要なため、ポインタイベントでの自前実装のほうが合います。
+For drag operations, since snapping to the grid and edge resizing are required, a custom implementation using pointer events fits better than a general-purpose library like dnd-kit.
 
-React Flow のノードは「自由な座標」を持つデータです。この環境のブロックは (トラック, 開始セル, 幅) が正で、画面座標はそこから導出されます。React Flow に載せると、グリッド上の位置と React Flow の座標の二重管理になり、スナップ、リサイズ、ドラッグのたびに両者を同期させる層が必要になります。
+React Flow nodes are data with "free coordinates". In this environment, a block is defined by (track, start cell, width), and screen coordinates are derived from that. Placing it on React Flow would mean dual management of grid positions and React Flow coordinates, requiring a layer to synchronize both on every snap, resize, and drag.
 
-React Flow のAPIは参考にするが、依存はしない。
+We will refer to the React Flow API but will not depend on it.

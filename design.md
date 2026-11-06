@@ -1,168 +1,186 @@
-# マルチトラック型ビジュアルプログラミング環境 設計ドキュメント
+# Multi-Track Visual Programming Environment Design Document
 
-## 1. 基本構想と実行モデル
+## 1. Basic Concept and Execution Model
 
-本環境は、**離散化された二次元グリッドにイベント処理を表す**ブロック**を配置し、同一列に配置された処理の完了を同期して進行する**ビジュアルプログラミング言語である。
-プログラミングの初心者であっても、演出ベースのイベント処理を動画編集のように容易に書くことができ、オブジェクトどうしのインタラクションやフロー構造の要求が増えても、エイリアスによるバグ、初期化・終了処理忘れのような問題が発生しない、現代的に管理された生産的なプログラミングパラダイムに自然に移行できる環境を目指す。
+This environment is a **visual programming language** that places **blocks** representing event processing on a **discretized two-dimensional grid** and advances by synchronizing the completion of processing placed in the same column. Even for programming beginners, event processing based on staging can be written as easily as video editing. Even when requirements for interaction between objects and flow structures increase, the environment aims to allow a natural migration to a modern, managed, productive programming paradigm that does not suffer from bugs caused by aliases or from problems such as forgetting initialization or termination processing.
 
+### 1.1 Basic Concepts
 
-### 1.1 基本概念
-イベント処理を行うことのできる最小単位の論理時間枠を **単位セル** と呼ぶ。単位セルを論理時間軸に沿って線形に並べたものを**トラック**と呼ぶ。トラックを並列に積み重ね並べたものを**タイムライン**と呼ぶ。
+The smallest logical time frame in which event processing can be performed is called a **unit cell**. A linear arrangement of unit cells along the logical time axis is called a **track**. A stack of tracks arranged in parallel is called a **timeline**.
 
-プログラミング画面においては、論理時刻 t が横軸となり、トラックが縦に積み重なる。
+In the programming screen, logical time t is the horizontal axis, and tracks are stacked vertically.
 
-論理時刻 `t` が開始されると、全てのトラックにおいて、t を開始時刻とするブロックの開始処理が実行され、ブロックの実行状態が「処理中」に設定される。
+When logical time `t` starts, on all tracks, the start processing of blocks whose start time is t is executed, and the execution state of the blocks is set to "running".
 
-その後、`t + 1` を終了時刻とする全てのブロックの実行状態が「完了」になるのを待つ。それが完了すると、論理時刻は t+1 に更新され、新たな処理が開始される。
+After that, it waits until the execution state of all blocks whose end time is `t + 1` becomes "completed". When that is complete, the logical time is updated to t+1, and new processing starts.
 
-### 1.2 実時間と論理時刻
+### 1.2 Real Time and Logical Time
 
-論理時刻は実時間と独立したプログラム上の進行単位である。ある列に次の処理を配置できる。
+Logical time is a progression unit in the program that is independent of real time. The following processing can be placed in a column.
 
 ```text
-               論理時刻 t               t+1
-トラックA    [セリフ・クリック待ち]      [次のセリフ]
-トラックB    [登場アニメーション]        [待機動作]
-トラックC    [効果音]                    [状態更新]
-               └── 全完了で進む ──┘
+               logical time t               t+1
+Track A    [dialogue / click wait]      [next dialogue]
+Track B    [entrance animation]         [idle behavior]
+Track C    [sound effect]               [state update]
+               └── advance when all complete ──┘
 ```
 
-セリフへのクリックが先に起きても、アニメーションが続いていれば `t` は進まない。反対に、アニメーションが先に終了しても、クリック待ちが継続する限り `t` は進まない。
+Even if the click on the dialogue happens first, if the animation continues, `t` does not advance. Conversely, even if the animation finishes first, as long as the click wait continues, `t` does not advance.
 
-### 1.3 スキップイベント
+### 1.3 Skip Event
 
-スキップ操作は論理時刻を直接変更しない。
+A skip operation does not directly change logical time.
 
-ユーザーによるスキップ要求は「スキップリクエストイベント」として、実行中のブロックに伝達される。ブロックは、当該イベントを受けて協調的に処理を短縮・終了し、「完了」となることが期待されるが、要求を無視することも可能である。
+A user's skip request is transmitted as a "skip request event" to the running blocks. Blocks are expected to cooperatively shorten or finish processing upon receiving the event and become "completed", but they may also ignore the request.
 
-処理スキップ時に返すべき値が設定されていない、値を書き込むブロックはスキップ要求を無視する。
+Blocks that write values, or for which the value to return when processing is skipped is not set, ignore skip requests.
 
-### 1.4 協調スキップモード
-ブロックを協調スキップモードに設定することができる。協調スキップモードに設定されたブロックの終了論理時刻までに実行を完了しなければならないブロックが協調スキップブロックのみになったとき、そのブロックのスキップイベントが自動で発生する。
+### 1.4 Cooperative Skip Mode
 
-## 2. 実行モデル
-## 2.1 型
-以下の型はプリミティブ型であり、代入はコピー操作である。
-整数型
-実数型
-文字列型
-ベクトル<n>型 (n=2,3,4)
-行列<n, m>型 (n=2, 3, 4, m=2, 3, 4)
-EMPTY型
+A block can be set to cooperative skip mode. When the blocks that must complete execution by the end logical time of a block set to cooperative skip mode become only cooperative skip blocks, the skip event of that block occurs automatically.
 
-以下の型は、オブジェクト型であり、代入は所有権移転操作である。
-配列<Type>型
-辞書<Type>型
-タプル<Type, Type, ...>型
-レコード<Type, Type, ...>型
-ユニオンコンテナ<Type, Type, ...>型
+## 2. Execution Model
 
-## 2.2 スロット
-各トラックは、複数のスロットをもつことができる。スロットには、格納できる値の型が指定されている。スロットには、最大一つの値を保持することができる。
+## 2.1 Types
 
-## 2.3 共有スロット
-共有スロットは、タイムライン全体で共有されるスロットである。
+The following types are primitive types, and assignment is a copy operation.
 
-## 2.4 ブロック
-ブロックは以下の部分からなる。
+Integer type
+Real number type
+String type
+Vector<n> type (n=2,3,4)
+Matrix<n, m> type (n=2,3,4, m=2,3,4)
+EMPTY type
 
-入力部
-トラックスロットからの読み出し。
-共有スロットからの読み出し。
+The following types are object types, and assignment is an ownership transfer operation.
 
-トラックスロットからのオブジェクト型の値の読み出しは、所有権をブロックに移転する。共有スロットからの読み出したオブジェクト型の値は所有権を持たない。
+Array<Type> type
+Dictionary<Type> type
+Tuple<Type, Type, ...> type
+Record<Type, Type, ...> type
+Union container<Type, Type, ...> type
 
-計算部
-読みだした値へ純粋関数を適用できる。
-純粋関数の値がオブジェクト型である場合、所有権を持たない。
-計算部は、複数の値を出力とすることができる。
+## 2.2 Slots
 
-オブジェクト操作部
-入力・計算された値が所有権を持つオブジェクトの場合、副作用を持つオブジェクトの操作を行う命令を実行できる。
-また、時間経過を待つ関数なども実行できる。
-オブジェクトの作成を実行できる。
-入力・計算されたオブジェクト型の値のコピーを実行できる。所有権の有無にかかわらず実行できる。
-オブジェクト操作部は、複数の値を返り値とすることができる。
-オブジェクト操作部の出力は、オブジェクト型である場合、所有権を必ず持つ。
+Each track can have multiple slots. A slot is specified with the type of value it can store. A slot can hold at most one value.
 
-出力部
-トラックスロットへの書き込み。
-共有スロットへの書き込み。
+## 2.3 Shared Slots
 
-出力は、ブロックの終了時刻の直前に実行される。
-一つのオブジェクトは、一つのスロットにしか書き込めない。
+A shared slot is a slot shared by the entire timeline.
 
-## 2.5 サブタイムライン
-サブタイムラインは、入力と出力を持つ区切られたタイムラインである。サブタイムラインの呼び出しを、「オブジェクト操作部」に配置することができる。
-入力と出力は、名称と型を指定しなければならない。
-入力は所有権の有無を指定しなければならない。所有権のある入力は、トラックのスロットに割り当てることができる。所有権のない入力は、共有スロットにのみ割り当てることができる。
-所有権のあるオブジェクト型、もしくはプリミティブ型の値のみを出力することができる。
+## 2.4 Blocks
 
-サブタイムラインはの呼び出しは、スキップリクエストに対して実行を停止することができるかどうかを設定できる。
+A block consists of the following parts.
 
-### 2.6 オブジェクトの受け渡し
-論理時刻の境界において、他のトラックのスロットに値と所有権を移転することができる。または、破棄することができる。
-ただし、共有スロットから読みだした値を利用しているブロックがある区間では、共有スロットの値を他の場所に移転することはできない。
+Input part
+Reading from track slots.
+Reading from shared slots.
 
-### 2.7 例
-配列操作命令のpopは、一つの所有権のある配列<Type>型の値を入力とし、ユニオン<Empty, Type>型の先頭の値と、先頭の値が取り除かれた配列<Type>型の値を出力する。
-unwrapモードでは、先頭の値としてType型の値を出力し、取り出せない場合はブロックの実行が失敗する。
+Reading an object-type value from a track slot transfers ownership to the block. An object-type value read from a shared slot does not have ownership.
 
-### 2.8 ブロックの実行失敗
-ブロックが実行失敗した場合、タイムラインは実行を停止する。サブタイムラインのブロックにおいては、エラーが生じたときに出力する値を指定することで、サブタイムラインでエラーが発生した場合も、処理を実行することができる。
+Calculation part
+A pure function can be applied to the read values.
+If the value of the pure function is an object type, it does not have ownership.
+The calculation part can output multiple values.
 
-### 2.9 マルチフェーズブロック
-直接隣接する複数のフェーズブロックからなるコンテナを、マルチフェーズブロックという。フェーズの境界は、論理時間の境界に置かれなければならない。
-マルチフェーズブロックの効果は、フェーズブロックをブロックとして複数置くのと同一であるが、隣接するという条件が課され、内部で使用されている値がそのまま引き渡されるという慣習が適用される。
+Object operation part
+If the input or calculated value is an object with ownership, instructions for side-effecting object operations can be executed.
+Functions that wait for time to pass can also be executed.
+Object creation can be executed.
+A copy of the input or calculated object-type value can be executed. This can be done regardless of ownership.
+The object operation part can have multiple return values.
+The output of the object operation part always has ownership if it is an object type.
 
-構成する各フェーズブロックの「無待機モード」の適用については、それぞれ独立に設定できる。
+Output part
+Writing to track slots.
+Writing to shared slots.
 
-### 2.10 終了処理
-次の論理時刻に進むために必要なブロックがすべて完了状態になると、その時刻に終了するすべてのブロックの終了処理が呼び出されたあとに次の論理時刻の処理が開始される。
-また、ブロックの実行失敗や、サブタイムライン呼び出しの実行中断によりタイムラインが停止する場合でも、実行中のブロックの終了処理は行われる。
+Output is executed immediately before the block's end time.
+One object can be written to only one slot.
 
-## 3. ループと分岐
+## 2.5 Subtimelines
 
-グリッド上の領域には、ループや分岐を設定できる。ループは同じ論理的なイベント列を繰り返し実行し、分岐は条件に応じて次の実行領域を選択する。
+A subtimeline is a delimited timeline with inputs and outputs. A call to a subtimeline can be placed in the "object operation part".
+Inputs and outputs must be specified with names and types.
+Inputs must specify whether they have ownership. Inputs with ownership can be assigned to track slots. Inputs without ownership can only be assigned to shared slots.
+Only object-type values with ownership or primitive-type values can be output.
 
-### 3.1 ループ
+A subtimeline call can be configured whether its execution can be stopped in response to a skip request.
 
-ループの開始マーカーと終了マーカーをトラックに配置することで、ループ区間を明示することができる。これらのマーカーは、単位セルの境界に配置される。ループのマーカーは、タイムラインを横断して全体に置かれる。
+## 2.6 Object Passing
 
-また、ループの終了マーカーにおいて、ループの終了条件を指定することができる。
-また、条件が満たされたときにループのやり直しを指示するマーカーや、ループからの離脱を指示するマーカーを置くことができる。
+At logical time boundaries, values and ownership can be transferred to another track's slot. Or they can be discarded.
+However, in a section where a block is using a value read from a shared slot, the shared slot's value cannot be transferred elsewhere.
 
-### 3.2 分岐・合流
+## 2.7 Example
 
-分岐・合流は、タイムライン全体の分岐・合流として表現される。これらを表すマーカーも、タイムラインを横断し、単位セルの境界に配置される。
-分岐の条件は、任意のスロットから読み取った値から計算される論理式として表される。
+The array operation instruction pop takes one array<Type> value with ownership as input and outputs the first value of union<Empty, Type> type and the array<Type> value with the first value removed.
+In unwrap mode, it outputs the first value as a Type value, and if it cannot be extracted, the block's execution fails.
 
-### 3.3 ループをまたぐ所有区間
+## 2.8 Block Execution Failure
 
-ループの開始時点で、オブジェクトの所有権をもっているスロットがある場合、ループの終了時点でもそのスロットはオブジェクトの所有権を持っていなければならない。
+If a block fails execution, the timeline stops execution. In a subtimeline block, by specifying the value to output when an error occurs, processing can still be executed even if an error occurs in the subtimeline.
 
-### 3.4 所有権の分岐と合流
+## 2.9 Multi-Phase Blocks
 
-条件分岐では、トラック上の視覚的表現としては、値の生存期間は分岐する。実行時には、実際に選択された経路だけが所有権を受領する。
-条件分岐の合流後にトラックが値を保持するためには、すべての経路でトラックに値が保持されていなければならない。
+A container consisting of multiple directly adjacent phase blocks is called a multi-phase block. Phase boundaries must be placed at logical time boundaries.
+The effect of a multi-phase block is the same as placing multiple phase blocks as blocks, but the adjacency condition is imposed, and the convention that internally used values are passed through as-is applies.
 
-### 3.5 ループと分岐をまたぐブロック
-ブロックが分岐やループにまたがって配置される場合、分岐・ループのセクション全体を含んでいるか、全く含まないかのどちらかである必要がある。
-また、ループ内のブロックは、ループのやり直しを指示するマーカーや、ループからの離脱を指示するマーカーをまたがって配置することはできない。
+The application of "cooperative skip mode" to each constituent phase block can be set independently.
 
-## 4. 編集モデル
+## 2.10 Termination Processing
 
-### 4.1 可変長ブロック
-ブロックは、複数の単位セルにまたがって配置することができる。
+When all blocks necessary to advance to the next logical time have become completed, the termination processing of all blocks ending at that time is called, and then processing for the next logical time starts.
+Also, even when the timeline stops due to a block execution failure or interruption of a subtimeline call, termination processing of running blocks is performed.
 
-### 4.2 メディアブロック
-画像などメディアファイルをブロックとして配置することができる。これは、画面上に当該メディアを表示する命令を意味する。入力として、メディアの再生パラメータをとることができる。
-メディアブロックは、フェードイン・フェードアウトを設定した、マルチフェーズブロックとして配置することができる。
+## 3. Loops and Branches
 
-メディアブロックは、開始時に表示・再生され、マルチフェーズブロック全体の終了処理の実行時に除去・停止される。
+Regions on the grid can be set as loops or branches. A loop repeatedly executes the same logical event sequence, and a branch selects the next execution region according to a condition.
 
-### 4.3 オブジェクトの生存期間
-オブジェクトの生存期間は、ひとつながりの線として表現される。所有権をもつオブジェクト型の値の生存期間は彩度の高い太線であらわされ、所有権を持たないオブジェクトの生存期間は彩度の低い線であらわされる。型により異なる色彩が割り当てられる。
+### 3.1 Loops
 
-### 4.4 編集時バリデーション
-一つのスロットに複数の値を代入するなど、実行モデルに反する値の接続はできない。スロットを上書きするためには、まず値を破棄する必要がある。
+By placing loop start and end markers on a track, a loop section can be made explicit. These markers are placed at unit cell boundaries. Loop markers are placed across the entire timeline.
+
+Also, at the loop end marker, the loop termination condition can be specified.
+Also, markers can be placed to instruct redoing the loop when the condition is met, or to instruct exiting the loop.
+
+### 3.2 Branching and Merging
+
+Branching and merging are represented as branching and merging of the entire timeline. Markers representing these also span the timeline and are placed at unit cell boundaries.
+The branch condition is represented as a logical expression computed from values read from any slot.
+
+### 3.3 Ownership Sections Spanning Loops
+
+At the start of a loop, if there is a slot that has ownership of an object, that slot must still have ownership of the object at the end of the loop.
+
+### 3.4 Branching and Merging of Ownership
+
+In a conditional branch, as a visual representation on the track, the lifetime of the value branches. At runtime, only the actually selected path receives ownership.
+In order for a track to hold a value after the merge of conditional branches, the value must be held in the track on all paths.
+
+### 3.5 Blocks Spanning Loops and Branches
+
+When a block is placed spanning a branch or loop, it must either include the entire branch or loop section or not include it at all.
+Also, blocks inside a loop cannot be placed spanning a marker that instructs redoing the loop or a marker that instructs exiting the loop.
+
+## 4. Editing Model
+
+### 4.1 Variable-Length Blocks
+
+A block can be placed spanning multiple unit cells.
+
+### 4.2 Media Blocks
+
+Media files such as images can be placed as blocks. This means an instruction to display the media on the screen. Playback parameters of the media can be taken as input.
+A media block can be placed as a multi-phase block with fade-in and fade-out settings.
+
+A media block is displayed or played at the start, and is removed or stopped when the termination processing of the entire multi-phase block is executed.
+
+### 4.3 Object Lifetimes
+
+The lifetime of an object is represented as a single continuous line. The lifetime of an object-type value with ownership is represented by a highly saturated thick line, and the lifetime of an object without ownership is represented by a low-saturation line. Different colors are assigned by type.
+
+### 4.4 Edit-Time Validation
+
+Connections of values that violate the execution model, such as assigning multiple values to one slot, are not allowed. To overwrite a slot, the value must first be discarded.

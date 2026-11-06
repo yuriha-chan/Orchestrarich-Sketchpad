@@ -1,84 +1,84 @@
-# 開発プロセス案: 検証駆動の探索的開発
+# Development Process Proposal: Verification-Driven Exploratory Development
 
-最初に全体設計を固めず、**「これを作れば設計の誤りが見つかりそうだ」という最小の一点**から始めます。各試作は成果物ではなく**問いに答えるための道具**です。試作が終わるたびに、決まったこと・新しく見えた問いを記録し、次の試作を選びます。
+First, without finalizing the overall design, start from **the smallest single point where "if we build this, we are likely to find a flaw in the design."** Each prototype is not a deliverable but **a tool for answering a question**. At the end of each prototype, record what was decided and what questions newly emerged, and choose the next prototype.
 
-## 進め方の単位: 「問い」と「実験」
+## Unit of Progress: "Question" and "Experiment"
 
-各実験は次の4行で書き、1〜数日で終わる大きさに切ります。
+Write each experiment in the following four lines, and size it to finish in one to several days.
 
-- **問い**: 何を確かめたいか(論理上か UI 上か)
-- **最小の部品**: それを確かめるのに必要な、最も小さい実装
-- **判定**: 何が観察できれば「答えが出た」とするか
-- **持ち越し**: 結果が次に開く問い、閉じる問い
+- **Question**: What do we want to confirm (logically or in the UI)?
+- **Smallest components**: The smallest implementation necessary to confirm it.
+- **Criterion**: What must be observed for us to say "the question is answered"?
+- **Carry-over**: Questions that the result opens or closes for the next step.
 
-仕様書(設計ドキュメント)は、実験の結果で書き換える**生きた文書**として扱い、先に完成させません。
+Treat the specification (design document) as a **living document** that is rewritten based on experimental results, and do not complete it in advance.
 
-## 第1ラウンド: 単一コンポーネントで最も危ない仮説を突く
+## Round 1: Attack the Most Dangerous Hypothesis in a Single Component
 
-最初の候補は、設計の中心でありながら、まだ誰も動かしていない部分です。
+The first candidate is the part that is central to the design but that no one has run yet.
 
-**実験1-A(論理): 列バリア同期の最小実行系**
-- 最小の部品: トラック2〜3本、固定長ブロックだけ。ブロックはタイマーで完了する。分岐、ループ、型は無し。
-- 判定: 「クリック待ちとアニメが両方終わるまで t が進まない」が動く。「いま t を止めているブロック」を表示できる。
-- 持ち越し: 無待機モードとスキップを入れるとどうなるか。
+**Experiment 1-A (logical): Minimal execution engine for column barrier synchronization**
+- Smallest components: 2-3 tracks, fixed-length blocks only. Blocks complete by timer. No branches, loops, or types.
+- Criterion: "t does not advance until both the click wait and the animation finish" works. "Which blocks are currently blocking t" can be displayed.
+- Carry-over: What happens when no-wait mode and skip are added?
 
-**実験1-B(UI): 横に時間、縦にトラックのグリッドとブロックの配置・伸縮**
-- 最小の部品: 実行系なしで、ブロックをセルにスナップして置き、幅を変えるだけ。
-- 判定: 初心者でなく自分自身が、5分で演出の配置を1つ組めるか。
-- 持ち越し: 配置データのシリアライズ形式、フェーズハンドルの扱い。
+**Experiment 1-B (UI): Grid with time horizontally and tracks vertically, block placement and stretching**
+- Smallest components: No execution engine; just snap blocks to cells and change their width.
+- Criterion: Can I, not a beginner, assemble one staging arrangement in 5 minutes?
+- Carry-over: Serialization format of placement data, handling of phase handles.
 
-この2つは独立なので並行して進められます。どちらも**型も所有権も入れません**。ただしこれは最終版の姿ではなく、あくまで UI と同期の検討用です。
+These two are independent and can proceed in parallel. Neither includes types or ownership. However, this is not the final form; it is only for examining the UI and synchronization.
 
-## 第2ラウンド: 第1ラウンドで決まったことから、次の経路を選ぶ
+## Round 2: Choose the Next Path Based on What Was Decided in Round 1
 
-第1ラウンドの結果を見てから選びますが、現時点で見えている候補は次のとおりです。
+We will choose after seeing the results of Round 1, but the candidates currently visible are as follows.
 
-- **スキップ + 無待機 + 終了処理**(1-A の延長): 「無待機ブロックにスキップを送ったあとバリアは待つ」という決定が、実際の演出でループBGMの締めくくりとして自然に書けるか。
-- **マルチフェーズブロックのエディタ表現**(1-B の延長): フェードの境界でメディアが途切れない、という規定が、描画上も保たれるか。プレビューに最小の描画(PixiJS)を載せて確かめる。
-- **スロットとワイヤーの視覚表現**(1-B の延長): 型なしのまま、スロットへの接続線だけ引けるようにして、線が増えたときに読めるかを見る。ここで「簡単なシーンで邪魔にならず、複雑なシーンでも破綻しない」という目標の最初の手触りが得られます。
+- **Skip + no-wait + termination processing** (extension of 1-A): Whether the decision "after sending a skip to a no-wait block, the barrier waits" can be naturally written as the closing of loop BGM in actual staging.
+- **Editor representation of multi-phase blocks** (extension of 1-B): Whether the rule that media does not cut off at fade boundaries is preserved in rendering. Add minimal rendering (PixiJS) to the preview to confirm.
+- **Visual representation of slots and wires** (extension of 1-B): With types still absent, enable drawing only connection lines to slots, and see whether it remains readable when lines increase. Here you get the first feel for the goal of "not getting in the way in simple scenes and not breaking down in complex scenes."
 
-第2ラウンドは、ここから**同時に走らせるのは2〜3本まで**にします。多すぎると、結果同士の影響が見えなくなります。
+In Round 2, **run at most 2-3 in parallel** from here. Too many makes it hard to see the influence between results.
 
-## 第3ラウンド以降: 部品が増えたことで開く経路
+## Round 3 and Beyond: Paths Opened by Added Components
 
-下は予想であり、順序は固定しません。
+The following is a prediction, and the order is not fixed.
 
-- **型と所有権の導入**: 静的検証器を単体で作り、「どの線が切れているか」の診断表示を1つのケース(二重代入)だけで試す。次にループをまたぐ所有区間へ広げる。
-- **ループと分岐**: まず、ループだけをバリア同期に載せる。次に分岐、最後に所有権との組み合わせ(3.3、3.4)。
-- **サブタイムライン**: 呼び出しと入出力の宣言。中断時の出力、スキップ可否の指定を試す。
-- **レコードによる永続的状態**: キャラクターの状態を更新し続ける小さなシーンを書き、設計の中心用途が実際に楽に書けるかを見る。
-- **具体的な演出を書く試験**: 会話、カメラ移動、戦闘開始演出を各1本、実際に組んでみる。ここで初めて、初心者の目で見る必要が出ます。
+- **Introduction of types and ownership**: Build the static verifier standalone and test the diagnostic display of "which line is broken" with a single case (double assignment). Then extend it to ownership sections spanning loops.
+- **Loops and branches**: First, put only loops on barrier synchronization. Then branches, and finally combinations with ownership (3.3, 3.4).
+- **Subtimelines**: Declare calls and inputs/outputs. Test output on interruption and specification of skip availability.
+- **Persistent state via records**: Write a small scene that keeps updating character state, and see whether the central use case of the design can actually be written easily.
+- **Tests that write concrete staging**: Assemble one each of dialogue, camera movement, and battle-start staging, and actually build them. Only here does the need to look through the eyes of a beginner first arise.
 
-## 繰り返しの回し方
+## How to Iterate
 
-1. 直前の実験で出た「持ち越し」を並べる。
-2. そのうち、**外れると手戻りが最も大きい仮説**を選ぶ。
-3. その仮説を確かめる最小の部品を作る。
-4. 結果を、仕様書と問いの一覧に反映する。
-5. 1に戻る。
+1. List the "carry-overs" from the previous experiment.
+2. Among them, choose **the hypothesis with the largest rework cost if it is wrong**.
+3. Build the smallest component to confirm that hypothesis.
+4. Reflect the results in the specification and the list of questions.
+5. Return to 1.
 
-見直す点が「実装の都合」だけになったと感じたら、実験を止め、具体的な演出を書く試験に戻ります。
+If you feel that the only point to review has become "implementation convenience," stop the experiment and return to the test that writes concrete staging.
 
-## 網目状の全体像のイメージ
+## Image of the Mesh-Like Overall Picture
 
-道筋は一本の線ではなく、次のように枝分かれして、途中で合流する想像をしています。
+The path is not a single line but branches and merges along the way, as imagined below.
 
 ```text
-実行系(同期) ──→ スキップ/無待機 ──→ サブタイムライン ──┐
-     │                                                ├─→ 演出の試験 ─→ 製品
-グリッドUI ──→ フェーズ編集 ──→ メディア描画 ──────────┤
+Execution engine (synchronization) ──→ Skip / no-wait ──→ Subtimeline ──┐
+     │                                                ├─→ Staging tests ─→ Product
+Grid UI ──→ Phase editing ──→ Media rendering ──────────┤
      │                                                │
-     └──→ スロットとワイヤー ──→ 型・所有権の検証器 ──┘
-                    └──→ ループ・分岐 ──→ レコード状態
+     └──→ Slots and wires ──→ Type/ownership verifier ──┘
+                    └──→ Loops/branches ──→ Record state
 ```
 
-実行系の枝と UI の枝は、最初は独立に進みます。合流するのは、スロットとワイヤーの視覚表現が、実行系のデータモデルを必要とし始めるあたりです。この合流点が、最初の大きな統合試験になると思います。
+The execution-engine branch and the UI branch proceed independently at first. They merge around the point where the visual representation of slots and wires begins to require the execution engine's data model. I think this merge point will be the first major integration test.
 
-## 各実験で守る約束
+## Rules to Follow in Each Experiment
 
-- **使い捨てを恐れない**。実験のコードは、問いに答えたら捨ててよいものとします。残すのは、決定と学びです。
-- **コアは独立して書く**。前の回答の分離(モデル・検証器・実行系はフレームワーク非依存)は、実験でも守ります。試作を捨てても、ここだけは次に持ち越せます。
+- **Do not fear throwaway code**. Experimental code may be discarded once it has answered the question. What remains are decisions and learnings.
+- **Write the core independently**. The separation described in the previous answer (model, verifier, and execution engine are framework-independent) is also observed in experiments. Even if the prototype is discarded, only this part can be carried forward.
 
-## 最初の一手
+## First Step
 
-まず、実験1-A(列バリア同期の実行系)を、**TypeScript の数十行**で書くところから始めるのがよいと思います。UI なしでテストが動けば、第1ラウンドの片方は終わりです。もう片方の 1-B は、その結果を待たずに着手できます。
+I think it is good to start by writing Experiment 1-A (the execution engine for column barrier synchronization) in **a few dozen lines of TypeScript**. If tests work without a UI, one side of Round 1 is complete. The other side, 1-B, can start without waiting for that result.
