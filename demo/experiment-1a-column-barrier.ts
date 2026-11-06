@@ -33,11 +33,16 @@ const durations: Record<string, number> = {
 };
 
 const timers = new Map<string, NodeJS.Timeout>();
+let resolveClickWait: (() => void) | undefined;
 
 const runner = new TimelineRunner(definition, {
   onBlockStart(block) {
     if (block.id === "click-wait") {
-      return;
+      return {
+        execution: new Promise<void>((resolve) => {
+          resolveClickWait = resolve;
+        }),
+      };
     }
 
     const duration = durations[block.id];
@@ -45,13 +50,17 @@ const runner = new TimelineRunner(definition, {
       throw new Error(`No duration configured for block: ${block.id}`);
     }
 
-    timers.set(
-      block.id,
-      setTimeout(() => {
-        timers.delete(block.id);
-        runner.complete(block.id);
-      }, duration),
-    );
+    return {
+      execution: new Promise<void>((resolve) => {
+        timers.set(
+          block.id,
+          setTimeout(() => {
+            timers.delete(block.id);
+            resolve();
+          }, duration),
+        );
+      }),
+    };
   },
 });
 
@@ -79,7 +88,7 @@ function sendClick(): void {
     return;
   }
   clickSent = true;
-  runner.complete("click-wait");
+  resolveClickWait?.();
 }
 
 let lastRendered = "";

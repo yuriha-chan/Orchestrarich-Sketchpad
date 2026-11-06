@@ -1,6 +1,6 @@
-export type BlockState = "pending" | "running" | "completed";
+export type BlockState = "pending" | "running" | "completed" | "failed";
 
-export type TimelinePhase = "idle" | "running" | "finished";
+export type TimelinePhase = "idle" | "running" | "failed" | "finished";
 
 export type SkipReason = "user" | "cooperative";
 
@@ -36,12 +36,20 @@ export interface TimelineSnapshot {
   readonly blockingBlockIds: readonly string[];
 }
 
+export type SkipHandler = (
+  reason: SkipReason,
+) => void | Promise<void>;
+
+export interface BlockStartResult {
+  readonly execution: Promise<void>;
+  readonly skip?: SkipHandler;
+}
+
 export interface TimelineRunnerOptions {
-  readonly onBlockStart?: (block: BlockSnapshot) => void;
-  readonly onSkipRequest?: (
+  readonly onBlockStart?: (
     block: BlockSnapshot,
-    reason: SkipReason,
-  ) => void;
+  ) => BlockStartResult | undefined;
+  readonly onBlockTerminate?: (block: BlockSnapshot) => void;
 }
 
 interface Placement {
@@ -104,7 +112,9 @@ export class TimelineRunner {
   private readonly states = new Map<string, BlockState>();
   private readonly options: TimelineRunnerOptions;
   private readonly listeners = new Set<(snapshot: TimelineSnapshot) => void>();
+  private readonly skipHandlers = new Map<string, SkipHandler>();
   private readonly autoSkipFired = new Set<string>();
+  private readonly terminated = new Set<string>();
   private readonly horizon: number;
 
   private currentTime = 0;
@@ -146,31 +156,14 @@ export class TimelineRunner {
 
   requestSkip(): void {
     for (const placement of this.runningPlacements()) {
+      if (this.currentPhase !== "running") {
+        break;
+      }
       if (this.states.get(placement.id) !== "running") {
         continue;
       }
-      this.options.onSkipRequest?.(
-        this.toBlockSnapshot(placement),
-        "user",
-      );
+      this.deliverSkip(placement, "user");
     }
-  }
-
-  complete(blockId: string): void {
-    const state = this.states.get(blockId);
-
-    if (state === undefined) {
-      throw new Error(`Unknown block: ${blockId}`);
-    }
-    if (state === "pending") {
-      throw new Error(`Block ${blockId} has not started yet`);
-    }
-    if (state === "completed") {
-      throw new Error(`Block ${blockId} is already completed`);
-    }
-
-    this.states.set(blockId, "completed");
-    this.pump();
   }
 
   blockingBlocks(): readonly BlockSnapshot[] {
@@ -221,13 +214,82 @@ export class TimelineRunner {
     );
   }
 
+  private invokeBlockStart(placement: Placement): void {
+    let result: BlockStartResult | undefined;
+    try {
+      result = this.options.onBlockStart?.(this.toBlockSnapshot(placement));
+    } catch {
+      this.failBlock(placement.id);
+      return;
+    }
+    if (result === undefined) {
+      return;
+    }
+    if (result.skip !== undefined) {
+      this.skipHandlers.set(placement.id, result.skip);
+    }
+    result.execution.then(
+      () => this.completeBlock(placement.id),
+      () => this.failBlock(placement.id),
+    );
+  }
+
+  private deliverSkip(placement: Placement, reason: SkipReason): void {
+    const handler = this.skipHandlers.get(placement.id);
+    if (handler === undefined) {
+      return;
+    }
+    let result: void | Promise<void>;
+    try {
+      result = handler(reason);
+    } catch {
+      this.failBlock(placement.id);
+      return;
+    }
+    if (result !== undefined) {
+      Promise.resolve(result).catch(() => this.failBlock(placement.id));
+    }
+  }
+
+  private completeBlock(blockId: string): void {
+    if (this.currentPhase !== "running") {
+      return;
+    }
+    if (this.states.get(blockId) !== "running") {
+      return;
+    }
+    this.states.set(blockId, "completed");
+    this.skipHandlers.delete(blockId);
+    this.pump();
+  }
+
+  private failBlock(blockId: string): void {
+    if (this.currentPhase !== "running") {
+      return;
+    }
+    if (this.states.get(blockId) !== "running") {
+      return;
+    }
+    this.states.set(blockId, "failed");
+    this.currentPhase = "failed";
+    this.skipHandlers.clear();
+    this.terminateRunning();
+
+    if (!this.pumping) {
+      this.notify();
+    }
+  }
+
   private autoSkipIfCooperative(): void {
     let firedAny = true;
 
-    while (firedAny) {
+    while (firedAny && this.currentPhase === "running") {
       firedAny = false;
 
       for (const placement of this.placements) {
+        if (this.currentPhase !== "running") {
+          break;
+        }
         if (this.states.get(placement.id) !== "running") {
           continue;
         }
@@ -242,10 +304,7 @@ export class TimelineRunner {
         }
 
         this.autoSkipFired.add(placement.id);
-        this.options.onSkipRequest?.(
-          this.toBlockSnapshot(placement),
-          "cooperative",
-        );
+        this.deliverSkip(placement, "cooperative");
         firedAny = true;
         break;
       }
@@ -259,6 +318,31 @@ export class TimelineRunner {
         this.states.get(placement.id) === "completed" ||
         placement.cooperativeSkip,
     );
+  }
+
+  private terminateEndingAt(end: number): void {
+    for (const placement of this.placements) {
+      if (placement.end !== end || this.terminated.has(placement.id)) {
+        continue;
+      }
+      this.terminated.add(placement.id);
+      this.options.onBlockTerminate?.(this.toBlockSnapshot(placement));
+    }
+  }
+
+  private terminateRunning(): void {
+    for (const placement of this.placements) {
+      const state = this.states.get(placement.id);
+      if (
+        (state !== "running" && state !== "failed") ||
+        this.terminated.has(placement.id)
+      ) {
+        continue;
+      }
+      this.terminated.add(placement.id);
+      this.skipHandlers.delete(placement.id);
+      this.options.onBlockTerminate?.(this.toBlockSnapshot(placement));
+    }
   }
 
   private pump(): void {
@@ -279,11 +363,21 @@ export class TimelineRunner {
           this.states.set(placement.id, "running");
         }
         for (const placement of due) {
-          this.options.onBlockStart?.(this.toBlockSnapshot(placement));
+          if (this.currentPhase !== "running") {
+            break;
+          }
+          this.invokeBlockStart(placement);
+        }
+
+        if (this.currentPhase !== "running") {
+          break;
         }
 
         this.autoSkipIfCooperative();
 
+        if (this.currentPhase !== "running") {
+          break;
+        }
         if (this.currentTime >= this.horizon) {
           this.currentPhase = "finished";
           break;
@@ -292,6 +386,11 @@ export class TimelineRunner {
           break;
         }
 
+        this.terminateEndingAt(this.currentTime + 1);
+
+        if (this.currentPhase !== "running") {
+          break;
+        }
         this.currentTime += 1;
       }
     } finally {

@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import {
   TimelineRunner,
   type BlockSnapshot,
+  type SkipReason,
   type TimelineDefinition,
   type TimelineSnapshot,
 } from "../src/core/execution/timeline-runner.ts";
@@ -36,12 +37,53 @@ const durations: Record<string, number> = {
 };
 
 const timers = new Map<string, NodeJS.Timeout>();
+const resolutions = new Map<string, () => void>();
 const fading = new Set<string>();
+
+function finish(blockId: string): void {
+  timers.delete(blockId);
+  fading.delete(blockId);
+  resolutions.get(blockId)?.();
+}
 
 const runner = new TimelineRunner(definition, {
   onBlockStart(block) {
+    let resolveExecution!: () => void;
+    const execution = new Promise<void>((resolve) => {
+      resolveExecution = resolve;
+    });
+    resolutions.set(block.id, resolveExecution);
+
+    const skip = (reason: SkipReason) => {
+      const label = reason === "user" ? "user" : "cooperative";
+      console.log(
+        `Skip request (${label}) at t=${runner.time}: ${describeBlock(block)}`,
+      );
+
+      if (block.id !== "loop-bgm") {
+        console.log(`  ${block.id} ignores the skip request`);
+        return;
+      }
+      if (fading.has(block.id)) {
+        return;
+      }
+
+      const timer = timers.get(block.id);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timers.delete(block.id);
+      }
+
+      fading.add(block.id);
+      console.log("  loop-bgm fades out over 200ms and completes");
+      timers.set(
+        block.id,
+        setTimeout(() => finish(block.id), 200),
+      );
+    };
+
     if (block.id === "click-wait") {
-      return;
+      return { execution, skip };
     }
 
     const duration = durations[block.id];
@@ -51,42 +93,12 @@ const runner = new TimelineRunner(definition, {
 
     timers.set(
       block.id,
-      setTimeout(() => {
-        timers.delete(block.id);
-        runner.complete(block.id);
-      }, duration),
+      setTimeout(() => finish(block.id), duration),
     );
+    return { execution, skip };
   },
-  onSkipRequest(block, reason) {
-    const label = reason === "user" ? "user" : "cooperative";
-    console.log(
-      `Skip request (${label}) at t=${runner.time}: ${describeBlock(block)}`,
-    );
-
-    if (block.id !== "loop-bgm") {
-      console.log(`  ${block.id} ignores the skip request`);
-      return;
-    }
-    if (fading.has(block.id)) {
-      return;
-    }
-
-    const timer = timers.get(block.id);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timers.delete(block.id);
-    }
-
-    fading.add(block.id);
-    console.log("  loop-bgm fades out over 200ms and completes");
-    timers.set(
-      block.id,
-      setTimeout(() => {
-        timers.delete(block.id);
-        fading.delete(block.id);
-        runner.complete(block.id);
-      }, 200),
-    );
+  onBlockTerminate(block) {
+    console.log(`Termination at t=${runner.time}: ${describeBlock(block)}`);
   },
 });
 
@@ -122,7 +134,7 @@ function sendClick(): void {
     return;
   }
   clickSent = true;
-  runner.complete("click-wait");
+  resolutions.get("click-wait")?.();
 }
 
 let lastRendered = "";
