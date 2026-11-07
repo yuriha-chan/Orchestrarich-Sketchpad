@@ -1,4 +1,4 @@
-import type { BlockDefinition } from "../../../src/core/execution/timeline-runner.ts";
+import type { BlockDefinition } from "../core/execution/timeline-runner.ts";
 import { isMediaPlacement, mediaPhases, phaseBlockId, type Placement } from "./model";
 
 export interface PhaseDefinition {

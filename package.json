@@ -5,13 +5,13 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p experiments/1b/tsconfig.json",
-    "demo:1a": "node demo/experiment-1a-column-barrier.ts",
-    "demo:1a-skip": "node demo/experiment-1a-skip.ts",
-    "demo:1a-failure": "node demo/experiment-1a-failure.ts",
-    "demo:1a-promise": "node demo/experiment-1a-promise.ts",
-    "dev:1b": "vite --config experiments/1b/vite.config.ts",
-    "build:1b": "vite build --config experiments/1b/vite.config.ts"
+    "typecheck": "tsc --noEmit",
+    "demo:1a": "node demo/column-barrier.ts",
+    "demo:1a-skip": "node demo/skip.ts",
+    "demo:1a-failure": "node demo/failure.ts",
+    "demo:1a-promise": "node demo/promise.ts",
+    "dev": "vite",
+    "build": "vite build"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

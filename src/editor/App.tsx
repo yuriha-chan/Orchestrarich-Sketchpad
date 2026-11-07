@@ -25,7 +25,7 @@ import {
   canPlace,
   isMediaPlacement,
 } from "./model";
-import { generateDotGradientSVG } from "../../../generate_dot_gradient.ts";
+import { generateDotGradientSVG } from "./dot-gradient";
 import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
 import type { FadeBoundary } from "./fade-editing";
 import { useExperimentStore } from "./store";
@@ -38,7 +38,7 @@ import type {
   BlockState,
   TimelinePhase,
   TimelineSnapshot,
-} from "../../../src/core/execution/timeline-runner.ts";
+} from "../core/execution/timeline-runner.ts";
 
 const CELL_WIDTH = 64;
 const TRACK_HEIGHT = 48;

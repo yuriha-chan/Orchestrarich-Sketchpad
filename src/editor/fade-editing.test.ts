@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateDotGradientSVG } from "../../../generate_dot_gradient.ts";
+import { generateDotGradientSVG } from "./dot-gradient";
 import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
 import type { MediaPlacement } from "./model";
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TimelineSnapshot } from "../../../src/core/execution/timeline-runner.ts";
+import type { TimelineSnapshot } from "../core/execution/timeline-runner.ts";
 import { TimelineSession, SKIP_FADE_MS, toTimelineDefinition, type ExecutionInstance } from "./execution";
 import { compilePlacement, definitionBlocks, isMultiPhase, type ExecutionDefinition } from "./execution-definition";
 import type {

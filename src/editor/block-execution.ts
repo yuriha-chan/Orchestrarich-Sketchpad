@@ -1,4 +1,4 @@
-import type { BlockSnapshot, BlockStartResult, SkipReason } from "../../../src/core/execution/timeline-runner.ts";
+import type { BlockSnapshot, BlockStartResult, SkipReason } from "../core/execution/timeline-runner.ts";
 import type { ExecutionDefinition } from "./execution-definition";
 import { blockDurationSeconds, type DialoguePlacement, type DurationPlacement, type MediaPlacement } from "./model";
 import type { AnimationPlayback, StageActions } from "./stage-state";

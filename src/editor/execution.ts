@@ -6,7 +6,7 @@ import {
   type TimelineDefinition,
   type TimelinePhase,
   type TimelineSnapshot,
-} from "../../../src/core/execution/timeline-runner.ts";
+} from "../core/execution/timeline-runner.ts";
 import type { Placement, Track } from "./model";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";

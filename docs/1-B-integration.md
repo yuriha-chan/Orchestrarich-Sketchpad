@@ -6,7 +6,7 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 
 ## Smallest Components
 
-- `experiments/1b/src/execution.ts` wraps `TimelineRunner` in a `TimelineSession`.
+- `src/editor/execution.ts` wraps `TimelineRunner` in a `TimelineSession`.
   The session builds a `TimelineDefinition` from the placements, supplies each
   block's execution Promise and skip handler, and reports snapshots and activity
   messages to the UI.
@@ -104,15 +104,15 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 - `pnpm typecheck`: core and 1-B UI both pass.
 - `pnpm test`: 99 tests pass (49 core + 25 placement model + 19 integration +
   6 fade editing and dot-pattern tests).
-- `pnpm build:1b`: production build succeeds.
+- `pnpm build`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
-- Pending: the User must run `pnpm dev:1b` and judge the integration, the
+- Pending: the User must run `pnpm dev` and judge the integration, the
   workspace tabs, the inspector, and the duration control visually.
 
 ## What Was Decided
 
-1. The integration lives inside `experiments/1b`; the pure execution engine is
+1. The integration lives inside `src/editor`; the pure execution engine is
    used as-is and remains independent of React.
 2. A block's duration is a document property, and its unit is stored with it.
    A beats duration follows the timeline BPM; a seconds duration is absolute and
@@ -258,7 +258,7 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     data and stage commands. Sound also uses the media subtype but has no output
     adapter while its effect remains timer-only. Kind dispatch is confined to the
      execution factory. Multi-phase structure remains independent of this hierarchy.
-28. The grid's colored fade surfaces use `generate_dot_gradient.ts` as an alpha
+28. The grid's colored fade surfaces use `src/editor/dot-gradient.ts` as an alpha
     mask image, not a dark dot overlay. Dot radii follow the supplied linear
     interpolation from small dots at the outer edge to overlapping dots at the
     inner edge. Gaps reveal the timeline; the body stays solid. Labels and drag
