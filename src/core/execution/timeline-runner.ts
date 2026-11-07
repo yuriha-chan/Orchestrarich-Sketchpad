@@ -20,6 +20,11 @@ export interface TimelineDefinition {
   readonly tracks: readonly TrackDefinition[];
 }
 
+export interface BarrierSpan {
+  readonly start: number;
+  readonly end: number;
+}
+
 export interface BlockSnapshot {
   readonly id: string;
   readonly trackId: string;
@@ -58,6 +63,9 @@ interface Placement {
   readonly start: number;
   readonly end: number;
   readonly cooperativeSkip: boolean;
+  state: BlockState;
+  autoSkipFired: boolean;
+  skipHandler?: SkipHandler;
 }
 
 function flattenAndValidate(definition: TimelineDefinition): Placement[] {
@@ -99,7 +107,9 @@ function flattenAndValidate(definition: TimelineDefinition): Placement[] {
         trackId: track.id,
         start: block.start,
         end,
-        cooperativeSkip: block.cooperativeSkip === true,
+        cooperativeSkip: block.cooperativeSkip ?? false,
+        state: "pending",
+        autoSkipFired: false,
       });
     }
   }
@@ -109,13 +119,10 @@ function flattenAndValidate(definition: TimelineDefinition): Placement[] {
 
 export class TimelineRunner {
   private readonly placements: readonly Placement[];
-  private readonly states = new Map<string, BlockState>();
   private readonly options: TimelineRunnerOptions;
   private readonly listeners = new Set<(snapshot: TimelineSnapshot) => void>();
-  private readonly skipHandlers = new Map<string, SkipHandler>();
-  private readonly autoSkipFired = new Set<string>();
-  private readonly terminated = new Set<string>();
   private readonly horizon: number;
+  private readonly barrierCheckTimes: readonly number[];
 
   private currentTime = 0;
   private currentPhase: TimelinePhase = "idle";
@@ -131,10 +138,9 @@ export class TimelineRunner {
       (max, placement) => Math.max(max, placement.end),
       0,
     );
-
-    for (const placement of this.placements) {
-      this.states.set(placement.id, "pending");
-    }
+    this.barrierCheckTimes = [
+      ...new Set(this.placements.map((placement) => placement.end)),
+    ].sort((a, b) => a - b);
   }
 
   get time(): number {
@@ -143,6 +149,22 @@ export class TimelineRunner {
 
   get phase(): TimelinePhase {
     return this.currentPhase;
+  }
+
+  barrierSpan(time: number = this.currentTime): BarrierSpan {
+    let start = 0;
+    let end = 0;
+
+    for (const checkTime of this.barrierCheckTimes) {
+      if (checkTime <= time) {
+        start = checkTime;
+      } else {
+        end = checkTime;
+        break;
+      }
+    }
+
+    return { start, end: end > start ? end : start };
   }
 
   start(): void {
@@ -158,9 +180,6 @@ export class TimelineRunner {
     for (const placement of this.runningPlacements()) {
       if (this.currentPhase !== "running") {
         break;
-      }
-      if (this.states.get(placement.id) !== "running") {
-        continue;
       }
       this.deliverSkip(placement, "user");
     }
@@ -198,7 +217,7 @@ export class TimelineRunner {
     }
 
     return this.placements.filter(
-      (placement) => this.states.get(placement.id) === "running",
+      (placement) => placement.state === "running",
     );
   }
 
@@ -210,7 +229,7 @@ export class TimelineRunner {
     return this.placements.filter(
       (placement) =>
         placement.end === this.currentTime + 1 &&
-        this.states.get(placement.id) === "running",
+        placement.state === "running",
     );
   }
 
@@ -219,23 +238,21 @@ export class TimelineRunner {
     try {
       result = this.options.onBlockStart?.(this.toBlockSnapshot(placement));
     } catch {
-      this.failBlock(placement.id);
+      this.failBlock(placement);
       return;
     }
     if (result === undefined) {
       return;
     }
-    if (result.skip !== undefined) {
-      this.skipHandlers.set(placement.id, result.skip);
-    }
+    placement.skipHandler = result.skip;
     result.execution.then(
-      () => this.completeBlock(placement.id),
-      () => this.failBlock(placement.id),
+      () => this.completeBlock(placement),
+      () => this.failBlock(placement),
     );
   }
 
   private deliverSkip(placement: Placement, reason: SkipReason): void {
-    const handler = this.skipHandlers.get(placement.id);
+    const handler = placement.skipHandler;
     if (handler === undefined) {
       return;
     }
@@ -243,36 +260,35 @@ export class TimelineRunner {
     try {
       result = handler(reason);
     } catch {
-      this.failBlock(placement.id);
+      this.failBlock(placement);
       return;
     }
     if (result !== undefined) {
-      Promise.resolve(result).catch(() => this.failBlock(placement.id));
+      Promise.resolve(result).catch(() => this.failBlock(placement));
     }
   }
 
-  private completeBlock(blockId: string): void {
+  private completeBlock(placement: Placement): void {
     if (this.currentPhase !== "running") {
       return;
     }
-    if (this.states.get(blockId) !== "running") {
+    if (placement.state !== "running") {
       return;
     }
-    this.states.set(blockId, "completed");
-    this.skipHandlers.delete(blockId);
+    placement.state = "completed";
+    placement.skipHandler = undefined;
     this.pump();
   }
 
-  private failBlock(blockId: string): void {
+  private failBlock(placement: Placement): void {
     if (this.currentPhase !== "running") {
       return;
     }
-    if (this.states.get(blockId) !== "running") {
+    if (placement.state !== "running") {
       return;
     }
-    this.states.set(blockId, "failed");
+    placement.state = "failed";
     this.currentPhase = "failed";
-    this.skipHandlers.clear();
     this.terminateRunning();
 
     if (!this.pumping) {
@@ -290,20 +306,20 @@ export class TimelineRunner {
         if (this.currentPhase !== "running") {
           break;
         }
-        if (this.states.get(placement.id) !== "running") {
+        if (placement.state !== "running") {
           continue;
         }
         if (!placement.cooperativeSkip) {
           continue;
         }
-        if (this.autoSkipFired.has(placement.id)) {
+        if (placement.autoSkipFired) {
           continue;
         }
         if (!this.onlyCooperativeBlocksRemainUntil(placement.end)) {
           continue;
         }
 
-        this.autoSkipFired.add(placement.id);
+        placement.autoSkipFired = true;
         this.deliverSkip(placement, "cooperative");
         firedAny = true;
         break;
@@ -315,32 +331,26 @@ export class TimelineRunner {
     return this.placements.every(
       (placement) =>
         placement.end > end ||
-        this.states.get(placement.id) === "completed" ||
+        placement.state === "completed" ||
         placement.cooperativeSkip,
     );
   }
 
   private terminateEndingAt(end: number): void {
     for (const placement of this.placements) {
-      if (placement.end !== end || this.terminated.has(placement.id)) {
+      if (placement.end !== end) {
         continue;
       }
-      this.terminated.add(placement.id);
       this.options.onBlockTerminate?.(this.toBlockSnapshot(placement));
     }
   }
 
   private terminateRunning(): void {
     for (const placement of this.placements) {
-      const state = this.states.get(placement.id);
-      if (
-        (state !== "running" && state !== "failed") ||
-        this.terminated.has(placement.id)
-      ) {
+      if (placement.state !== "running" && placement.state !== "failed") {
         continue;
       }
-      this.terminated.add(placement.id);
-      this.skipHandlers.delete(placement.id);
+      placement.skipHandler = undefined;
       this.options.onBlockTerminate?.(this.toBlockSnapshot(placement));
     }
   }
@@ -356,11 +366,11 @@ export class TimelineRunner {
         const due = this.placements.filter(
           (placement) =>
             placement.start === this.currentTime &&
-            this.states.get(placement.id) === "pending",
+            placement.state === "pending",
         );
 
         for (const placement of due) {
-          this.states.set(placement.id, "running");
+          placement.state = "running";
         }
         for (const placement of due) {
           if (this.currentPhase !== "running") {
@@ -401,7 +411,7 @@ export class TimelineRunner {
 
   private notify(): void {
     const snapshot = this.snapshot();
-    for (const listener of [...this.listeners]) {
+    for (const listener of this.listeners) {
       listener(snapshot);
     }
   }
@@ -412,7 +422,7 @@ export class TimelineRunner {
       trackId: placement.trackId,
       start: placement.start,
       end: placement.end,
-      state: this.states.get(placement.id) ?? "pending",
+      state: placement.state,
       cooperativeSkip: placement.cooperativeSkip,
     };
   }

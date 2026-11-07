@@ -1315,3 +1315,45 @@ describe("TimelineRunner validation", () => {
     }
   });
 });
+
+describe("barrierSpan", () => {
+  function runnerWithChecks(): TimelineRunner {
+    return new TimelineRunner({
+      tracks: [
+        { id: "a", blocks: [{ id: "a", start: 0, length: 2 }] },
+        { id: "b", blocks: [{ id: "b", start: 0, length: 5 }] },
+        { id: "c", blocks: [{ id: "c", start: 1, length: 2 }] },
+      ],
+    });
+  }
+
+  it("splits logical time by the block end times", () => {
+    const runner = runnerWithChecks();
+
+    expect(runner.barrierSpan(0)).toEqual({ start: 0, end: 2 });
+    expect(runner.barrierSpan(1)).toEqual({ start: 0, end: 2 });
+    expect(runner.barrierSpan(2)).toEqual({ start: 2, end: 3 });
+    expect(runner.barrierSpan(3)).toEqual({ start: 3, end: 5 });
+    expect(runner.barrierSpan(4)).toEqual({ start: 3, end: 5 });
+  });
+
+  it("returns the span containing the current time by default", () => {
+    const runner = runnerWithChecks();
+
+    expect(runner.barrierSpan()).toEqual({ start: 0, end: 2 });
+  });
+
+  it("returns a degenerate span at or beyond the last check time", () => {
+    const runner = runnerWithChecks();
+
+    expect(runner.barrierSpan(5)).toEqual({ start: 5, end: 5 });
+    expect(runner.barrierSpan(8)).toEqual({ start: 5, end: 5 });
+  });
+
+  it("returns a degenerate span for an empty timeline", () => {
+    const runner = new TimelineRunner({ tracks: [] });
+
+    expect(runner.barrierSpan(0)).toEqual({ start: 0, end: 0 });
+    expect(runner.barrierSpan(4)).toEqual({ start: 0, end: 0 });
+  });
+});

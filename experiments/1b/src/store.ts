@@ -1,46 +1,143 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import type { BlockKind, Placement } from "./model";
-import { canPlace } from "./model";
+import type { BlockKind, DurationUnit, Placement, Track } from "./model";
+import {
+  canPlace,
+  clampFadesToLength,
+  convertDuration,
+  convertPlacementKind,
+  DEFAULT_BPM,
+  DEFAULT_TRACKS,
+  isMediaKind,
+  isMediaPlacement,
+} from "./model";
 import type { WorkspaceId } from "./workspaces";
 
 interface ExperimentState {
   blocks: Placement[];
+  tracks: Track[];
+  bpm: number;
   selectedKind: BlockKind;
   selectedId: string | null;
   workspace: WorkspaceId;
+  addTrack: () => void;
   create: (trackId: string, kind: BlockKind, start: number, length: number) => void;
   move: (id: string, trackId: string, start: number) => void;
   resize: (id: string, length: number) => void;
+  setSpan: (
+    id: string,
+    start: number,
+    length: number,
+    fades?: { fadeIn?: number; fadeOut?: number },
+  ) => void;
   remove: (id: string) => void;
   clear: () => void;
   select: (id: string | null) => void;
   setKind: (kind: BlockKind) => void;
   setBlockKind: (id: string, kind: BlockKind) => void;
   setCooperativeSkip: (id: string, value: boolean) => void;
+  setFadeIn: (id: string, value: number) => void;
+  setFadeOut: (id: string, value: number) => void;
+  setDuration: (id: string, value: number) => void;
+  setDurationUnit: (id: string, unit: DurationUnit) => void;
+  setSyncBeatsToCellSpan: (id: string, value: boolean) => void;
+  setBpm: (value: number) => void;
   setWorkspace: (id: WorkspaceId) => void;
 }
 
+interface SpanState {
+  blocks: Placement[];
+  tracks: Track[];
+}
+
+function editBlock(
+  state: SpanState,
+  id: string,
+  edit: (block: Placement) => void,
+): void {
+  const block = state.blocks.find((candidate) => candidate.id === id);
+  if (block !== undefined) {
+    edit(block);
+  }
+}
+
+function applySpan(
+  state: SpanState,
+  block: Placement,
+  start: number,
+  length: number,
+  fades?: { fadeIn?: number; fadeOut?: number },
+): void {
+  if (
+    !canPlace(
+      state.tracks,
+      state.blocks,
+      { trackId: block.trackId, start, length },
+      block.id,
+    )
+  ) {
+    return;
+  }
+  block.start = start;
+  block.length = length;
+  if (block.kind !== "dialogue" && block.syncBeatsToCellSpan) {
+    block.duration = length;
+  }
+  if (isMediaPlacement(block)) {
+    const clamped = clampFadesToLength(
+      fades?.fadeIn ?? block.fadeIn,
+      fades?.fadeOut ?? block.fadeOut,
+      length,
+    );
+    block.fadeIn = clamped.fadeIn;
+    block.fadeOut = clamped.fadeOut;
+  }
+}
+
 let nextId = 1;
+let nextTrackId = 1;
 
 export const useExperimentStore = create<ExperimentState>()(
   immer((set) => ({
     blocks: [],
+    tracks: DEFAULT_TRACKS.map((track) => ({ ...track })),
+    bpm: DEFAULT_BPM,
     selectedKind: "dialogue",
     selectedId: null,
     workspace: "staging",
+    addTrack: () =>
+      set((state) => {
+        state.tracks.push({
+          id: `track-${nextTrackId}`,
+          label: `Track ${state.tracks.length + 1}`,
+        });
+        nextTrackId += 1;
+      }),
     create: (trackId, kind, start, length) =>
       set((state) => {
         const id = `placement-${nextId}`;
-        const candidate: Placement = {
-          id,
-          trackId,
-          kind,
-          start,
-          length,
-          cooperativeSkip: false,
-        };
-        if (!canPlace(state.blocks, candidate)) {
+        const base = { id, trackId, start, length, cooperativeSkip: false };
+        const candidate: Placement =
+          kind === "dialogue"
+            ? { ...base, kind }
+            : isMediaKind(kind)
+              ? {
+                  ...base,
+                  kind,
+                  duration: length,
+                  durationUnit: "beats",
+                  syncBeatsToCellSpan: false,
+                  fadeIn: 0,
+                  fadeOut: 0,
+                }
+              : {
+                  ...base,
+                  kind,
+                  duration: length,
+                  durationUnit: "beats",
+                  syncBeatsToCellSpan: false,
+                };
+        if (!canPlace(state.tracks, state.blocks, candidate)) {
           return;
         }
         nextId += 1;
@@ -49,32 +146,32 @@ export const useExperimentStore = create<ExperimentState>()(
       }),
     move: (id, trackId, start) =>
       set((state) => {
-        const block = state.blocks.find((candidate) => candidate.id === id);
-        if (!block) {
-          return;
-        }
-        if (!canPlace(state.blocks, { trackId, start, length: block.length }, id)) {
-          return;
-        }
-        block.trackId = trackId;
-        block.start = start;
+        editBlock(state, id, (block) => {
+          if (
+            !canPlace(
+              state.tracks,
+              state.blocks,
+              { trackId, start, length: block.length },
+              id,
+            )
+          ) {
+            return;
+          }
+          block.trackId = trackId;
+          block.start = start;
+        });
       }),
     resize: (id, length) =>
       set((state) => {
-        const block = state.blocks.find((candidate) => candidate.id === id);
-        if (!block) {
-          return;
-        }
-        if (
-          !canPlace(
-            state.blocks,
-            { trackId: block.trackId, start: block.start, length },
-            id,
-          )
-        ) {
-          return;
-        }
-        block.length = length;
+        editBlock(state, id, (block) =>
+          applySpan(state, block, block.start, length),
+        );
+      }),
+    setSpan: (id, start, length, fades) =>
+      set((state) => {
+        editBlock(state, id, (block) =>
+          applySpan(state, block, start, length, fades),
+        );
       }),
     remove: (id) =>
       set((state) => {
@@ -98,16 +195,88 @@ export const useExperimentStore = create<ExperimentState>()(
       }),
     setBlockKind: (id, kind) =>
       set((state) => {
-        const block = state.blocks.find((candidate) => candidate.id === id);
-        if (block) {
-          block.kind = kind;
-        }
+        state.blocks = state.blocks.map((block) =>
+          block.id === id ? convertPlacementKind(block, kind) : block,
+        );
       }),
     setCooperativeSkip: (id, value) =>
       set((state) => {
-        const block = state.blocks.find((candidate) => candidate.id === id);
-        if (block) {
+        editBlock(state, id, (block) => {
           block.cooperativeSkip = value;
+        });
+      }),
+    setFadeIn: (id, value) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (!isMediaPlacement(block)) {
+            return;
+          }
+          const fades = clampFadesToLength(value, block.fadeOut, block.length);
+          block.fadeIn = fades.fadeIn;
+          block.fadeOut = fades.fadeOut;
+        });
+      }),
+    setFadeOut: (id, value) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (!isMediaPlacement(block)) {
+            return;
+          }
+          const fades = clampFadesToLength(block.fadeIn, value, block.length);
+          block.fadeIn = fades.fadeIn;
+          block.fadeOut = fades.fadeOut;
+        });
+      }),
+    setDuration: (id, value) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (
+            block.kind === "dialogue" ||
+            block.syncBeatsToCellSpan ||
+            !Number.isFinite(value) ||
+            value <= 0
+          ) {
+            return;
+          }
+          block.duration = value;
+        });
+      }),
+    setDurationUnit: (id, unit) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (
+            block.kind === "dialogue" ||
+            block.syncBeatsToCellSpan ||
+            block.durationUnit === unit
+          ) {
+            return;
+          }
+          block.duration = convertDuration(
+            block.duration,
+            block.durationUnit,
+            unit,
+            state.bpm,
+          );
+          block.durationUnit = unit;
+        });
+      }),
+    setSyncBeatsToCellSpan: (id, value) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (block.kind === "dialogue") {
+            return;
+          }
+          block.syncBeatsToCellSpan = value;
+          if (value) {
+            block.durationUnit = "beats";
+            block.duration = block.length;
+          }
+        });
+      }),
+    setBpm: (value) =>
+      set((state) => {
+        if (Number.isFinite(value) && value > 0) {
+          state.bpm = value;
         }
       }),
     setWorkspace: (id) =>

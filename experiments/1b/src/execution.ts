@@ -1,5 +1,6 @@
 import {
   TimelineRunner,
+  type BarrierSpan,
   type BlockSnapshot,
   type BlockStartResult,
   type SkipReason,
@@ -7,61 +8,101 @@ import {
   type TimelinePhase,
   type TimelineSnapshot,
 } from "../../../src/core/execution/timeline-runner.ts";
-import type { BlockKind, Placement } from "./model";
-import { TRACKS } from "./model";
+import type { DurationPlacement, Placement, Track } from "./model";
+import {
+  blockDurationSeconds,
+  isMediaPlacement,
+  mediaPhases,
+  phaseBlockId,
+} from "./model";
 
 export const SKIP_FADE_MS = 150;
 
-export const KIND_DURATION_MS: Record<Exclude<BlockKind, "dialogue">, number> = {
-  camera: 500,
-  sound: 350,
-  animation: 700,
-};
+type TimelineBlock = TimelineDefinition["tracks"][number]["blocks"][number];
 
 export interface TimelineSessionOptions {
   readonly onSnapshot?: (snapshot: TimelineSnapshot) => void;
   readonly onActivity?: (message: string) => void;
+  readonly onFinalize?: (placementId: string) => void;
 }
 
 export function toTimelineDefinition(
+  tracks: readonly Track[],
   placements: readonly Placement[],
 ): TimelineDefinition {
   return {
-    tracks: TRACKS.map((track) => ({
+    tracks: tracks.map((track) => ({
       id: track.id,
       blocks: placements
         .filter((placement) => placement.trackId === track.id)
-        .map((placement) => ({
-          id: placement.id,
-          start: placement.start,
-          length: placement.length,
-          cooperativeSkip: placement.cooperativeSkip,
-        })),
+        .flatMap((placement) => placementBlocks(placement)),
     })),
   };
+}
+
+function placementBlocks(placement: Placement): TimelineBlock[] {
+  if (!isMediaPlacement(placement)) {
+    return [
+      {
+        id: placement.id,
+        start: placement.start,
+        length: placement.length,
+        cooperativeSkip: placement.cooperativeSkip,
+      },
+    ];
+  }
+  return mediaPhases(
+    placement.fadeIn,
+    placement.fadeOut,
+    placement.length,
+  ).map((phase) => ({
+    id: phaseBlockId(placement.id, phase.index),
+    start: placement.start + phase.offset,
+    length: phase.length,
+    cooperativeSkip: placement.cooperativeSkip,
+  }));
 }
 
 export class TimelineSession {
   private readonly runner: TimelineRunner;
   private readonly unsubscribe: () => void;
-  private readonly placementsById: ReadonlyMap<string, Placement>;
+  private readonly placementByBlockId: Readonly<Record<string, Placement>>;
   private readonly cleanups = new Map<string, () => void>();
   private readonly dialogueResolvers = new Map<string, () => void>();
   private readonly options: TimelineSessionOptions;
+  private readonly bpm: number;
   private lastPhase: TimelinePhase = "idle";
 
   constructor(
+    tracks: readonly Track[],
     placements: readonly Placement[],
+    bpm: number,
     options: TimelineSessionOptions = {},
   ) {
     this.options = options;
-    this.placementsById = new Map(
-      placements.map((placement) => [placement.id, placement]),
+    this.bpm = bpm;
+    const byBlock: Record<string, Placement> = {};
+    for (const placement of placements) {
+      if (isMediaPlacement(placement)) {
+        for (const phase of mediaPhases(
+          placement.fadeIn,
+          placement.fadeOut,
+          placement.length,
+        )) {
+          byBlock[phaseBlockId(placement.id, phase.index)] = placement;
+        }
+      } else {
+        byBlock[placement.id] = placement;
+      }
+    }
+    this.placementByBlockId = byBlock;
+    this.runner = new TimelineRunner(
+      toTimelineDefinition(tracks, placements),
+      {
+        onBlockStart: (block) => this.startBlock(block),
+        onBlockTerminate: (block) => this.terminateBlock(block),
+      },
     );
-    this.runner = new TimelineRunner(toTimelineDefinition(placements), {
-      onBlockStart: (block) => this.startBlock(block),
-      onBlockTerminate: (block) => this.terminateBlock(block),
-    });
     this.unsubscribe = this.runner.subscribe((snapshot) => {
       this.trackPhase(snapshot);
       this.options.onSnapshot?.(snapshot);
@@ -70,6 +111,10 @@ export class TimelineSession {
 
   get snapshot(): TimelineSnapshot {
     return this.runner.snapshot();
+  }
+
+  barrierSpan(time: number): BarrierSpan {
+    return this.runner.barrierSpan(time);
   }
 
   start(): void {
@@ -81,9 +126,8 @@ export class TimelineSession {
   }
 
   advanceDialogue(blockId: string): void {
-    const placement = this.placementsById.get(blockId);
     const resolve = this.dialogueResolvers.get(blockId);
-    if (placement?.kind !== "dialogue" || resolve === undefined) {
+    if (resolve === undefined) {
       return;
     }
     this.dialogueResolvers.delete(blockId);
@@ -101,15 +145,12 @@ export class TimelineSession {
     this.dialogueResolvers.clear();
   }
 
-  private startBlock(block: BlockSnapshot): BlockStartResult | undefined {
-    const placement = this.placementsById.get(block.id);
-    if (placement === undefined) {
-      return undefined;
-    }
+  private startBlock(block: BlockSnapshot): BlockStartResult {
+    const placement = this.placementByBlockId[block.id];
     if (placement.kind === "dialogue") {
       return this.startDialogue(block);
     }
-    return this.startTimed(block, placement.kind, placement);
+    return this.startDuration(block, placement);
   }
 
   private startDialogue(block: BlockSnapshot): BlockStartResult {
@@ -124,14 +165,14 @@ export class TimelineSession {
     return { execution };
   }
 
-  private startTimed(
+  private startDuration(
     block: BlockSnapshot,
-    kind: Exclude<BlockKind, "dialogue">,
-    placement: Placement,
+    placement: DurationPlacement,
   ): BlockStartResult {
-    const duration = KIND_DURATION_MS[kind] * placement.length;
+    const phaseLength = block.end - block.start;
+    const share = phaseLength / placement.length;
+    const duration = blockDurationSeconds(placement, this.bpm) * 1000 * share;
     let timer: ReturnType<typeof setTimeout>;
-    let settled = false;
     let skipping = false;
     let resolveExecution!: () => void;
     const execution = new Promise<void>((resolve) => {
@@ -139,10 +180,6 @@ export class TimelineSession {
     });
 
     const settle = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
       clearTimeout(timer);
       this.cleanups.delete(block.id);
       resolveExecution();
@@ -154,13 +191,13 @@ export class TimelineSession {
     });
 
     const skip = (reason: SkipReason) => {
-      if (settled || skipping) {
+      if (skipping) {
         return;
       }
       skipping = true;
       clearTimeout(timer);
       timer = setTimeout(settle, SKIP_FADE_MS);
-      this.report(`Skip (${reason}): ${block.id} at t=${this.runner.time}`);
+      this.report(`Skip (${reason}): ${placement.id} at t=${this.runner.time}`);
     };
 
     return { execution, skip };
@@ -173,6 +210,10 @@ export class TimelineSession {
     }
     this.cleanups.delete(block.id);
     this.dialogueResolvers.delete(block.id);
+    const placement = this.placementByBlockId[block.id];
+    if (block.end === placement.start + placement.length) {
+      this.options.onFinalize?.(placement.id);
+    }
   }
 
   private trackPhase(snapshot: TimelineSnapshot): void {

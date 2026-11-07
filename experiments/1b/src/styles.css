@@ -101,6 +101,10 @@ body {
   background: #ea580c;
 }
 
+.palette-wait {
+  background: #475569;
+}
+
 .toolbar-actions {
   display: flex;
   gap: 8px;
@@ -219,6 +223,42 @@ body {
   color: #64748b;
 }
 
+.duration-control {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.duration-control .inspector-number {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.unit-toggle {
+  display: flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.unit-toggle button {
+  border: 0;
+  background: #ffffff;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+}
+
+.unit-toggle button + button {
+  border-left: 1px solid #cbd5e1;
+}
+
+.unit-toggle button.is-active {
+  background: #0f172a;
+  color: #ffffff;
+}
+
 .inspector-range {
   margin: 0;
   font-size: 12px;
@@ -305,7 +345,6 @@ body {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: var(--cell-width);
   border: 4px solid #f59e0b;
   background: rgb(245 158 11 / 0.16);
   box-shadow: inset 0 0 0 1px rgb(180 83 9 / 0.5);
@@ -387,7 +426,13 @@ body {
   background: #ea580c;
 }
 
+.block-wait {
+  background: #475569;
+}
+
 .block-label {
+  position: relative;
+  z-index: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -402,6 +447,11 @@ body {
   height: 100%;
   background: rgb(255 255 255 / 0.25);
   cursor: ew-resize;
+}
+
+.resize-handle-start {
+  right: auto;
+  left: 0;
 }
 
 .status {
@@ -421,6 +471,25 @@ body {
 .run-controls {
   display: flex;
   gap: 8px;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.bpm-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.bpm-field .inspector-number {
+  width: 68px;
 }
 
 .run-controls button {
@@ -690,4 +759,59 @@ body {
   height: 1px;
   margin: 4px 2px;
   background: #e2e8f0;
+}
+
+.block.is-media::before,
+.block.is-media::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: rgb(255 255 255 / 0.35);
+  opacity: 0;
+  transition: opacity 120ms;
+  pointer-events: none;
+}
+
+.block.is-media::before {
+  left: 0;
+}
+
+.block.is-media::after {
+  right: 0;
+}
+
+.block.is-media:hover::before,
+.block.is-media:hover::after,
+.block.is-media.is-dragging::before,
+.block.is-media.is-dragging::after {
+  opacity: 1;
+}
+
+.block-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.block-fade-in {
+  left: 0;
+  background: linear-gradient(90deg, rgb(15 23 42 / 0.55), transparent);
+}
+
+.block-fade-out {
+  right: 0;
+  background: linear-gradient(270deg, rgb(15 23 42 / 0.55), transparent);
+}
+
+.block-phase-boundary {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: rgb(255 255 255 / 0.8);
+  pointer-events: none;
 }

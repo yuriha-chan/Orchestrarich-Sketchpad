@@ -18,18 +18,48 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   UI state; the document, selection, and running session are shared.
 - Per-kind execution, for observation only:
   - Dialogue shows a dialog with the text "lazy dog jumps ..." and an OK button
-    in the stage below the timeline. Pressing OK completes the block.
-  - Camera, sound, and animation run for 500, 350, and 700 ms per unit cell.
+    in the stage below the timeline. Pressing OK completes the block. Dialogue
+    has no duration property.
+  - Camera, sound, animation, and wait run for the block's duration. A block's
+    duration is stored with its unit: beats follow the timeline BPM, while
+    seconds are absolute. BPM is a timeline-level property (default 120).
   - A running animation shows a progress bar in the stage, filling over its
-    natural duration.
+    natural duration, and its stage card fades its opacity in and out with the
+    block's fade phases. The card stays mounted from the block start until the
+    end time is reached, including while a barrier waits for other blocks, and
+    its progress pauses while no phase is running.
+  - A wait block only occupies logical time; it has no stage effect.
   - A skip request shortens a timed block to a 150 ms fade before completion.
   - Dialogue blocks have no skip handler and therefore ignore skip requests.
-- A selected placement is edited in an inspector beside the grid: kind, start,
-  length, and cooperative skip. The engine decides when to fire the automatic
-  skip event.
+  - A media block (sound or animation) is a container with fade-in and fade-out
+    lengths in cells. The session expands it into adjacent phase blocks at the
+    fade boundaries, so every boundary is an end-time barrier. Each phase runs
+    for the container's duration times its share of the cell span.
+  - The stage card of a media block belongs to the container and stays mounted
+    across the phase barriers, so the media is not cut off by the fades. It is
+    unmounted when the container is finalized, that is, when its last phase goes
+    through termination.
+- A selected placement is edited in an inspector beside the grid: kind,
+  cooperative skip, duration and sync of beats to the cell span for timed and
+  media blocks, and fade lengths for media blocks. Start and the cell span are
+  read-only; the block is moved and stretched on the grid. The engine decides
+  when to fire the automatic skip event.
 - A run uses the placements as they were when Run was pressed. Editing is
   locked while a run exists; Reset returns to editing.
-- The core engine is unchanged.
+- The track list is document state. The three default tracks can be extended
+  with "Add track" while editing; the engine receives every track, including an
+  empty one.
+- Blocks are moved by dragging the body and stretched from either edge with
+  the left button. Right-dragging a media block's edge inward sets a fade
+  within the current span; dragging outward extends the block and assigns the
+  new cells to that fade.
+- The grid is horizontally unbounded. It renders an initial number of columns
+  and extends the rendered columns in chunks as the horizontal scroll reaches
+  the right edge. The ruler, the track rows, and the block layer share that
+  width.
+- `TimelineRunner.barrierSpan(t)` returns the span between the distinct block
+  end times that contains `t`; the time cursor spans that barrier span.
+- The core engine is used as-is apart from the added `barrierSpan` query.
 
 ## Criterion
 
@@ -39,29 +69,53 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   block that ignores the request.
 - A cooperative block auto-skips when every not-completed block with
   `end <= block.end` is cooperative.
+- A timed block executes for its duration: a beats duration scales with the
+  BPM, a seconds duration does not, and a block whose beats are synced to its
+  cell span follows the span.
+- A wait block holds its column for its duration and has no stage effect.
+- `barrierSpan(t)` splits logical time at the distinct block end times. For
+  blocks ending at 2, 3, and 5, it returns [0,2] for t=0 and t=1, [2,3] for t=2,
+  and [3,5] for t=3 and t=4.
+- The time cursor covers the current barrier span, not only the current column.
+- A media block with fades creates a barrier at each phase boundary, and its
+  stage effect continues across those barriers.
+- Dragging a block's left edge changes its start while its end stays fixed.
+- Right-dragging a media edge inward sets the fade within the block; dragging
+  outward extends the block and fades the new cells.
+- A running animation's stage card fades its opacity in and out with its fade
+  phases.
+- An animation's stage card remains visible while the timeline waits at a
+  barrier, and its progress pauses while no phase of the block is running.
+- Adding a track gives the grid a new row and the run includes that track.
+- Scrolling to the right edge extends the timeline columns; a block can be
+  placed beyond the initially rendered columns.
+- A run that reaches the finished phase performs Reset automatically and
+  returns to editing; a failed run stays failed until Reset is pressed.
 - Run, Skip, and Reset work together without duplicating the barrier in the UI.
 
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 59 tests pass (45 core + 9 placement model + 5 integration).
+- `pnpm test`: 86 tests pass (49 core + 25 placement model + 12 integration).
 - `pnpm build:1b`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
-- `pnpm typecheck`, `pnpm test` (59 tests), and `pnpm build:1b` pass with the
-  workspace tabs and the inspector.
 - Pending: the User must run `pnpm dev:1b` and judge the integration, the
-  workspace tabs, and the inspector visually.
+  workspace tabs, the inspector, and the duration control visually.
 
 ## What Was Decided
 
 1. The integration lives inside `experiments/1b`; the pure execution engine is
    used as-is and remains independent of React.
-2. The per-kind execution timings above are experimental scaffolding. They are
-   not a design requirement and can be replaced once blocks carry their own
-   duration or media parameters.
-3. Dialogue ignores skip requests so the integration also shows the rule that
-   the barrier waits for actual completion after a skip.
+2. A block's duration is a document property, and its unit is stored with it.
+   A beats duration follows the timeline BPM; a seconds duration is absolute and
+   is unaffected by BPM changes. Switching the unit converts the stored value at
+   the current BPM, so the real duration at the moment of the switch is
+   preserved. Timed blocks execute for the resulting seconds, replacing the
+   earlier experimental per-kind timings.
+3. Dialogue ignores skip requests, waits for OK, and has no duration property.
+   This keeps the demonstration that the barrier waits for actual completion
+   after a skip.
 4. Cooperative skip is stored on the placement and passed to the engine. The
    UI never fires the automatic event itself.
 5. A run works on a placement snapshot. Editing, dragging, stretching, and
@@ -85,24 +139,102 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
    editing controls and expands the stage. The Preview workspace is where the
    PixiJS game preview can live later.
 11. Property editing uses a selection-gated inspector beside the grid in
-    Staging instead of menu items or a modal dialog. It shows kind, start,
-    length, and cooperative skip; numbers commit on Enter or blur and invalid
-    results leave the placement unchanged. The fields are read-only while a run
-    is loaded, and the inspector is hidden in Preview, where editing is not
-    available.
-12. While a run is active, the current logical time is marked by a rectangular
-    frame over its column of the track area, in addition to the highlighted
-    ruler cell. The frame spans the whole unit-cell column because logical time
-    is a column, not an instant, and it does not intercept pointer events.
+    Staging instead of menu items or a modal dialog. It shows the block's
+    editable properties (decision 13); numbers commit on Enter or blur and
+    invalid results leave the placement unchanged. The fields are read-only
+    while a run is loaded, and the inspector is hidden in Preview, where editing
+    is not available.
+12. While a run is active, the current barrier span is marked by a rectangular
+    frame over the track area, in addition to the highlighted ruler cell. The
+    frame spans from the last barrier check time at or before the current time
+    to the next check time, and it does not intercept pointer events.
+13. The inspector does not edit start or length. Start and the cell span are
+    read-only; the block is moved and stretched directly on the grid. Duration
+    is a separate property of timed blocks whose beats/seconds unit is stored on
+    the block; dialogue has no duration. Enabling "Sync beats to cell span"
+    makes the duration follow the span (one cell = one beat); it stores the
+    duration in beats and makes both the duration field and the unit toggle
+    read-only while enabled. BPM is a timeline property edited in the toolbar,
+    and it is locked while a run is loaded.
+14. Wait is a timed block kind with no stage effect; it only occupies logical
+    time. Because the kind is part of the stored document, changing a block's
+    kind keeps a timed block's duration but gives a dialogue that becomes timed
+    the duration of its cell span in beats, and a timed block that becomes a
+    dialogue loses its duration properties.
+15. Barrier check times are the distinct block end times, not every unit cell.
+    `barrierSpan(t)` returns the span between the previous check time at or
+    before `t` (with 0 as the floor) and the next check time after `t`; a check
+    time belongs to the span that starts at it. At or beyond the last check time
+    the span is degenerate at that time, and an empty timeline returns [0,0].
+    The query is structural: completed blocks still define the spans.
+16. The document has no horizontal column limit. The grid renders an initial 16
+    columns and adds another 16 when the horizontal scroll reaches within four
+    cells of the right edge. The rendered width is shared by the ruler, the
+    track rows, and the block layer so the grid background and the barrier-span
+    cursor extend with the columns.
+17. Tracks are document state, not constants. "Add track" appends a track with
+    a generated id and a positional label while editing; the engine definition
+    includes every track. Tracks cannot yet be renamed, reordered, or removed,
+    and "Clear all" removes blocks but keeps the tracks.
+18. When a run reaches the finished phase, the UI performs the same reset
+    automatically: the session is disposed, the snapshot and activity are
+    cleared, and editing is unlocked. Only the finished phase auto-resets; a
+    failed run stays failed until Reset so the failure remains visible.
+19. A media block (sound, animation) is a container of directly adjacent phase
+    blocks, as the design describes for multi-phase blocks. Fade-in and fade-out
+    are lengths in cells; the session splits the container at those boundaries,
+    and each phase executes for the container duration proportionally to its
+    share of the cell span. The phase ends are ordinary barrier check times, so
+    logical time stops at each fade boundary until that phase completes. The
+    stage effect belongs to the container and stays mounted across the
+    boundaries, so the media is not cut off by the fades.
+20. Blocks are stretched from either edge with the left button. Dragging the
+    left edge changes the start and length while the end stays fixed; dragging
+    the right edge changes the end. Right-dragging a media block's edge inward
+    sets the fade-in or fade-out length within the current span; dragging
+    outward expands the block and assigns the expanded cells to that fade, so an
+    existing fade grows by the same amount. A span and fade change is applied
+    atomically and rejected as a whole if it would overlap another block. A
+    right press on an edge suppresses the context menu for that gesture, while a
+    right press on the body still opens the menu. Phases are not separately
+    selectable and inherit the container's cooperative skip for now.
+21. A running animation's stage card fades its opacity with the fade phases: it
+    starts transparent, reaches full opacity at the end of the fade-in, and
+    returns to transparent at the end of the block. The opacity animation uses
+    the block's duration and fade fractions and, like the progress bar, is timed
+    on the wall clock rather than driven by logical-time snapshots.
+22. The animation card represents the whole media block, not one phase. Its
+    lifetime ends at container finalization: the session reports when a
+    placement's last phase is terminated, and the card unmounts on that event
+    rather than on a logical-time comparison. It therefore stays mounted when a
+    barrier waits for other blocks at a phase boundary or at the end time, and
+    also after the block completes early, until the container is finalized.
+    While no phase of the block is running, both the progress bar and the
+    opacity animation are paused, so a barrier wait does not advance them.
+23. Safety in this code comes from contracts and types, not from ad-hoc
+    runtime guards. Engine block ids resolve to placements through total
+    records because the session builds both from the same placement list; the
+    runner keeps a block's lifecycle state, automatic-skip flag, and skip
+    handler on its internal placement instead of parallel keyed collections;
+    and the UI represents a run as one nullable `RunState` (session, snapshot,
+    finalized ids) instead of correlated nullable fields. Editing commands with
+    an unknown id are a deliberate no-op centralized in `editBlock`. This
+    refactor does not change observable behavior.
 
 ## Carry-Over
 
-- Whether per-kind timing should become document-defined duration or media
-  playback parameters.
 - How a failed block should be surfaced; the current UI has no way to make one
   fail.
 - Whether editing should remain possible while a run is paused or rewound.
 - Per-workspace view state (scroll position, zoom, panel widths) and whether the
   active workspace should persist across reloads.
+- Whether tracks should be renamed, reordered, or removed, and whether the
+  positional "Track N" label is sufficient once a timeline has many tracks.
+- Whether the extending column list needs virtualization for very long
+  timelines.
 - Which additional workspaces are justified once more views exist (PixiJS
   preview, slots and wires, phase editing), and whether tabs confuse beginners.
+- Per-phase selection, editing, and cooperative skip for multi-phase blocks;
+  currently every phase inherits the container's cooperative skip.
+- The fade shape: the UI draws a linear gradient. Whether fades need easing or a
+  media-specific curve is undecided.

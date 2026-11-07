@@ -1,13 +1,36 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
+  UIEvent as ReactUIEvent,
 } from "react";
-import type { BlockKind, Placement } from "./model";
-import { BLOCK_KINDS, BLOCK_LABELS, COLUMNS, TRACKS, canPlace } from "./model";
+import type {
+  BlockKind,
+  MediaPlacement,
+  Placement,
+  Track,
+} from "./model";
+import {
+  BLOCK_KINDS,
+  BLOCK_LABELS,
+  MAX_BPM,
+  MIN_BPM,
+  blockDurationSeconds,
+  canPlace,
+  isMediaPlacement,
+  mediaPhases,
+  phaseBlockId,
+} from "./model";
 import { useExperimentStore } from "./store";
-import { KIND_DURATION_MS, TimelineSession } from "./execution";
+import { TimelineSession } from "./execution";
 import { WORKSPACES } from "./workspaces";
 import type {
   BlockState,
@@ -17,6 +40,8 @@ import type {
 
 const CELL_WIDTH = 64;
 const TRACK_HEIGHT = 48;
+const INITIAL_COLUMNS = 16;
+const COLUMN_CHUNK = 16;
 const DIALOGUE_TEXT = "lazy dog jumps ...";
 
 const PHASE_LABELS: Record<TimelinePhase, string> = {
@@ -26,13 +51,24 @@ const PHASE_LABELS: Record<TimelinePhase, string> = {
   failed: "Failed",
 };
 
+const STATE_RANK: Record<BlockState, number> = {
+  failed: 4,
+  running: 3,
+  pending: 2,
+  completed: 1,
+};
+
+const FADE_HANDLE_PX = 10;
+
 interface DragState {
   readonly pointerId: number;
-  readonly mode: "move" | "resize";
+  readonly mode: "move" | "resize" | "resizeStart" | "fadeIn" | "fadeOut";
   readonly originX: number;
   readonly originY: number;
   readonly start: number;
   readonly length: number;
+  readonly fadeIn: number;
+  readonly fadeOut: number;
   readonly trackId: string;
 }
 
@@ -50,6 +86,12 @@ interface ContextMenuState {
   readonly y: number;
 }
 
+interface RunState {
+  readonly session: TimelineSession;
+  readonly snapshot: TimelineSnapshot;
+  readonly finalized: ReadonlySet<string>;
+}
+
 const gridVariables = {
   "--cell-width": `${CELL_WIDTH}px`,
   "--track-height": `${TRACK_HEIGHT}px`,
@@ -57,6 +99,8 @@ const gridVariables = {
 
 export function App() {
   const blocks = useExperimentStore((state) => state.blocks);
+  const tracks = useExperimentStore((state) => state.tracks);
+  const addTrack = useExperimentStore((state) => state.addTrack);
   const selectedKind = useExperimentStore((state) => state.selectedKind);
   const selectedId = useExperimentStore((state) => state.selectedId);
   const setKind = useExperimentStore((state) => state.setKind);
@@ -70,19 +114,34 @@ export function App() {
   const setCooperativeSkip = useExperimentStore(
     (state) => state.setCooperativeSkip,
   );
+  const setFadeIn = useExperimentStore((state) => state.setFadeIn);
+  const setFadeOut = useExperimentStore((state) => state.setFadeOut);
+  const bpm = useExperimentStore((state) => state.bpm);
+  const setBpm = useExperimentStore((state) => state.setBpm);
+  const setDuration = useExperimentStore((state) => state.setDuration);
+  const setDurationUnit = useExperimentStore((state) => state.setDurationUnit);
+  const setSyncBeatsToCellSpan = useExperimentStore(
+    (state) => state.setSyncBeatsToCellSpan,
+  );
   const workspace = useExperimentStore((state) => state.workspace);
   const setWorkspace = useExperimentStore((state) => state.setWorkspace);
   const [creation, setCreation] = useState<CreationState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [session, setSession] = useState<TimelineSession | null>(null);
-  const [snapshot, setSnapshot] = useState<TimelineSnapshot | null>(null);
+  const [columnCount, setColumnCount] = useState(INITIAL_COLUMNS);
+  const [run, setRun] = useState<RunState | null>(null);
   const [activity, setActivity] = useState<string | null>(null);
   const sessionRef = useRef<TimelineSession | null>(null);
 
-  const editable = session === null;
-  const phase: TimelinePhase = snapshot?.phase ?? "idle";
-  const running = phase === "running";
+  const editable = run === null;
+  const phase: TimelinePhase = run?.snapshot.phase ?? "idle";
+  const runningRun =
+    run !== null && run.snapshot.phase === "running" ? run : null;
+  const running = runningRun !== null;
   const isStaging = workspace === "staging";
+  const barrierSpan =
+    runningRun === null
+      ? null
+      : runningRun.session.barrierSpan(runningRun.snapshot.time);
 
   useEffect(() => {
     return () => {
@@ -136,59 +195,165 @@ export function App() {
     };
   }, [contextMenu]);
 
-  const runBlocks = useMemo(
-    () => new Map((snapshot?.blocks ?? []).map((block) => [block.id, block])),
-    [snapshot],
+  const blocksById = useMemo(() => {
+    const map: Record<string, Placement> = {};
+    for (const block of blocks) {
+      if (isMediaPlacement(block)) {
+        for (const phase of mediaPhases(
+          block.fadeIn,
+          block.fadeOut,
+          block.length,
+        )) {
+          map[phaseBlockId(block.id, phase.index)] = block;
+        }
+      } else {
+        map[block.id] = block;
+      }
+    }
+    return map;
+  }, [blocks]);
+  const runStateByPlacementId = useMemo(() => {
+    const map = new Map<string, BlockState>();
+    for (const engineBlock of run?.snapshot.blocks ?? []) {
+      const placement = blocksById[engineBlock.id];
+      const existing = map.get(placement.id);
+      if (
+        existing === undefined ||
+        STATE_RANK[engineBlock.state] > STATE_RANK[existing]
+      ) {
+        map.set(placement.id, engineBlock.state);
+      }
+    }
+    return map;
+  }, [run, blocksById]);
+  const blockingPlacementIds = new Set(
+    (run?.snapshot.blockingBlockIds ?? []).map((id) => blocksById[id].id),
   );
-  const blockingIds = new Set(snapshot?.blockingBlockIds ?? []);
-  const blockingLabels = (snapshot?.blockingBlockIds ?? []).map((id) => {
-    const placement = blocks.find((block) => block.id === id);
-    return placement
-      ? `${BLOCK_LABELS[placement.kind]}@${placement.start}`
-      : id;
+  const blockingLabels = (run?.snapshot.blockingBlockIds ?? []).map((id) => {
+    const placement = blocksById[id];
+    return `${BLOCK_LABELS[placement.kind]}@${placement.start}`;
   });
 
   const selected = blocks.find((block) => block.id === selectedId) ?? null;
   const menuBlock = contextMenu
     ? (blocks.find((block) => block.id === contextMenu.blockId) ?? null)
     : null;
+  const selectedDuration =
+    selected && selected.kind !== "dialogue"
+      ? roundTo(
+          selected.syncBeatsToCellSpan ? selected.length : selected.duration,
+          3,
+        )
+      : 0;
 
-  const blocksById = useMemo(
-    () => new Map(blocks.map((block) => [block.id, block])),
-    [blocks],
-  );
-  const runningPlacements = (snapshot?.blocks ?? [])
-    .filter((block) => block.state === "running")
-    .map((block) => blocksById.get(block.id))
-    .filter((block): block is Placement => block !== undefined);
-  const runningDialogues = runningPlacements.filter(
-    (block) => block.kind === "dialogue",
-  );
-  const runningAnimations = runningPlacements.filter(
-    (block) => block.kind === "animation",
-  );
+  const runningPlacements = useMemo(() => {
+    const seen = new Set<string>();
+    const result: Placement[] = [];
+    for (const engineBlock of run?.snapshot.blocks ?? []) {
+      if (engineBlock.state !== "running") {
+        continue;
+      }
+      const placement = blocksById[engineBlock.id];
+      if (seen.has(placement.id)) {
+        continue;
+      }
+      seen.add(placement.id);
+      result.push(placement);
+    }
+    return result;
+  }, [run, blocksById]);
+  const runningDialogues: { block: Placement; advance: () => void }[] = [];
+  if (run !== null) {
+    for (const block of runningPlacements) {
+      if (block.kind === "dialogue") {
+        runningDialogues.push({
+          block,
+          advance: () => run.session.advanceDialogue(block.id),
+        });
+      }
+    }
+  }
+  const mediaStates = useMemo(() => {
+    const map: Record<string, { running: boolean; failed: boolean }> = {};
+    for (const engineBlock of run?.snapshot.blocks ?? []) {
+      const placement = blocksById[engineBlock.id];
+      if (!isMediaPlacement(placement)) {
+        continue;
+      }
+      let state = map[placement.id];
+      if (state === undefined) {
+        state = { running: false, failed: false };
+        map[placement.id] = state;
+      }
+      if (engineBlock.state === "running") {
+        state.running = true;
+      } else if (engineBlock.state === "failed") {
+        state.failed = true;
+      }
+    }
+    return map;
+  }, [run, blocksById]);
+  const activeAnimations = useMemo(() => {
+    if (run === null || run.snapshot.phase === "failed") {
+      return [];
+    }
+    const result: { block: MediaPlacement; paused: boolean }[] = [];
+    for (const block of blocks) {
+      if (block.kind !== "animation") {
+        continue;
+      }
+      if (run.snapshot.time < block.start || run.finalized.has(block.id)) {
+        continue;
+      }
+      const state = mediaStates[block.id];
+      if (state.failed) {
+        continue;
+      }
+      result.push({ block, paused: !state.running });
+    }
+    return result;
+  }, [blocks, run, mediaStates]);
 
   const startRun = () => {
-    if (session || blocks.length === 0) {
-      return;
-    }
-    const next = new TimelineSession(blocks, {
-      onSnapshot: setSnapshot,
+    const next = new TimelineSession(tracks, blocks, bpm, {
+      onSnapshot: (snapshot) =>
+        setRun((current) =>
+          current === null ? null : { ...current, snapshot },
+        ),
       onActivity: setActivity,
+      onFinalize: (placementId) =>
+        setRun((current) =>
+          current === null
+            ? null
+            : {
+                ...current,
+                finalized: new Set(current.finalized).add(placementId),
+              },
+        ),
     });
     sessionRef.current = next;
-    setSession(next);
-    setActivity(null);
+    setRun({ session: next, snapshot: next.snapshot, finalized: new Set() });
     next.start();
   };
 
-  const resetRun = () => {
+  const resetRun = useCallback(() => {
     sessionRef.current?.dispose();
     sessionRef.current = null;
-    setSession(null);
-    setSnapshot(null);
+    setRun(null);
     setActivity(null);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (run?.snapshot.phase === "finished") {
+      resetRun();
+    }
+  }, [run?.snapshot.phase, resetRun]);
+
+  const requestSkip =
+    runningRun === null ? undefined : () => runningRun.session.requestSkip();
+  const deleteSelected =
+    run === null && selectedId !== null ? () => remove(selectedId) : undefined;
+  const clearAll = run === null && blocks.length > 0 ? clear : undefined;
 
   const handleRowPointerDown = (
     event: ReactPointerEvent<HTMLDivElement>,
@@ -197,8 +362,8 @@ export function App() {
     if (!editable || event.button !== 0 || creation) {
       return;
     }
-    const start = cellFromPointer(event);
-    if (!canPlace(blocks, { trackId, start, length: 1 })) {
+    const start = cellFromPointer(event, columnCount);
+    if (!canPlace(tracks, blocks, { trackId, start, length: 1 })) {
       return;
     }
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -213,7 +378,7 @@ export function App() {
 
   const handleRowPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const pointerId = event.pointerId;
-    const currentCell = cellFromPointer(event);
+    const currentCell = cellFromPointer(event, columnCount);
     setCreation((state) =>
       state && state.pointerId === pointerId
         ? { ...state, current: currentCell }
@@ -226,7 +391,7 @@ export function App() {
     if (!active || active.pointerId !== event.pointerId) {
       return;
     }
-    const end = cellFromPointer(event);
+    const end = cellFromPointer(event, columnCount);
     const start = Math.min(active.anchor, end);
     const length = Math.abs(end - active.anchor) + 1;
     create(active.trackId, active.kind, start, length);
@@ -266,16 +431,26 @@ export function App() {
     select(null);
   };
 
+  const handleGridScroll = (event: ReactUIEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    if (
+      element.scrollLeft + element.clientWidth >=
+      element.scrollWidth - CELL_WIDTH * 4
+    ) {
+      setColumnCount((count) => count + COLUMN_CHUNK);
+    }
+  };
+
   const previewStart = creation ? Math.min(creation.anchor, creation.current) : 0;
   const previewLength = creation
     ? Math.abs(creation.current - creation.anchor) + 1
     : 0;
   const previewTrackIndex = creation
-    ? TRACKS.findIndex((track) => track.id === creation.trackId)
+    ? tracks.findIndex((track) => track.id === creation.trackId)
     : -1;
   const previewValid =
     creation !== null &&
-    canPlace(blocks, {
+    canPlace(tracks, blocks, {
       trackId: creation.trackId,
       start: previewStart,
       length: previewLength,
@@ -283,7 +458,7 @@ export function App() {
 
   const hint = isStaging
     ? editable
-      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its right edge to stretch it. Click a block to select it; the inspector edits its properties. Delete removes the selected block."
+      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its left or right edge to change its start or end. Right-drag a media block's edge inward to set a fade, or outward to extend the block with that fade. Click a block to select it; the inspector edits its properties. Delete removes the selected block."
       : running
         ? "Running. Dialogue and animation effects appear in the stage below the timeline. Press OK to finish a dialogue. Skip delivers a skip request to running blocks; the barrier still waits for them to complete."
         : "Timeline ended. Reset to edit and run again."
@@ -331,39 +506,55 @@ export function App() {
             ))}
           </div>
         ) : null}
-        <div className="run-controls">
-          <button
-            type="button"
-            className="run-button"
-            onClick={startRun}
-            disabled={!editable || blocks.length === 0}
-          >
-            Run
-          </button>
-          <button
-            type="button"
-            onClick={() => session?.requestSkip()}
-            disabled={!running}
-          >
-            Skip
-          </button>
-          <button type="button" onClick={resetRun} disabled={editable}>
-            Reset
-          </button>
+        <div className="transport">
+          <div className="run-controls">
+            <button
+              type="button"
+              className="run-button"
+              onClick={startRun}
+              disabled={!editable || blocks.length === 0}
+            >
+              Run
+            </button>
+            <button
+              type="button"
+              onClick={requestSkip}
+              disabled={requestSkip === undefined}
+            >
+              Skip
+            </button>
+            <button type="button" onClick={resetRun} disabled={editable}>
+              Reset
+            </button>
+          </div>
+          <label className="bpm-field">
+            <span>BPM</span>
+            <PropertyNumber
+              value={bpm}
+              min={MIN_BPM}
+              max={MAX_BPM}
+              step={1}
+              disabled={!editable}
+              onCommit={(value) => setBpm(Math.round(value))}
+            />
+          </label>
         </div>
         {isStaging ? (
           <div className="toolbar-actions">
+            <button type="button" onClick={addTrack} disabled={!editable}>
+              Add track
+            </button>
             <button
               type="button"
-              onClick={() => selectedId && remove(selectedId)}
-              disabled={!editable || !selectedId}
+              onClick={deleteSelected}
+              disabled={deleteSelected === undefined}
             >
               Delete selected
             </button>
             <button
               type="button"
-              onClick={clear}
-              disabled={!editable || blocks.length === 0}
+              onClick={clearAll}
+              disabled={clearAll === undefined}
             >
               Clear all
             </button>
@@ -378,26 +569,29 @@ export function App() {
           <div className="table">
             <div className="track-labels">
               <div className="ruler-spacer" />
-              {TRACKS.map((track) => (
+              {tracks.map((track) => (
                 <div key={track.id} className="track-label" title={track.label}>
                   {track.label}
                 </div>
               ))}
             </div>
-            <div className="grid-scroll">
-              <div className="grid-content">
+            <div className="grid-scroll" onScroll={handleGridScroll}>
+              <div
+                className="grid-content"
+                style={{ width: columnCount * CELL_WIDTH }}
+              >
                 <div className="ruler">
-                  {Array.from({ length: COLUMNS }, (_, column) => (
+                  {Array.from({ length: columnCount }, (_, column) => (
                     <span
                       key={column}
-                      className={`ruler-cell${running && snapshot?.time === column ? " is-current" : ""}`}
+                      className={`ruler-cell${runningRun !== null && runningRun.snapshot.time === column ? " is-current" : ""}`}
                     >
                       {column}
                     </span>
                   ))}
                 </div>
                 <div className="tracks-area" onContextMenu={handleGridContextMenu}>
-                  {TRACKS.map((track) => (
+                  {tracks.map((track) => (
                     <div
                       key={track.id}
                       className="track-row"
@@ -412,10 +606,12 @@ export function App() {
                       <BlockView
                         key={block.id}
                         block={block}
+                        tracks={tracks}
+                        columnCount={columnCount}
                         selected={block.id === selectedId}
                         editable={editable}
-                        state={runBlocks.get(block.id)?.state}
-                        blocking={blockingIds.has(block.id)}
+                        state={runStateByPlacementId.get(block.id)}
+                        blocking={blockingPlacementIds.has(block.id)}
                         onContextMenu={(event) => openBlockContextMenu(event, block)}
                       />
                     ))}
@@ -433,10 +629,14 @@ export function App() {
                       </div>
                     ) : null}
                   </div>
-                  {running && snapshot ? (
+                  {barrierSpan ? (
                     <div
                       className="time-cursor"
-                      style={{ left: snapshot.time * CELL_WIDTH }}
+                      style={{
+                        left: barrierSpan.start * CELL_WIDTH,
+                        width:
+                          (barrierSpan.end - barrierSpan.start) * CELL_WIDTH,
+                      }}
                       aria-hidden="true"
                     />
                   ) : null}
@@ -452,7 +652,7 @@ export function App() {
                   <span className={`inspector-swatch palette-${selected.kind}`} />
                   <span>
                     {BLOCK_LABELS[selected.kind]} on{" "}
-                    {TRACKS.find((track) => track.id === selected.trackId)?.label ??
+                    {tracks.find((track) => track.id === selected.trackId)?.label ??
                       selected.trackId}
                   </span>
                 </div>
@@ -472,31 +672,119 @@ export function App() {
                     ))}
                   </select>
                 </label>
-                <label className="inspector-field">
-                  <span>Start</span>
-                  <PropertyNumber
-                    key={`start-${selected.id}`}
-                    value={selected.start}
-                    min={0}
-                    max={COLUMNS - selected.length}
-                    disabled={!editable}
-                    onCommit={(value) => move(selected.id, selected.trackId, value)}
-                  />
-                </label>
-                <label className="inspector-field">
-                  <span>Length</span>
-                  <PropertyNumber
-                    key={`length-${selected.id}`}
-                    value={selected.length}
-                    min={1}
-                    max={COLUMNS - selected.start}
-                    disabled={!editable}
-                    onCommit={(value) => resize(selected.id, value)}
-                  />
-                </label>
                 <p className="inspector-range">
-                  t={selected.start}–{selected.start + selected.length}
+                  t={selected.start}–{selected.start + selected.length} ·{" "}
+                  {selected.length} {selected.length === 1 ? "cell" : "cells"}
                 </p>
+                {selected.kind === "dialogue" ? (
+                  <p className="inspector-note">
+                    Dialogue completes with the OK button.
+                  </p>
+                ) : (
+                  <>
+                    <div className="inspector-field">
+                      <span>Duration</span>
+                      <div className="duration-control">
+                        <PropertyNumber
+                          key={`duration-${selected.id}-${selected.durationUnit}`}
+                          value={selectedDuration}
+                          min={selected.durationUnit === "beats" ? 0.25 : 0.05}
+                          max={selected.durationUnit === "beats" ? 256 : 120}
+                          step={selected.durationUnit === "beats" ? 0.25 : 0.05}
+                          ariaLabel="Duration"
+                          disabled={!editable || selected.syncBeatsToCellSpan}
+                          onCommit={(value) => setDuration(selected.id, value)}
+                        />
+                        <div
+                          className="unit-toggle"
+                          role="group"
+                          aria-label="Duration unit"
+                        >
+                          <button
+                            type="button"
+                            className={
+                              selected.durationUnit === "beats"
+                                ? "is-active"
+                                : ""
+                            }
+                            aria-pressed={selected.durationUnit === "beats"}
+                            disabled={!editable || selected.syncBeatsToCellSpan}
+                            onClick={() =>
+                              setDurationUnit(selected.id, "beats")
+                            }
+                          >
+                            Beats
+                          </button>
+                          <button
+                            type="button"
+                            className={
+                              selected.durationUnit === "seconds"
+                                ? "is-active"
+                                : ""
+                            }
+                            aria-pressed={selected.durationUnit === "seconds"}
+                            disabled={!editable || selected.syncBeatsToCellSpan}
+                            onClick={() =>
+                              setDurationUnit(selected.id, "seconds")
+                            }
+                          >
+                            Seconds
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <label className="inspector-check">
+                      <input
+                        type="checkbox"
+                        checked={selected.syncBeatsToCellSpan}
+                        disabled={!editable}
+                        onChange={(event) =>
+                          setSyncBeatsToCellSpan(
+                            selected.id,
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      Sync beats to cell span
+                    </label>
+                    {isMediaPlacement(selected) ? (
+                      <>
+                        <label className="inspector-field">
+                          <span>Fade in</span>
+                          <PropertyNumber
+                            key={`fade-in-${selected.id}`}
+                            value={selected.fadeIn}
+                            min={0}
+                            max={selected.length}
+                            step={1}
+                            ariaLabel="Fade in"
+                            disabled={!editable}
+                            onCommit={(value) => setFadeIn(selected.id, value)}
+                          />
+                        </label>
+                        <label className="inspector-field">
+                          <span>Fade out</span>
+                          <PropertyNumber
+                            key={`fade-out-${selected.id}`}
+                            value={selected.fadeOut}
+                            min={0}
+                            max={selected.length}
+                            step={1}
+                            ariaLabel="Fade out"
+                            disabled={!editable}
+                            onCommit={(value) => setFadeOut(selected.id, value)}
+                          />
+                        </label>
+                        <p className="inspector-note">
+                          Fades are measured in cells and add barriers at their
+                          boundaries. Right-drag a media block's edge inward to
+                          set the fade, or outward to extend the block and fade
+                          the new region.
+                        </p>
+                      </>
+                    ) : null}
+                  </>
+                )}
                 <label className="inspector-check">
                   <input
                     type="checkbox"
@@ -529,39 +817,24 @@ export function App() {
       >
         <div className="stage-heading">Stage</div>
         <div className="stage-content">
-          {runningDialogues.map((block) => (
+          {runningDialogues.map(({ block, advance }) => (
             <div key={block.id} className="stage-dialogue">
               <span className="stage-tag">Dialogue @{block.start}</span>
               <p className="stage-dialogue-text">{DIALOGUE_TEXT}</p>
-              <button
-                type="button"
-                className="stage-ok"
-                onClick={() => session?.advanceDialogue(block.id)}
-              >
+              <button type="button" className="stage-ok" onClick={advance}>
                 OK
               </button>
             </div>
           ))}
-          {runningAnimations.map((block) => (
-            <div key={block.id} className="stage-animation">
-              <span className="stage-tag">
-                Animation @{block.start}–{block.start + block.length}
-              </span>
-              <div
-                className="stage-progress"
-                role="progressbar"
-                aria-label={`Animation at ${block.start}`}
-              >
-                <div
-                  className="stage-progress-fill"
-                  style={{
-                    animationDuration: `${KIND_DURATION_MS.animation * block.length}ms`,
-                  }}
-                />
-              </div>
-            </div>
+          {activeAnimations.map(({ block, paused }) => (
+            <StageAnimation
+              key={block.id}
+              block={block}
+              bpm={bpm}
+              paused={paused}
+            />
           ))}
-          {runningDialogues.length === 0 && runningAnimations.length === 0 ? (
+          {runningDialogues.length === 0 && activeAnimations.length === 0 ? (
             <p className="stage-empty">Nothing playing</p>
           ) : null}
         </div>
@@ -569,10 +842,10 @@ export function App() {
 
       <footer className="status">
         <div className={`status-run status-${phase}`}>
-          {snapshot ? (
+          {run !== null ? (
             <>
               <strong>{PHASE_LABELS[phase]}</strong>
-              <span>t={snapshot.time}</span>
+              <span>t={run.snapshot.time}</span>
               {blockingLabels.length > 0 ? (
                 <span>blocked by: {blockingLabels.join(", ")}</span>
               ) : null}
@@ -619,8 +892,92 @@ export function App() {
   );
 }
 
+function StageAnimation({
+  block,
+  bpm,
+  paused,
+}: {
+  block: MediaPlacement;
+  bpm: number;
+  paused: boolean;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const animationRef = useRef<Animation | null>(null);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) {
+      return;
+    }
+    if (block.fadeIn === 0 && block.fadeOut === 0) {
+      element.style.opacity = "1";
+      return;
+    }
+    const keyframes: Keyframe[] = [];
+    if (block.fadeIn > 0) {
+      keyframes.push(
+        { opacity: 0, offset: 0 },
+        { opacity: 1, offset: block.fadeIn / block.length },
+      );
+    }
+    if (block.fadeOut > 0) {
+      keyframes.push(
+        { opacity: 1, offset: 1 - block.fadeOut / block.length },
+        { opacity: 0, offset: 1 },
+      );
+    }
+    const animation = element.animate(keyframes, {
+      duration: blockDurationSeconds(block, bpm) * 1000,
+      fill: "both",
+    });
+    animationRef.current = animation;
+    if (paused) {
+      animation.pause();
+    }
+    return () => {
+      animation.cancel();
+      animationRef.current = null;
+    };
+  }, [block, bpm]);
+
+  useEffect(() => {
+    const animation = animationRef.current;
+    if (!animation) {
+      return;
+    }
+    if (paused) {
+      animation.pause();
+    } else {
+      animation.play();
+    }
+  }, [paused]);
+
+  return (
+    <div ref={ref} className="stage-animation">
+      <span className="stage-tag">
+        Animation @{block.start}–{block.start + block.length}
+      </span>
+      <div
+        className="stage-progress"
+        role="progressbar"
+        aria-label={`Animation at ${block.start}`}
+      >
+        <div
+          className="stage-progress-fill"
+          style={{
+            animationDuration: `${blockDurationSeconds(block, bpm) * 1000}ms`,
+            animationPlayState: paused ? "paused" : "running",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function BlockView({
   block,
+  tracks,
+  columnCount,
   selected,
   editable,
   state,
@@ -628,6 +985,8 @@ function BlockView({
   onContextMenu,
 }: {
   block: Placement;
+  tracks: readonly Track[];
+  columnCount: number;
   selected: boolean;
   editable: boolean;
   state: BlockState | undefined;
@@ -636,13 +995,50 @@ function BlockView({
 }) {
   const move = useExperimentStore((store) => store.move);
   const resize = useExperimentStore((store) => store.resize);
+  const setSpan = useExperimentStore((store) => store.setSpan);
   const select = useExperimentStore((store) => store.select);
   const drag = useRef<DragState | null>(null);
+  const suppressEdgeMenu = useRef(false);
   const [dragging, setDragging] = useState(false);
 
-  const trackIndex = TRACKS.findIndex((track) => track.id === block.trackId);
+  const trackIndex = tracks.findIndex((track) => track.id === block.trackId);
+  const isMedia = isMediaPlacement(block);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button === 2) {
+      if (!editable || !isMedia) {
+        return;
+      }
+      const rect = event.currentTarget.getBoundingClientRect();
+      const offset = event.clientX - rect.left;
+      const mode =
+        offset <= FADE_HANDLE_PX
+          ? "fadeIn"
+          : rect.width - offset <= FADE_HANDLE_PX
+            ? "fadeOut"
+            : null;
+      if (mode === null) {
+        return;
+      }
+      suppressEdgeMenu.current = true;
+      event.stopPropagation();
+      event.preventDefault();
+      select(block.id);
+      drag.current = {
+        pointerId: event.pointerId,
+        mode,
+        originX: event.clientX,
+        originY: event.clientY,
+        start: block.start,
+        length: block.length,
+        fadeIn: block.fadeIn,
+        fadeOut: block.fadeOut,
+        trackId: block.trackId,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setDragging(true);
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
@@ -653,13 +1049,21 @@ function BlockView({
       return;
     }
     const target = event.target as HTMLElement;
+    const handle = target.dataset.handle;
     drag.current = {
       pointerId: event.pointerId,
-      mode: target.dataset.handle === "resize" ? "resize" : "move",
+      mode:
+        handle === "resize"
+          ? "resize"
+          : handle === "resize-start"
+            ? "resizeStart"
+            : "move",
       originX: event.clientX,
       originY: event.clientY,
       start: block.start,
       length: block.length,
+      fadeIn: isMedia ? block.fadeIn : 0,
+      fadeOut: isMedia ? block.fadeOut : 0,
       trackId: block.trackId,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -671,17 +1075,62 @@ function BlockView({
     if (!current || current.pointerId !== event.pointerId) {
       return;
     }
+    if (current.mode === "resizeStart") {
+      const delta = Math.round((event.clientX - current.originX) / CELL_WIDTH);
+      const end = current.start + current.length;
+      const start = clamp(current.start + delta, 0, end - 1);
+      setSpan(block.id, start, end - start);
+      return;
+    }
+    if (current.mode === "fadeIn" || current.mode === "fadeOut") {
+      const delta = Math.round((event.clientX - current.originX) / CELL_WIDTH);
+      if (current.mode === "fadeIn") {
+        if (delta >= 0) {
+          setSpan(block.id, current.start, current.length, { fadeIn: delta });
+        } else {
+          const start = Math.max(0, current.start + delta);
+          const extra = current.start - start;
+          setSpan(block.id, start, current.length + extra, {
+            fadeIn: current.fadeIn + extra,
+          });
+        }
+        return;
+      }
+      if (delta <= 0) {
+        setSpan(block.id, current.start, current.length, { fadeOut: -delta });
+      } else {
+        const length = Math.min(
+          current.length + delta,
+          Math.max(current.length, columnCount - current.start),
+        );
+        const extra = length - current.length;
+        setSpan(block.id, current.start, length, {
+          fadeOut: current.fadeOut + extra,
+        });
+      }
+      return;
+    }
     if (current.mode === "move") {
       const deltaColumns = Math.round((event.clientX - current.originX) / CELL_WIDTH);
       const deltaTracks = Math.round((event.clientY - current.originY) / TRACK_HEIGHT);
-      const start = clamp(current.start + deltaColumns, 0, COLUMNS - current.length);
-      const currentIndex = TRACKS.findIndex((track) => track.id === current.trackId);
-      const nextIndex = clamp(currentIndex + deltaTracks, 0, TRACKS.length - 1);
-      move(block.id, TRACKS[nextIndex].id, start);
+      const start = clamp(
+        current.start + deltaColumns,
+        0,
+        columnCount - current.length,
+      );
+      const currentIndex = tracks.findIndex(
+        (track) => track.id === current.trackId,
+      );
+      const nextIndex = clamp(currentIndex + deltaTracks, 0, tracks.length - 1);
+      move(block.id, tracks[nextIndex].id, start);
       return;
     }
     const deltaColumns = Math.round((event.clientX - current.originX) / CELL_WIDTH);
-    const length = clamp(current.length + deltaColumns, 1, COLUMNS - current.start);
+    const length = clamp(
+      current.length + deltaColumns,
+      1,
+      columnCount - current.start,
+    );
     resize(block.id, length);
   };
 
@@ -699,6 +1148,7 @@ function BlockView({
   const className = [
     "block",
     `block-${block.kind}`,
+    isMedia ? "is-media" : "",
     selected ? "is-selected" : "",
     dragging ? "is-dragging" : "",
     state ? `is-${state}` : "",
@@ -709,6 +1159,24 @@ function BlockView({
     .filter(Boolean)
     .join(" ");
 
+  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (suppressEdgeMenu.current) {
+      suppressEdgeMenu.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    onContextMenu(event);
+  };
+
+  const fadeTitle = isMedia
+    ? `Fade in ${block.fadeIn}, fade out ${block.fadeOut} (cells)`
+    : "";
+  const title =
+    [block.cooperativeSkip ? "Cooperative skip" : "", fadeTitle]
+      .filter(Boolean)
+      .join(" · ") || undefined;
+
   return (
     <div
       className={className}
@@ -718,16 +1186,51 @@ function BlockView({
         width: block.length * CELL_WIDTH - 6,
         height: TRACK_HEIGHT - 6,
       }}
-      title={block.cooperativeSkip ? "Cooperative skip" : undefined}
-      onContextMenu={onContextMenu}
+      title={title}
+      onContextMenu={handleContextMenu}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
     >
+      {isMedia ? (
+        <>
+          {block.fadeIn > 0 ? (
+            <span
+              className="block-fade block-fade-in"
+              style={{ width: `${(block.fadeIn / block.length) * 100}%` }}
+              aria-hidden="true"
+            />
+          ) : null}
+          {block.fadeOut > 0 ? (
+            <span
+              className="block-fade block-fade-out"
+              style={{ width: `${(block.fadeOut / block.length) * 100}%` }}
+              aria-hidden="true"
+            />
+          ) : null}
+          {mediaPhases(block.fadeIn, block.fadeOut, block.length)
+            .slice(1)
+            .map((phase) => (
+              <span
+                key={phase.index}
+                className="block-phase-boundary"
+                style={{ left: `${(phase.offset / block.length) * 100}%` }}
+                aria-hidden="true"
+              />
+            ))}
+        </>
+      ) : null}
       <span className="block-label">{BLOCK_LABELS[block.kind]}</span>
       {editable ? (
-        <span className="resize-handle" data-handle="resize" aria-hidden="true" />
+        <>
+          <span
+            className="resize-handle resize-handle-start"
+            data-handle="resize-start"
+            aria-hidden="true"
+          />
+          <span className="resize-handle" data-handle="resize" aria-hidden="true" />
+        </>
       ) : null}
     </div>
   );
@@ -737,13 +1240,17 @@ function PropertyNumber({
   value,
   min,
   max,
+  step = 1,
   disabled,
+  ariaLabel,
   onCommit,
 }: {
   value: number;
   min: number;
   max: number;
+  step?: number;
   disabled: boolean;
+  ariaLabel?: string;
   onCommit: (value: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
@@ -753,7 +1260,7 @@ function PropertyNumber({
   }, [value]);
 
   const commit = () => {
-    const parsed = Number.parseInt(draft, 10);
+    const parsed = Number.parseFloat(draft);
     if (!Number.isFinite(parsed)) {
       setDraft(String(value));
       return;
@@ -766,9 +1273,11 @@ function PropertyNumber({
     <input
       type="number"
       className="inspector-number"
+      aria-label={ariaLabel}
       value={draft}
       min={min}
       max={max}
+      step={step}
       disabled={disabled}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={commit}
@@ -782,15 +1291,23 @@ function PropertyNumber({
   );
 }
 
-function cellFromPointer(event: ReactPointerEvent<HTMLDivElement>): number {
+function cellFromPointer(
+  event: ReactPointerEvent<HTMLDivElement>,
+  columnCount: number,
+): number {
   const rect = event.currentTarget.getBoundingClientRect();
   return clamp(
     Math.floor((event.clientX - rect.left) / CELL_WIDTH),
     0,
-    COLUMNS - 1,
+    columnCount - 1,
   );
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function roundTo(value: number, decimals: number): number {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
 }
