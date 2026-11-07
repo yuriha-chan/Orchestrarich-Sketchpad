@@ -3,27 +3,22 @@ import {
   type BarrierSpan,
   type BlockSnapshot,
   type BlockStartResult,
-  type SkipReason,
   type TimelineDefinition,
   type TimelinePhase,
   type TimelineSnapshot,
 } from "../../../src/core/execution/timeline-runner.ts";
-import type { DurationPlacement, Placement, Track } from "./model";
-import {
-  blockDurationSeconds,
-  isMediaPlacement,
-  mediaPhases,
-  phaseBlockId,
-} from "./model";
+import type { Placement, Track } from "./model";
+import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
+import type { StageActions } from "./stage-state";
 
-export const SKIP_FADE_MS = 150;
-
-type TimelineBlock = TimelineDefinition["tracks"][number]["blocks"][number];
+import { createExecution, type ExecutionInstance } from "./block-execution";
+export { SKIP_FADE_MS, type ExecutionInstance } from "./block-execution";
 
 export interface TimelineSessionOptions {
   readonly onSnapshot?: (snapshot: TimelineSnapshot) => void;
   readonly onActivity?: (message: string) => void;
-  readonly onFinalize?: (placementId: string) => void;
+  readonly onExecutionStart?: (instance: ExecutionInstance) => void;
+  readonly onFinalize?: (instance: ExecutionInstance) => void;
 }
 
 export function toTimelineDefinition(
@@ -35,40 +30,16 @@ export function toTimelineDefinition(
       id: track.id,
       blocks: placements
         .filter((placement) => placement.trackId === track.id)
-        .flatMap((placement) => placementBlocks(placement)),
+        .flatMap((placement) => definitionBlocks(compilePlacement(placement))),
     })),
   };
-}
-
-function placementBlocks(placement: Placement): TimelineBlock[] {
-  if (!isMediaPlacement(placement)) {
-    return [
-      {
-        id: placement.id,
-        start: placement.start,
-        length: placement.length,
-        cooperativeSkip: placement.cooperativeSkip,
-      },
-    ];
-  }
-  return mediaPhases(
-    placement.fadeIn,
-    placement.fadeOut,
-    placement.length,
-  ).map((phase) => ({
-    id: phaseBlockId(placement.id, phase.index),
-    start: placement.start + phase.offset,
-    length: phase.length,
-    cooperativeSkip: placement.cooperativeSkip,
-  }));
 }
 
 export class TimelineSession {
   private readonly runner: TimelineRunner;
   private readonly unsubscribe: () => void;
-  private readonly placementByBlockId: Readonly<Record<string, Placement>>;
-  private readonly cleanups = new Map<string, () => void>();
-  private readonly dialogueResolvers = new Map<string, () => void>();
+  private readonly definitionByBlockId: Readonly<Record<string, ExecutionDefinition>>;
+  private readonly activeExecutions = new Map<ExecutionDefinition, ExecutionInstance>();
   private readonly options: TimelineSessionOptions;
   private readonly bpm: number;
   private lastPhase: TimelinePhase = "idle";
@@ -77,33 +48,40 @@ export class TimelineSession {
     tracks: readonly Track[],
     placements: readonly Placement[],
     bpm: number,
+    private readonly stage: StageActions,
     options: TimelineSessionOptions = {},
   ) {
     this.options = options;
     this.bpm = bpm;
-    const byBlock: Record<string, Placement> = {};
-    for (const placement of placements) {
-      if (isMediaPlacement(placement)) {
-        for (const phase of mediaPhases(
-          placement.fadeIn,
-          placement.fadeOut,
-          placement.length,
-        )) {
-          byBlock[phaseBlockId(placement.id, phase.index)] = placement;
-        }
-      } else {
-        byBlock[placement.id] = placement;
+    const definitions = placements.map(compilePlacement);
+    const byBlock: Record<string, ExecutionDefinition> = {};
+    for (const definition of definitions) {
+      for (const block of definitionBlocks(definition)) {
+        byBlock[block.id] = definition;
       }
     }
-    this.placementByBlockId = byBlock;
+    this.definitionByBlockId = byBlock;
     this.runner = new TimelineRunner(
-      toTimelineDefinition(tracks, placements),
+      {
+        tracks: tracks.map((track) => ({
+          id: track.id,
+          blocks: definitions
+            .filter(({ placement }) => placement.trackId === track.id)
+            .flatMap(definitionBlocks),
+        })),
+      },
       {
         onBlockStart: (block) => this.startBlock(block),
         onBlockTerminate: (block) => this.terminateBlock(block),
       },
     );
     this.unsubscribe = this.runner.subscribe((snapshot) => {
+      if (snapshot.phase === "failed") {
+        for (const instance of this.activeExecutions.values()) {
+          this.finalizeInstance(instance);
+        }
+        this.activeExecutions.clear();
+      }
       this.trackPhase(snapshot);
       this.options.onSnapshot?.(snapshot);
     });
@@ -125,95 +103,42 @@ export class TimelineSession {
     this.runner.requestSkip();
   }
 
-  advanceDialogue(blockId: string): void {
-    const resolve = this.dialogueResolvers.get(blockId);
-    if (resolve === undefined) {
-      return;
-    }
-    this.dialogueResolvers.delete(blockId);
-    this.cleanups.delete(blockId);
-    this.report(`Dialogue advanced: ${blockId} at t=${this.runner.time}`);
-    resolve();
-  }
-
   dispose(): void {
     this.unsubscribe();
-    for (const cleanup of this.cleanups.values()) {
-      cleanup();
+    for (const instance of this.activeExecutions.values()) {
+      this.finalizeInstance(instance);
     }
-    this.cleanups.clear();
-    this.dialogueResolvers.clear();
+    this.activeExecutions.clear();
   }
 
   private startBlock(block: BlockSnapshot): BlockStartResult {
-    const placement = this.placementByBlockId[block.id];
-    if (placement.kind === "dialogue") {
-      return this.startDialogue(block);
+    const definition = this.definitionByBlockId[block.id];
+    const placement = definition.placement;
+    if (block.start === placement.start) {
+      const instance = createExecution(
+        definition,
+        { bpm: this.bpm, stage: this.stage, report: (message) => this.report(message), time: () => this.runner.time },
+      );
+      this.activeExecutions.set(definition, instance);
+      this.options.onExecutionStart?.(instance);
     }
-    return this.startDuration(block, placement);
-  }
-
-  private startDialogue(block: BlockSnapshot): BlockStartResult {
-    let resolveExecution!: () => void;
-    const execution = new Promise<void>((resolve) => {
-      resolveExecution = resolve;
-    });
-    this.dialogueResolvers.set(block.id, resolveExecution);
-    this.cleanups.set(block.id, () => {
-      this.dialogueResolvers.delete(block.id);
-    });
-    return { execution };
-  }
-
-  private startDuration(
-    block: BlockSnapshot,
-    placement: DurationPlacement,
-  ): BlockStartResult {
-    const phaseLength = block.end - block.start;
-    const share = phaseLength / placement.length;
-    const duration = blockDurationSeconds(placement, this.bpm) * 1000 * share;
-    let timer: ReturnType<typeof setTimeout>;
-    let skipping = false;
-    let resolveExecution!: () => void;
-    const execution = new Promise<void>((resolve) => {
-      resolveExecution = resolve;
-    });
-
-    const settle = () => {
-      clearTimeout(timer);
-      this.cleanups.delete(block.id);
-      resolveExecution();
-    };
-
-    timer = setTimeout(settle, duration);
-    this.cleanups.set(block.id, () => {
-      clearTimeout(timer);
-    });
-
-    const skip = (reason: SkipReason) => {
-      if (skipping) {
-        return;
-      }
-      skipping = true;
-      clearTimeout(timer);
-      timer = setTimeout(settle, SKIP_FADE_MS);
-      this.report(`Skip (${reason}): ${placement.id} at t=${this.runner.time}`);
-    };
-
-    return { execution, skip };
+    return this.activeExecutions.get(definition)!.startPhase(block);
   }
 
   private terminateBlock(block: BlockSnapshot): void {
-    const cleanup = this.cleanups.get(block.id);
-    if (cleanup !== undefined) {
-      cleanup();
-    }
-    this.cleanups.delete(block.id);
-    this.dialogueResolvers.delete(block.id);
-    const placement = this.placementByBlockId[block.id];
+    const definition = this.definitionByBlockId[block.id];
+    const placement = definition.placement;
+    const instance = this.activeExecutions.get(definition)!;
+    instance.terminatePhase(block);
     if (block.end === placement.start + placement.length) {
-      this.options.onFinalize?.(placement.id);
+      this.activeExecutions.delete(definition);
+      this.finalizeInstance(instance);
     }
+  }
+
+  private finalizeInstance(instance: ExecutionInstance): void {
+    instance.terminate();
+    this.options.onFinalize?.(instance);
   }
 
   private trackPhase(snapshot: TimelineSnapshot): void {

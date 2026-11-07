@@ -411,23 +411,28 @@ body {
 }
 
 .block-dialogue {
-  background: #2563eb;
+  --block-color: #2563eb;
+  background: var(--block-color);
 }
 
 .block-camera {
-  background: #7c3aed;
+  --block-color: #7c3aed;
+  background: var(--block-color);
 }
 
 .block-sound {
-  background: #059669;
+  --block-color: #059669;
+  background: var(--block-color);
 }
 
 .block-animation {
-  background: #ea580c;
+  --block-color: #ea580c;
+  background: var(--block-color);
 }
 
 .block-wait {
-  background: #475569;
+  --block-color: #475569;
+  background: var(--block-color);
 }
 
 .block-label {
@@ -646,6 +651,13 @@ body {
   gap: 12px;
 }
 
+.stage-animation-preview {
+  flex: 0 0 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: #ea580c;
+}
+
 .stage-progress {
   flex: 1;
   height: 10px;
@@ -655,23 +667,12 @@ body {
 }
 
 .stage-progress-fill {
-  width: 0;
+  width: 100%;
   height: 100%;
   border-radius: 999px;
   background: #ea580c;
-  animation-name: stage-progress;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
-}
-
-@keyframes stage-progress {
-  from {
-    width: 0;
-  }
-
-  to {
-    width: 100%;
-  }
+  transform: scaleX(0);
+  transform-origin: left;
 }
 
 .status {
@@ -789,29 +790,49 @@ body {
   opacity: 1;
 }
 
-.block-fade {
+.block.is-media {
+  background: transparent;
+}
+
+.block-fade,
+.block-body-surface {
   position: absolute;
   top: 0;
   bottom: 0;
   pointer-events: none;
+  background: var(--block-color);
+}
+
+.block-fade {
+  mask-mode: alpha;
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
 }
 
 .block-fade-in {
   left: 0;
-  background: linear-gradient(90deg, rgb(15 23 42 / 0.55), transparent);
 }
 
 .block-fade-out {
   right: 0;
-  background: linear-gradient(270deg, rgb(15 23 42 / 0.55), transparent);
 }
 
 .block-phase-boundary {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: rgb(255 255 255 / 0.8);
+  width: 10px;
+  margin-left: -5px;
+  z-index: 2;
+  background: linear-gradient(90deg, transparent 4px, rgb(255 255 255 / 0.8) 4px 6px, transparent 6px);
   pointer-events: none;
+}
+
+.block-phase-boundary.is-editable {
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+
+.block-phase-boundary.is-editable:hover {
+  background-color: rgb(255 255 255 / 0.2);
 }

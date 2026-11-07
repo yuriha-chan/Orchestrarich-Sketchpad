@@ -10,8 +10,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   The session builds a `TimelineDefinition` from the placements, supplies each
   block's execution Promise and skip handler, and reports snapshots and activity
   messages to the UI.
-- The UI renders engine snapshots and sends commands (`start`, `requestSkip`,
-  `advanceDialogue`) to the session. It does not advance logical time itself.
+- The editor debugger renders engine snapshots and sends transport commands
+  (`start`, `requestSkip`) to the session. Stage effects are different: block
+  execution modifies a dedicated UI store, and `Stage.tsx` renders only that
+  store's presentation entries. It does not inspect runner state or placements.
 - Workspaces are preset layouts selected in a top tab bar. Staging shows the
   palette, grid, stage, and selection status. Preview hides the grid and the
   editing controls and gives the stage the available space. The workspace is
@@ -24,10 +26,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     duration is stored with its unit: beats follow the timeline BPM, while
     seconds are absolute. BPM is a timeline-level property (default 120).
   - A running animation shows a progress bar in the stage, filling over its
-    natural duration, and its stage card fades its opacity in and out with the
-    block's fade phases. The card stays mounted from the block start until the
-    end time is reached, including while a barrier waits for other blocks, and
-    its progress pauses while no phase is running.
+    natural duration, and a separate media preview fades its opacity in and out
+     with the block's fade phases. Playback holds across phase-boundary waits.
+    The block adds its presentation at runtime execution start and removes it
+    at container finalization. The renderer does not infer this lifetime.
   - A wait block only occupies logical time; it has no stage effect.
   - A skip request shortens a timed block to a 150 ms fade before completion.
   - Dialogue blocks have no skip handler and therefore ignore skip requests.
@@ -53,6 +55,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   the left button. Right-dragging a media block's edge inward sets a fade
   within the current span; dragging outward extends the block and assigns the
   new cells to that fade.
+- Fade regions mask the block's colored surface using the supplied linear
+  dot-gradient SVG. Small opaque dots at the outer edge grow into overlapping
+  dots toward the solid body; gaps are transparent. Internal phase
+  boundaries have left-drag handles snapped to cells.
 - The grid is horizontally unbounded. It renders an initial number of columns
   and extends the rendered columns in chunks as the horizontal scroll reaches
   the right edge. The ruler, the track rows, and the block layer share that
@@ -78,14 +84,14 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   and [3,5] for t=3 and t=4.
 - The time cursor covers the current barrier span, not only the current column.
 - A media block with fades creates a barrier at each phase boundary, and its
-  stage effect continues across those barriers.
+   stage effect stays mounted and holds at completed phase boundaries until the next phase starts.
 - Dragging a block's left edge changes its start while its end stays fixed.
 - Right-dragging a media edge inward sets the fade within the block; dragging
   outward extends the block and fades the new cells.
-- A running animation's stage card fades its opacity in and out with its fade
-  phases.
+- A running animation's media preview fades its opacity in and out with its fade
+  phases; its progress indicator is outside the fading element.
 - An animation's stage card remains visible while the timeline waits at a
-  barrier, and its progress pauses while no phase of the block is running.
+   barrier. Its progress and fade animation hold at phase boundaries until the next phase starts.
 - Adding a track gives the grid a new row and the run includes that track.
 - Scrolling to the right edge extends the timeline columns; a block can be
   placed beyond the initially rendered columns.
@@ -96,7 +102,8 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 86 tests pass (49 core + 25 placement model + 12 integration).
+- `pnpm test`: 99 tests pass (49 core + 25 placement model + 19 integration +
+  6 fade editing and dot-pattern tests).
 - `pnpm build:1b`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
@@ -198,28 +205,70 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     right press on an edge suppresses the context menu for that gesture, while a
     right press on the body still opens the menu. Phases are not separately
     selectable and inherit the container's cooperative skip for now.
-21. A running animation's stage card fades its opacity with the fade phases: it
+21. A running animation's media preview fades its opacity with the fade phases: it
     starts transparent, reaches full opacity at the end of the fade-in, and
     returns to transparent at the end of the block. The opacity animation uses
     the block's duration and fade fractions and, like the progress bar, is timed
     on the wall clock rather than driven by logical-time snapshots.
-22. The animation card represents the whole media block, not one phase. Its
-    lifetime ends at container finalization: the session reports when a
-    placement's last phase is terminated, and the card unmounts on that event
-    rather than on a logical-time comparison. It therefore stays mounted when a
-    barrier waits for other blocks at a phase boundary or at the end time, and
-    also after the block completes early, until the container is finalized.
-    While no phase of the block is running, both the progress bar and the
-    opacity animation are paused, so a barrier wait does not advance them.
+22. The animation card represents presentation state owned by a runtime container
+    execution, not a placement or one phase. Block execution adds a UI entry,
+    and container termination removes it. The renderer uses that entry's identity
+    without inspecting execution instances or their lifecycle events.
+    Block execution writes playback position and playing state to the UI store at
+    phase start and completion. Playback, opacity, and progress hold at a completed
+    phase boundary until the next phase starts. The card
+    remains mounted through intermediate and final barriers, including after
+    early completion, until the container's final phase is terminated. Timeline
+    failure finalizes active container instances. The fade targets only the media
+    preview, not the card or progress indicator; a completed fade-out cannot hide
+    the progress indicator before finalization.
 23. Safety in this code comes from contracts and types, not from ad-hoc
     runtime guards. Engine block ids resolve to placements through total
     records because the session builds both from the same placement list; the
     runner keeps a block's lifecycle state, automatic-skip flag, and skip
     handler on its internal placement instead of parallel keyed collections;
-    and the UI represents a run as one nullable `RunState` (session, snapshot,
-    finalized ids) instead of correlated nullable fields. Editing commands with
+    and the editor debugger represents a run as one nullable `RunState` (session,
+    snapshot) instead of correlated nullable fields. Editing commands with
     an unknown id are a deliberate no-op centralized in `editBlock`. This
     refactor does not change observable behavior.
+24. Media classification and multi-phase structure are independent. The compiler
+    currently builds multi-phase definitions for media placements, but the
+    structural expansion uses `ExecutionStructure` and `isMultiPhase`, not the
+    media-kind predicate. A non-media multi-phase definition is structurally valid;
+    no additional palette kind or phase editor is introduced.
+25. A placement is document data, not an execution instance. Each container start
+    allocates a distinct runtime identity referencing its definition. Phases share
+    that instance until finalization; dialogue UI callbacks belong to the instance.
+    Re-executing the same placement creates another identity. The runner remains
+    one-shot; loop scheduling is not implemented by this change.
+26. The block itself modifies UI state; the stage does not derive effects from
+    runner state. Each App owns a stage store containing typed presentation
+    entries: dialogue text and a confirmation callback, or animation label,
+    duration, fade fractions, and playback position/playing state. No entry contains a placement, runner snapshot,
+    or execution definition. Dialogue execution supplies the callback that removes
+    its dialog and resolves its Promise; there is no public `advanceDialogue`
+    session command. Animation execution adds its entry once, and container
+    termination removes it. Reset/disposal also invokes the owned presentation
+    cleanup. Start/finalization telemetry is not a stage rendering input.
+27. Runtime behavior is polymorphic through `ExecutionInstance`: the session
+    invokes phase start, phase termination, and container termination without
+    kind-specific effect branches. `TimedExecution` owns timers and skip handling;
+    `MediaExecution` extends it to own media initialization, phase playback/hold,
+    and presentation termination. An animation presentation adapter supplies fade
+    data and stage commands. Sound also uses the media subtype but has no output
+    adapter while its effect remains timer-only. Kind dispatch is confined to the
+     execution factory. Multi-phase structure remains independent of this hierarchy.
+28. The grid's colored fade surfaces use `generate_dot_gradient.ts` as an alpha
+    mask image, not a dark dot overlay. Dot radii follow the supplied linear
+    interpolation from small dots at the outer edge to overlapping dots at the
+    inner edge. Gaps reveal the timeline; the body stays solid. Labels and drag
+    handles remain unmasked. This changes phase visualization, not runtime playback.
+    Left-dragging an internal boundary changes the corresponding fade length,
+    snapped to cells, without changing the container span or the opposite fade.
+    A boundary cannot cross its neighbor. If the two fades meet without a body,
+    their shared boundary moves both lengths while keeping their sum equal to the
+    span. Dragging a boundary to an outer edge can remove that phase. Editing
+    remains disabled during a run; outer-edge gestures are unchanged.
 
 ## Carry-Over
 
@@ -234,7 +283,8 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   timelines.
 - Which additional workspaces are justified once more views exist (PixiJS
   preview, slots and wires, phase editing), and whether tabs confuse beginners.
-- Per-phase selection, editing, and cooperative skip for multi-phase blocks;
-  currently every phase inherits the container's cooperative skip.
-- The fade shape: the UI draws a linear gradient. Whether fades need easing or a
-  media-specific curve is undecided.
+- Per-phase selection, properties, and cooperative skip for multi-phase blocks;
+  currently only fade boundaries are draggable and every phase inherits the
+  container's cooperative skip.
+- Whether runtime fades need easing or a media-specific curve; the editor's
+  dot mask is a phase indicator, not the playback interpolation contract.

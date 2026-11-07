@@ -14,7 +14,6 @@ import type {
 } from "react";
 import type {
   BlockKind,
-  MediaPlacement,
   Placement,
   Track,
 } from "./model";
@@ -23,14 +22,17 @@ import {
   BLOCK_LABELS,
   MAX_BPM,
   MIN_BPM,
-  blockDurationSeconds,
   canPlace,
   isMediaPlacement,
-  mediaPhases,
-  phaseBlockId,
 } from "./model";
+import { generateDotGradientSVG } from "../../../generate_dot_gradient.ts";
+import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
+import type { FadeBoundary } from "./fade-editing";
 import { useExperimentStore } from "./store";
 import { TimelineSession } from "./execution";
+import { Stage } from "./Stage";
+import { createStageStore } from "./stage-state";
+import { compilePlacement, definitionBlocks } from "./execution-definition";
 import { WORKSPACES } from "./workspaces";
 import type {
   BlockState,
@@ -42,7 +44,6 @@ const CELL_WIDTH = 64;
 const TRACK_HEIGHT = 48;
 const INITIAL_COLUMNS = 16;
 const COLUMN_CHUNK = 16;
-const DIALOGUE_TEXT = "lazy dog jumps ...";
 
 const PHASE_LABELS: Record<TimelinePhase, string> = {
   idle: "Not running",
@@ -70,6 +71,7 @@ interface DragState {
   readonly fadeIn: number;
   readonly fadeOut: number;
   readonly trackId: string;
+  readonly boundary?: FadeBoundary;
 }
 
 interface CreationState {
@@ -89,7 +91,6 @@ interface ContextMenuState {
 interface RunState {
   readonly session: TimelineSession;
   readonly snapshot: TimelineSnapshot;
-  readonly finalized: ReadonlySet<string>;
 }
 
 const gridVariables = {
@@ -98,6 +99,8 @@ const gridVariables = {
 } as CSSProperties;
 
 export function App() {
+  const [useStageStore] = useState(createStageStore);
+  const stageItems = useStageStore((state) => state.items);
   const blocks = useExperimentStore((state) => state.blocks);
   const tracks = useExperimentStore((state) => state.tracks);
   const addTrack = useExperimentStore((state) => state.addTrack);
@@ -198,16 +201,8 @@ export function App() {
   const blocksById = useMemo(() => {
     const map: Record<string, Placement> = {};
     for (const block of blocks) {
-      if (isMediaPlacement(block)) {
-        for (const phase of mediaPhases(
-          block.fadeIn,
-          block.fadeOut,
-          block.length,
-        )) {
-          map[phaseBlockId(block.id, phase.index)] = block;
-        }
-      } else {
-        map[block.id] = block;
+      for (const engineBlock of definitionBlocks(compilePlacement(block))) {
+        map[engineBlock.id] = block;
       }
     }
     return map;
@@ -246,93 +241,16 @@ export function App() {
         )
       : 0;
 
-  const runningPlacements = useMemo(() => {
-    const seen = new Set<string>();
-    const result: Placement[] = [];
-    for (const engineBlock of run?.snapshot.blocks ?? []) {
-      if (engineBlock.state !== "running") {
-        continue;
-      }
-      const placement = blocksById[engineBlock.id];
-      if (seen.has(placement.id)) {
-        continue;
-      }
-      seen.add(placement.id);
-      result.push(placement);
-    }
-    return result;
-  }, [run, blocksById]);
-  const runningDialogues: { block: Placement; advance: () => void }[] = [];
-  if (run !== null) {
-    for (const block of runningPlacements) {
-      if (block.kind === "dialogue") {
-        runningDialogues.push({
-          block,
-          advance: () => run.session.advanceDialogue(block.id),
-        });
-      }
-    }
-  }
-  const mediaStates = useMemo(() => {
-    const map: Record<string, { running: boolean; failed: boolean }> = {};
-    for (const engineBlock of run?.snapshot.blocks ?? []) {
-      const placement = blocksById[engineBlock.id];
-      if (!isMediaPlacement(placement)) {
-        continue;
-      }
-      let state = map[placement.id];
-      if (state === undefined) {
-        state = { running: false, failed: false };
-        map[placement.id] = state;
-      }
-      if (engineBlock.state === "running") {
-        state.running = true;
-      } else if (engineBlock.state === "failed") {
-        state.failed = true;
-      }
-    }
-    return map;
-  }, [run, blocksById]);
-  const activeAnimations = useMemo(() => {
-    if (run === null || run.snapshot.phase === "failed") {
-      return [];
-    }
-    const result: { block: MediaPlacement; paused: boolean }[] = [];
-    for (const block of blocks) {
-      if (block.kind !== "animation") {
-        continue;
-      }
-      if (run.snapshot.time < block.start || run.finalized.has(block.id)) {
-        continue;
-      }
-      const state = mediaStates[block.id];
-      if (state.failed) {
-        continue;
-      }
-      result.push({ block, paused: !state.running });
-    }
-    return result;
-  }, [blocks, run, mediaStates]);
-
   const startRun = () => {
-    const next = new TimelineSession(tracks, blocks, bpm, {
+    const next = new TimelineSession(tracks, blocks, bpm, useStageStore.getState(), {
       onSnapshot: (snapshot) =>
         setRun((current) =>
           current === null ? null : { ...current, snapshot },
         ),
       onActivity: setActivity,
-      onFinalize: (placementId) =>
-        setRun((current) =>
-          current === null
-            ? null
-            : {
-                ...current,
-                finalized: new Set(current.finalized).add(placementId),
-              },
-        ),
     });
     sessionRef.current = next;
-    setRun({ session: next, snapshot: next.snapshot, finalized: new Set() });
+    setRun({ session: next, snapshot: next.snapshot });
     next.start();
   };
 
@@ -458,7 +376,7 @@ export function App() {
 
   const hint = isStaging
     ? editable
-      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its left or right edge to change its start or end. Right-drag a media block's edge inward to set a fade, or outward to extend the block with that fade. Click a block to select it; the inspector edits its properties. Delete removes the selected block."
+      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its left or right edge to change its start or end. Right-drag a media block's edge inward to set a fade, or outward to extend the block with that fade. Left-drag an internal phase boundary to adjust the fade. Click a block to select it; the inspector edits its properties. Delete removes the selected block."
       : running
         ? "Running. Dialogue and animation effects appear in the stage below the timeline. Press OK to finish a dialogue. Skip delivers a skip request to running blocks; the barrier still waits for them to complete."
         : "Timeline ended. Reset to edit and run again."
@@ -816,28 +734,7 @@ export function App() {
         aria-label="Stage"
       >
         <div className="stage-heading">Stage</div>
-        <div className="stage-content">
-          {runningDialogues.map(({ block, advance }) => (
-            <div key={block.id} className="stage-dialogue">
-              <span className="stage-tag">Dialogue @{block.start}</span>
-              <p className="stage-dialogue-text">{DIALOGUE_TEXT}</p>
-              <button type="button" className="stage-ok" onClick={advance}>
-                OK
-              </button>
-            </div>
-          ))}
-          {activeAnimations.map(({ block, paused }) => (
-            <StageAnimation
-              key={block.id}
-              block={block}
-              bpm={bpm}
-              paused={paused}
-            />
-          ))}
-          {runningDialogues.length === 0 && activeAnimations.length === 0 ? (
-            <p className="stage-empty">Nothing playing</p>
-          ) : null}
-        </div>
+        <Stage items={stageItems} />
       </section>
 
       <footer className="status">
@@ -889,88 +786,6 @@ export function App() {
       ) : null}
       {activity ? <p className="activity">{activity}</p> : null}
     </main>
-  );
-}
-
-function StageAnimation({
-  block,
-  bpm,
-  paused,
-}: {
-  block: MediaPlacement;
-  bpm: number;
-  paused: boolean;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const animationRef = useRef<Animation | null>(null);
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) {
-      return;
-    }
-    if (block.fadeIn === 0 && block.fadeOut === 0) {
-      element.style.opacity = "1";
-      return;
-    }
-    const keyframes: Keyframe[] = [];
-    if (block.fadeIn > 0) {
-      keyframes.push(
-        { opacity: 0, offset: 0 },
-        { opacity: 1, offset: block.fadeIn / block.length },
-      );
-    }
-    if (block.fadeOut > 0) {
-      keyframes.push(
-        { opacity: 1, offset: 1 - block.fadeOut / block.length },
-        { opacity: 0, offset: 1 },
-      );
-    }
-    const animation = element.animate(keyframes, {
-      duration: blockDurationSeconds(block, bpm) * 1000,
-      fill: "both",
-    });
-    animationRef.current = animation;
-    if (paused) {
-      animation.pause();
-    }
-    return () => {
-      animation.cancel();
-      animationRef.current = null;
-    };
-  }, [block, bpm]);
-
-  useEffect(() => {
-    const animation = animationRef.current;
-    if (!animation) {
-      return;
-    }
-    if (paused) {
-      animation.pause();
-    } else {
-      animation.play();
-    }
-  }, [paused]);
-
-  return (
-    <div ref={ref} className="stage-animation">
-      <span className="stage-tag">
-        Animation @{block.start}–{block.start + block.length}
-      </span>
-      <div
-        className="stage-progress"
-        role="progressbar"
-        aria-label={`Animation at ${block.start}`}
-      >
-        <div
-          className="stage-progress-fill"
-          style={{
-            animationDuration: `${blockDurationSeconds(block, bpm) * 1000}ms`,
-            animationPlayState: paused ? "paused" : "running",
-          }}
-        />
-      </div>
-    </div>
   );
 }
 
@@ -1050,6 +865,9 @@ function BlockView({
     }
     const target = event.target as HTMLElement;
     const handle = target.dataset.handle;
+    const boundary = isMedia
+      ? fadeBoundaries(block).find((phase) => phase.boundary === target.dataset.boundary)?.boundary
+      : undefined;
     drag.current = {
       pointerId: event.pointerId,
       mode:
@@ -1065,6 +883,7 @@ function BlockView({
       fadeIn: isMedia ? block.fadeIn : 0,
       fadeOut: isMedia ? block.fadeOut : 0,
       trackId: block.trackId,
+      boundary,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     setDragging(true);
@@ -1073,6 +892,16 @@ function BlockView({
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const current = drag.current;
     if (!current || current.pointerId !== event.pointerId) {
+      return;
+    }
+    if (current.boundary !== undefined) {
+      const delta = Math.round((event.clientX - current.originX) / CELL_WIDTH);
+      const origin = current.boundary === "fadeOut"
+        ? current.length - current.fadeOut
+        : current.fadeIn;
+      setSpan(block.id, current.start, current.length, dragFadeBoundary(
+        current.boundary, origin + delta, current.length, current.fadeIn, current.fadeOut,
+      ));
       return;
     }
     if (current.mode === "resizeStart") {
@@ -1196,26 +1025,36 @@ function BlockView({
       {isMedia ? (
         <>
           {block.fadeIn > 0 ? (
-            <span
+            <FadeSurface
               className="block-fade block-fade-in"
-              style={{ width: `${(block.fadeIn / block.length) * 100}%` }}
-              aria-hidden="true"
+              cells={block.fadeIn}
+              length={block.length}
+              inward
             />
           ) : null}
           {block.fadeOut > 0 ? (
-            <span
+            <FadeSurface
               className="block-fade block-fade-out"
-              style={{ width: `${(block.fadeOut / block.length) * 100}%` }}
-              aria-hidden="true"
+              cells={block.fadeOut}
+              length={block.length}
+              inward={false}
             />
           ) : null}
-          {mediaPhases(block.fadeIn, block.fadeOut, block.length)
-            .slice(1)
-            .map((phase) => (
+          <span
+            className="block-body-surface"
+            style={{
+              left: `${block.fadeIn / block.length * 100}%`,
+              width: `${(block.length - block.fadeIn - block.fadeOut) / block.length * 100}%`,
+            }}
+            aria-hidden="true"
+          />
+          {fadeBoundaries(block).map((phase) => (
               <span
-                key={phase.index}
-                className="block-phase-boundary"
+                key={phase.boundary}
+                className={`block-phase-boundary${editable ? " is-editable" : ""}`}
+                data-boundary={phase.boundary}
                 style={{ left: `${(phase.offset / block.length) * 100}%` }}
+                title="Drag to move phase boundary"
                 aria-hidden="true"
               />
             ))}
@@ -1234,6 +1073,21 @@ function BlockView({
       ) : null}
     </div>
   );
+}
+
+function FadeSurface({ className, cells, length, inward }: {
+  className: string;
+  cells: number;
+  length: number;
+  inward: boolean;
+}) {
+  const maskImage = useMemo(() => {
+    const width = (length * CELL_WIDTH - 6) * cells / length;
+    const svg = generateDotGradientSVG(Math.ceil(width / 6) * 6, TRACK_HEIGHT - 6, 6,
+      inward ? 0.25 : 4.5, inward ? 4.5 : 0.25);
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+  }, [cells, length, inward]);
+  return <span className={className} style={{ width: `${cells / length * 100}%`, maskImage }} aria-hidden="true" />;
 }
 
 function PropertyNumber({

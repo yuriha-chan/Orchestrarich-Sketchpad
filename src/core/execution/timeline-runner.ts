@@ -57,7 +57,7 @@ export interface TimelineRunnerOptions {
   readonly onBlockTerminate?: (block: BlockSnapshot) => void;
 }
 
-interface Placement {
+interface BlockExecution {
   readonly id: string;
   readonly trackId: string;
   readonly start: number;
@@ -68,10 +68,10 @@ interface Placement {
   skipHandler?: SkipHandler;
 }
 
-function flattenAndValidate(definition: TimelineDefinition): Placement[] {
+function flattenAndValidate(definition: TimelineDefinition): BlockExecution[] {
   const trackIds = new Set<string>();
   const blockIds = new Set<string>();
-  const placements: Placement[] = [];
+  const placements: BlockExecution[] = [];
 
   for (const track of definition.tracks) {
     if (trackIds.has(track.id)) {
@@ -118,7 +118,7 @@ function flattenAndValidate(definition: TimelineDefinition): Placement[] {
 }
 
 export class TimelineRunner {
-  private readonly placements: readonly Placement[];
+  private readonly placements: readonly BlockExecution[];
   private readonly options: TimelineRunnerOptions;
   private readonly listeners = new Set<(snapshot: TimelineSnapshot) => void>();
   private readonly horizon: number;
@@ -211,7 +211,7 @@ export class TimelineRunner {
     };
   }
 
-  private runningPlacements(): readonly Placement[] {
+  private runningPlacements(): readonly BlockExecution[] {
     if (this.currentPhase !== "running") {
       return [];
     }
@@ -221,7 +221,7 @@ export class TimelineRunner {
     );
   }
 
-  private blockingPlacements(): readonly Placement[] {
+  private blockingPlacements(): readonly BlockExecution[] {
     if (this.currentPhase !== "running") {
       return [];
     }
@@ -233,7 +233,7 @@ export class TimelineRunner {
     );
   }
 
-  private invokeBlockStart(placement: Placement): void {
+  private invokeBlockStart(placement: BlockExecution): void {
     let result: BlockStartResult | undefined;
     try {
       result = this.options.onBlockStart?.(this.toBlockSnapshot(placement));
@@ -251,7 +251,7 @@ export class TimelineRunner {
     );
   }
 
-  private deliverSkip(placement: Placement, reason: SkipReason): void {
+  private deliverSkip(placement: BlockExecution, reason: SkipReason): void {
     const handler = placement.skipHandler;
     if (handler === undefined) {
       return;
@@ -268,7 +268,7 @@ export class TimelineRunner {
     }
   }
 
-  private completeBlock(placement: Placement): void {
+  private completeBlock(placement: BlockExecution): void {
     if (this.currentPhase !== "running") {
       return;
     }
@@ -280,7 +280,7 @@ export class TimelineRunner {
     this.pump();
   }
 
-  private failBlock(placement: Placement): void {
+  private failBlock(placement: BlockExecution): void {
     if (this.currentPhase !== "running") {
       return;
     }
@@ -416,7 +416,7 @@ export class TimelineRunner {
     }
   }
 
-  private toBlockSnapshot(placement: Placement): BlockSnapshot {
+  private toBlockSnapshot(placement: BlockExecution): BlockSnapshot {
     return {
       id: placement.id,
       trackId: placement.trackId,

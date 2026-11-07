@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimelineSnapshot } from "../../../src/core/execution/timeline-runner.ts";
-import { TimelineSession, SKIP_FADE_MS, toTimelineDefinition } from "./execution";
+import { TimelineSession, SKIP_FADE_MS, toTimelineDefinition, type ExecutionInstance } from "./execution";
+import { compilePlacement, definitionBlocks, isMultiPhase, type ExecutionDefinition } from "./execution-definition";
 import type {
   BlockKind,
   DialoguePlacement,
@@ -8,6 +9,8 @@ import type {
   Placement,
 } from "./model";
 import { DEFAULT_TRACKS } from "./model";
+import { createStageStore, type DialogueView } from "./stage-state";
+import { MediaExecution, TimedExecution } from "./block-execution";
 
 type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
   kind?: BlockKind;
@@ -56,25 +59,41 @@ function placement(overrides: PlacementOverrides = {}): Placement {
   return { ...base, kind, ...durationFields };
 }
 
-function setup(placements: Placement[], bpm = 120) {
+function setup(placements: Placement[], bpm = 120, stage = createStageStore()) {
   const activities: string[] = [];
   const finalized: string[] = [];
+  const startedInstances: ExecutionInstance[] = [];
+  const finalizedInstances: ExecutionInstance[] = [];
   let snapshot: TimelineSnapshot | null = null;
-  const session = new TimelineSession(DEFAULT_TRACKS, placements, bpm, {
+  const session = new TimelineSession(DEFAULT_TRACKS, placements, bpm, stage.getState(), {
     onSnapshot: (value) => {
       snapshot = value;
     },
     onActivity: (message) => {
       activities.push(message);
     },
-    onFinalize: (placementId) => {
-      finalized.push(placementId);
+    onExecutionStart: (instance) => {
+      startedInstances.push(instance);
+    },
+    onFinalize: (instance) => {
+      finalized.push(instance.definition.placement.id);
+      finalizedInstances.push(instance);
     },
   });
   return {
     session,
     activities,
     finalized,
+    startedInstances,
+    finalizedInstances,
+    stage,
+    advanceDialogue: (placementId: string) => {
+      const instance = startedInstances.find((instance) => instance.definition.placement.id === placementId)!;
+      const dialogue = stage.getState().items.find(
+        (item): item is DialogueView => item.id === instance.id && item.kind === "dialogue",
+      )!;
+      dialogue.confirm();
+    },
     snapshot: (): TimelineSnapshot | null => snapshot,
     blockState: (id: string) =>
       snapshot?.blocks.find((block) => block.id === id)?.state,
@@ -141,6 +160,28 @@ describe("toTimelineDefinition", () => {
   });
 });
 
+describe("execution structure", () => {
+  it("classifies multi-phase structure independently of media kind", () => {
+    const wait = placement({ kind: "wait", length: 3 });
+    const definition: ExecutionDefinition = {
+      placement: wait,
+      structure: {
+        type: "multi-phase",
+        phases: [
+          { index: 0, offset: 0, length: 1 },
+          { index: 1, offset: 1, length: 2 },
+        ],
+      },
+    };
+    expect(isMultiPhase(definition.structure)).toBe(true);
+    expect(isMultiPhase(compilePlacement(wait).structure)).toBe(false);
+    expect(definitionBlocks(definition)).toEqual([
+      { id: "placement-1~0", start: 0, length: 1, cooperativeSkip: false },
+      { id: "placement-1~1", start: 1, length: 2, cooperativeSkip: false },
+    ]);
+  });
+});
+
 describe("TimelineSession", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -148,6 +189,26 @@ describe("TimelineSession", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("creates media execution subtypes that own presentation and timer cleanup", () => {
+    const run = setup([
+      placement({ id: "clip", kind: "animation" }),
+      placement({ id: "sound", kind: "sound", trackId: DEFAULT_TRACKS[1].id }),
+      placement({ id: "wait", kind: "wait", trackId: DEFAULT_TRACKS[2].id }),
+    ]);
+    run.session.start();
+    const [animation, sound, wait] = run.startedInstances;
+    expect(animation).toBeInstanceOf(MediaExecution);
+    expect(sound).toBeInstanceOf(MediaExecution);
+    expect(wait).toBeInstanceOf(TimedExecution);
+    expect(wait).not.toBeInstanceOf(MediaExecution);
+    expect(run.stage.getState().items.map((item) => item.id)).toEqual([animation.id]);
+    expect(vi.getTimerCount()).toBe(3);
+
+    run.session.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(run.stage.getState().items).toEqual([]);
   });
 
   it("waits at the end barrier for the animation after the dialogue advances", async () => {
@@ -169,7 +230,7 @@ describe("TimelineSession", () => {
       "line",
     ]);
 
-    run.session.advanceDialogue("line");
+    run.advanceDialogue("line");
     await vi.advanceTimersByTimeAsync(0);
 
     expect(run.blockState("line")).toBe("completed");
@@ -280,7 +341,7 @@ describe("TimelineSession", () => {
     expect(run.snapshot()?.blockingBlockIds).toEqual(["line"]);
     expect(run.activities).toContain("Skip (user): sfx at t=0");
 
-    run.session.advanceDialogue("line");
+    run.advanceDialogue("line");
     await vi.advanceTimersByTimeAsync(0);
 
     expect(run.snapshot()?.time).toBe(1);
@@ -333,7 +394,7 @@ describe("TimelineSession", () => {
       false,
     );
 
-    run.session.advanceDialogue("line");
+    run.advanceDialogue("line");
     await vi.advanceTimersByTimeAsync(0);
 
     expect(run.activities).toContain("Skip (cooperative): bgm at t=1");
@@ -391,6 +452,138 @@ describe("TimelineSession", () => {
     expect(run.blockState("clip~2")).toBe("completed");
     expect(run.snapshot()?.time).toBe(4);
     expect(run.snapshot()?.phase).toBe("finished");
+  });
+
+  it("keeps one execution instance through intermediate and final barrier waits", async () => {
+    const run = setup([
+      placement({ id: "gate", length: 1 }),
+      placement({ id: "end-gate", start: 1, length: 3 }),
+      placement({
+        id: "clip",
+        trackId: DEFAULT_TRACKS[1].id,
+        kind: "animation",
+        length: 4,
+        duration: 4,
+        fadeIn: 1,
+        fadeOut: 1,
+      }),
+    ]);
+    run.session.start();
+    const clip = run.startedInstances.find((instance) => instance.definition.placement.id === "clip")!;
+    const presentation = run.stage.getState().items.find((item) => item.id === clip.id)!;
+    expect(presentation).toMatchObject({
+      kind: "animation",
+      durationMs: 2000,
+      fadeInFraction: 0.25,
+      fadeOutFraction: 0.25,
+    });
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(run.snapshot()?.time).toBe(0);
+    expect(run.blockState("clip~0")).toBe("completed");
+    expect(run.blockState("clip~1")).toBe("pending");
+    expect(run.finalizedInstances).not.toContain(clip);
+    expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
+      id: presentation.id,
+      playback: { positionMs: 500, playing: false },
+    });
+
+    run.advanceDialogue("gate");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
+      id: presentation.id,
+      playback: { positionMs: 500, playing: true },
+    });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(run.snapshot()?.time).toBe(3);
+    expect(run.blockState("clip~2")).toBe("completed");
+    expect(run.finalizedInstances).not.toContain(clip);
+    expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
+      id: presentation.id,
+      playback: { positionMs: 2000, playing: false },
+    });
+    expect(run.startedInstances.filter((instance) => instance.definition.placement.id === "clip")).toEqual([clip]);
+
+    run.advanceDialogue("end-gate");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.finalizedInstances).toContain(clip);
+    expect(run.stage.getState().items).toEqual([]);
+    run.session.dispose();
+  });
+
+  it("dialogue execution writes UI state and owns the confirmation callback", async () => {
+    const run = setup([placement({ id: "line" })]);
+    expect(run.stage.getState().items).toEqual([]);
+    run.session.start();
+    const dialogue = run.stage.getState().items[0];
+    expect(dialogue).toMatchObject({
+      kind: "dialogue",
+      text: "lazy dog jumps ...",
+      label: "Dialogue @0",
+    });
+    expect(run.blockState("line")).toBe("running");
+
+    run.advanceDialogue("line");
+    expect(run.stage.getState().items).toEqual([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.blockState("line")).toBe("completed");
+    run.session.dispose();
+  });
+
+  it("disposal terminates the presentations owned by active blocks", () => {
+    const run = setup([
+      placement({ id: "line" }),
+      placement({ id: "clip", kind: "animation", trackId: DEFAULT_TRACKS[1].id }),
+    ]);
+    run.session.start();
+    expect(run.stage.getState().items.map((item) => item.kind)).toEqual(["dialogue", "animation"]);
+    run.session.dispose();
+    expect(run.stage.getState().items).toEqual([]);
+    expect(run.finalizedInstances).toEqual(run.startedInstances);
+  });
+
+  it("allocates different execution identities for the same placement", async () => {
+    const documentPlacement = placement({ kind: "wait" });
+    const first = setup([documentPlacement]);
+    const second = setup([documentPlacement]);
+    first.session.start();
+    second.session.start();
+
+    const firstInstance = first.startedInstances[0];
+    const secondInstance = second.startedInstances[0];
+    expect(firstInstance).not.toBe(secondInstance);
+    expect(firstInstance.id).not.toBe(secondInstance.id);
+    expect(firstInstance.definition.placement).toBe(documentPlacement);
+    expect(secondInstance.definition.placement).toBe(documentPlacement);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(first.finalizedInstances).toEqual([firstInstance]);
+    expect(second.finalizedInstances).toEqual([secondInstance]);
+    first.session.dispose();
+    second.session.dispose();
+  });
+
+  it("each execution removes only its own presentation of the same placement", async () => {
+    const sharedStage = createStageStore();
+    const documentPlacement = placement({ kind: "animation" });
+    const first = setup([documentPlacement], 120, sharedStage);
+    const second = setup([documentPlacement], 120, sharedStage);
+    first.session.start();
+    await vi.advanceTimersByTimeAsync(250);
+    second.session.start();
+    expect(sharedStage.getState().items.map((item) => item.id)).toEqual([
+      first.startedInstances[0].id,
+      second.startedInstances[0].id,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(sharedStage.getState().items.map((item) => item.id)).toEqual([
+      second.startedInstances[0].id,
+    ]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(sharedStage.getState().items).toEqual([]);
+    first.session.dispose();
+    second.session.dispose();
   });
 
   it("finalizes a media container only when its last phase terminates", async () => {
