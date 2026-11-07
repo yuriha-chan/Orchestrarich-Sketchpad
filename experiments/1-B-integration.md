@@ -24,8 +24,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     natural duration.
   - A skip request shortens a timed block to a 150 ms fade before completion.
   - Dialogue blocks have no skip handler and therefore ignore skip requests.
-- Cooperative skip is a placement property, toggled in the status bar; the
-  engine decides when to fire the automatic skip event.
+- A selected placement is edited in an inspector beside the grid: kind, start,
+  length, and cooperative skip. The engine decides when to fire the automatic
+  skip event.
 - A run uses the placements as they were when Run was pressed. Editing is
   locked while a run exists; Reset returns to editing.
 - The core engine is unchanged.
@@ -48,9 +49,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
 - `pnpm typecheck`, `pnpm test` (59 tests), and `pnpm build:1b` pass with the
-  workspace tabs.
-- Pending: the User must run `pnpm dev:1b` and judge the integration and the
-  workspace tabs visually.
+  workspace tabs and the inspector.
+- Pending: the User must run `pnpm dev:1b` and judge the integration, the
+  workspace tabs, and the inspector visually.
 
 ## What Was Decided
 
@@ -73,17 +74,26 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
    while a dialogue waits for OK.
 8. Selection is single-block. Pressing a block selects it, including the start
    of a move or stretch; Escape or a right-click on empty grid clears it. The
-   selection is shown in the status bar.
-9. Right-clicking a block opens a context menu with the block's cooperative
-   skip toggle, its kind, and Delete. The menu is only available while editing;
-   during a run a right-click selects the block but does not open editing
-   actions.
+   selected block's properties are shown in the inspector.
+9. Right-clicking a block opens a context menu with Delete. The menu is only
+   available while editing; during a run a right-click selects the block but
+   does not open editing actions.
 10. Workspaces are view-layer layout presets over the same store and session,
     selected at the top tab bar. The active workspace is UI state, not document
     state: switching does not change placements, selection, logical time, or the
     running session. Staging is the editing layout; Preview hides the grid and
-    editing controls and expands the stage. The Preview workspace is where the
-    PixiJS game preview can live later.
+   editing controls and expands the stage. The Preview workspace is where the
+   PixiJS game preview can live later.
+11. Property editing uses a selection-gated inspector beside the grid in
+    Staging instead of menu items or a modal dialog. It shows kind, start,
+    length, and cooperative skip; numbers commit on Enter or blur and invalid
+    results leave the placement unchanged. The fields are read-only while a run
+    is loaded, and the inspector is hidden in Preview, where editing is not
+    available.
+12. While a run is active, the current logical time is marked by a rectangular
+    frame over its column of the track area, in addition to the highlighted
+    ruler cell. The frame spans the whole unit-cell column because logical time
+    is a column, not an instant, and it does not intercept pointer events.
 
 ## Carry-Over
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
@@ -62,6 +62,8 @@ export function App() {
   const setKind = useExperimentStore((state) => state.setKind);
   const setBlockKind = useExperimentStore((state) => state.setBlockKind);
   const create = useExperimentStore((state) => state.create);
+  const move = useExperimentStore((state) => state.move);
+  const resize = useExperimentStore((state) => state.resize);
   const remove = useExperimentStore((state) => state.remove);
   const clear = useExperimentStore((state) => state.clear);
   const select = useExperimentStore((state) => state.select);
@@ -281,7 +283,7 @@ export function App() {
 
   const hint = isStaging
     ? editable
-      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its right edge to stretch it. Click a block to select it; right-click a block for actions. Delete removes the selected block."
+      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its right edge to stretch it. Click a block to select it; the inspector edits its properties. Delete removes the selected block."
       : running
         ? "Running. Dialogue and animation effects appear in the stage below the timeline. Press OK to finish a dialogue. Skip delivers a skip request to running blocks; the barrier still waits for them to complete."
         : "Timeline ended. Reset to edit and run again."
@@ -372,67 +374,152 @@ export function App() {
       <p className="hint">{hint}</p>
 
       {isStaging ? (
-        <div className="table">
-          <div className="track-labels">
-            <div className="ruler-spacer" />
-            {TRACKS.map((track) => (
-              <div key={track.id} className="track-label" title={track.label}>
-                {track.label}
-              </div>
-            ))}
-          </div>
-          <div className="grid-scroll">
-            <div className="grid-content">
-              <div className="ruler">
-                {Array.from({ length: COLUMNS }, (_, column) => (
-                  <span
-                    key={column}
-                    className={`ruler-cell${running && snapshot?.time === column ? " is-current" : ""}`}
-                  >
-                    {column}
-                  </span>
-                ))}
-              </div>
-              <div className="tracks-area" onContextMenu={handleGridContextMenu}>
-                {TRACKS.map((track) => (
-                  <div
-                    key={track.id}
-                    className="track-row"
-                    onPointerDown={(event) => handleRowPointerDown(event, track.id)}
-                    onPointerMove={handleRowPointerMove}
-                    onPointerUp={finishCreation}
-                    onPointerCancel={cancelCreation}
-                  />
-                ))}
-                <div className="block-layer">
-                  {blocks.map((block) => (
-                    <BlockView
-                      key={block.id}
-                      block={block}
-                      selected={block.id === selectedId}
-                      editable={editable}
-                      state={runBlocks.get(block.id)?.state}
-                      blocking={blockingIds.has(block.id)}
-                      onContextMenu={(event) => openBlockContextMenu(event, block)}
+        <div className="staging-area">
+          <div className="table">
+            <div className="track-labels">
+              <div className="ruler-spacer" />
+              {TRACKS.map((track) => (
+                <div key={track.id} className="track-label" title={track.label}>
+                  {track.label}
+                </div>
+              ))}
+            </div>
+            <div className="grid-scroll">
+              <div className="grid-content">
+                <div className="ruler">
+                  {Array.from({ length: COLUMNS }, (_, column) => (
+                    <span
+                      key={column}
+                      className={`ruler-cell${running && snapshot?.time === column ? " is-current" : ""}`}
+                    >
+                      {column}
+                    </span>
+                  ))}
+                </div>
+                <div className="tracks-area" onContextMenu={handleGridContextMenu}>
+                  {TRACKS.map((track) => (
+                    <div
+                      key={track.id}
+                      className="track-row"
+                      onPointerDown={(event) => handleRowPointerDown(event, track.id)}
+                      onPointerMove={handleRowPointerMove}
+                      onPointerUp={finishCreation}
+                      onPointerCancel={cancelCreation}
                     />
                   ))}
-                  {creation ? (
+                  <div className="block-layer">
+                    {blocks.map((block) => (
+                      <BlockView
+                        key={block.id}
+                        block={block}
+                        selected={block.id === selectedId}
+                        editable={editable}
+                        state={runBlocks.get(block.id)?.state}
+                        blocking={blockingIds.has(block.id)}
+                        onContextMenu={(event) => openBlockContextMenu(event, block)}
+                      />
+                    ))}
+                    {creation ? (
+                      <div
+                        className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
+                        style={{
+                          left: previewStart * CELL_WIDTH + 3,
+                          top: previewTrackIndex * TRACK_HEIGHT + 3,
+                          width: previewLength * CELL_WIDTH - 6,
+                          height: TRACK_HEIGHT - 6,
+                        }}
+                      >
+                        <span className="block-label">{BLOCK_LABELS[creation.kind]}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  {running && snapshot ? (
                     <div
-                      className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
-                      style={{
-                        left: previewStart * CELL_WIDTH + 3,
-                        top: previewTrackIndex * TRACK_HEIGHT + 3,
-                        width: previewLength * CELL_WIDTH - 6,
-                        height: TRACK_HEIGHT - 6,
-                      }}
-                    >
-                      <span className="block-label">{BLOCK_LABELS[creation.kind]}</span>
-                    </div>
+                      className="time-cursor"
+                      style={{ left: snapshot.time * CELL_WIDTH }}
+                      aria-hidden="true"
+                    />
                   ) : null}
                 </div>
               </div>
             </div>
           </div>
+          <aside className="inspector" aria-label="Block properties">
+            <div className="inspector-heading">Properties</div>
+            {selected ? (
+              <div className="inspector-body">
+                <div className="inspector-summary">
+                  <span className={`inspector-swatch palette-${selected.kind}`} />
+                  <span>
+                    {BLOCK_LABELS[selected.kind]} on{" "}
+                    {TRACKS.find((track) => track.id === selected.trackId)?.label ??
+                      selected.trackId}
+                  </span>
+                </div>
+                <label className="inspector-field">
+                  <span>Kind</span>
+                  <select
+                    value={selected.kind}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      setBlockKind(selected.id, event.target.value as BlockKind)
+                    }
+                  >
+                    {BLOCK_KINDS.map((kind) => (
+                      <option key={kind} value={kind}>
+                        {BLOCK_LABELS[kind]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inspector-field">
+                  <span>Start</span>
+                  <PropertyNumber
+                    key={`start-${selected.id}`}
+                    value={selected.start}
+                    min={0}
+                    max={COLUMNS - selected.length}
+                    disabled={!editable}
+                    onCommit={(value) => move(selected.id, selected.trackId, value)}
+                  />
+                </label>
+                <label className="inspector-field">
+                  <span>Length</span>
+                  <PropertyNumber
+                    key={`length-${selected.id}`}
+                    value={selected.length}
+                    min={1}
+                    max={COLUMNS - selected.start}
+                    disabled={!editable}
+                    onCommit={(value) => resize(selected.id, value)}
+                  />
+                </label>
+                <p className="inspector-range">
+                  t={selected.start}–{selected.start + selected.length}
+                </p>
+                <label className="inspector-check">
+                  <input
+                    type="checkbox"
+                    checked={selected.cooperativeSkip}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      setCooperativeSkip(selected.id, event.target.checked)
+                    }
+                  />
+                  Cooperative skip
+                </label>
+                {editable ? null : (
+                  <p className="inspector-note">
+                    Read-only while the timeline is loaded. Reset to edit.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="inspector-empty">
+                Select a block to edit its properties.
+              </p>
+            )}
+          </aside>
         </div>
       ) : null}
 
@@ -481,32 +568,6 @@ export function App() {
       </section>
 
       <footer className="status">
-        {isStaging ? (
-          <div className="status-selection">
-            {selected ? (
-              <>
-                Selected <strong>{BLOCK_LABELS[selected.kind]}</strong> on{" "}
-                {TRACKS.find((track) => track.id === selected.trackId)?.label ??
-                  selected.trackId}{" "}
-                at t={selected.start}–{selected.start + selected.length} (
-                {selected.length} {selected.length === 1 ? "cell" : "cells"})
-                <label className="coop-toggle">
-                  <input
-                    type="checkbox"
-                    checked={selected.cooperativeSkip}
-                    disabled={!editable}
-                    onChange={(event) =>
-                      setCooperativeSkip(selected.id, event.target.checked)
-                    }
-                  />
-                  Cooperative skip
-                </label>
-              </>
-            ) : (
-              "Nothing selected"
-            )}
-          </div>
-        ) : null}
         <div className={`status-run status-${phase}`}>
           {snapshot ? (
             <>
@@ -529,7 +590,7 @@ export function App() {
           aria-label={`Actions for ${BLOCK_LABELS[menuBlock.kind]} at ${menuBlock.start}`}
           style={{
             left: clamp(contextMenu.x, 8, window.innerWidth - 228),
-            top: clamp(contextMenu.y, 8, window.innerHeight - 324),
+            top: clamp(contextMenu.y, 8, window.innerHeight - 110),
           }}
           onPointerDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
@@ -538,42 +599,6 @@ export function App() {
             {BLOCK_LABELS[menuBlock.kind]} at t={menuBlock.start}–
             {menuBlock.start + menuBlock.length}
           </div>
-          <button
-            type="button"
-            role="menuitemcheckbox"
-            aria-checked={menuBlock.cooperativeSkip}
-            className="context-menu-item"
-            onClick={() => {
-              setCooperativeSkip(menuBlock.id, !menuBlock.cooperativeSkip);
-              setContextMenu(null);
-            }}
-          >
-            <span className="context-menu-check">
-              {menuBlock.cooperativeSkip ? "✓" : ""}
-            </span>
-            Cooperative skip
-          </button>
-          <div className="context-menu-separator" role="separator" />
-          <div className="context-menu-label">Change kind</div>
-          {BLOCK_KINDS.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              role="menuitemradio"
-              aria-checked={menuBlock.kind === kind}
-              className="context-menu-item"
-              onClick={() => {
-                setBlockKind(menuBlock.id, kind);
-                setContextMenu(null);
-              }}
-            >
-              <span className="context-menu-check">
-                {menuBlock.kind === kind ? "✓" : ""}
-              </span>
-              <span className={`context-menu-swatch palette-${kind}`} />
-              {BLOCK_LABELS[kind]}
-            </button>
-          ))}
           <div className="context-menu-separator" role="separator" />
           <button
             type="button"
@@ -705,6 +730,55 @@ function BlockView({
         <span className="resize-handle" data-handle="resize" aria-hidden="true" />
       ) : null}
     </div>
+  );
+}
+
+function PropertyNumber({
+  value,
+  min,
+  max,
+  disabled,
+  onCommit,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  disabled: boolean;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useLayoutEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const parsed = Number.parseInt(draft, 10);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    onCommit(clamp(parsed, min, max));
+    setDraft(String(value));
+  };
+
+  return (
+    <input
+      type="number"
+      className="inspector-number"
+      value={draft}
+      min={min}
+      max={max}
+      disabled={disabled}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          commit();
+          event.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 
