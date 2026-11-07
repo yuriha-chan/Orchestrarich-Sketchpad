@@ -21,7 +21,9 @@ import {
   BLOCK_KINDS,
   BLOCK_LABELS,
   MAX_BPM,
+  MAX_GRID_SIZE,
   MIN_BPM,
+  MIN_GRID_SIZE,
   canPlace,
   isMediaPlacement,
 } from "./model";
@@ -121,6 +123,12 @@ export function App() {
   const setFadeOut = useExperimentStore((state) => state.setFadeOut);
   const bpm = useExperimentStore((state) => state.bpm);
   const setBpm = useExperimentStore((state) => state.setBpm);
+  const gridColumns = useExperimentStore((state) => state.gridColumns);
+  const gridRows = useExperimentStore((state) => state.gridRows);
+  const setGridColumns = useExperimentStore((state) => state.setGridColumns);
+  const setGridRows = useExperimentStore((state) => state.setGridRows);
+  const setRectValue = useExperimentStore((state) => state.setRectValue);
+  const setRectUnit = useExperimentStore((state) => state.setRectUnit);
   const setDuration = useExperimentStore((state) => state.setDuration);
   const setDurationUnit = useExperimentStore((state) => state.setDurationUnit);
   const setSyncBeatsToCellSpan = useExperimentStore(
@@ -133,6 +141,7 @@ export function App() {
   const [columnCount, setColumnCount] = useState(INITIAL_COLUMNS);
   const [run, setRun] = useState<RunState | null>(null);
   const [activity, setActivity] = useState<string | null>(null);
+  const [stageSpan, setStageSpan] = useState(0);
   const sessionRef = useRef<TimelineSession | null>(null);
 
   const editable = run === null;
@@ -240,6 +249,10 @@ export function App() {
           3,
         )
       : 0;
+  const selectedRect = selected?.kind === "rectangle" ? selected : null;
+  const rectMax = selectedRect?.rectUnit === "pixels" ? 4096 : 512;
+  const rectMinSize = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
+  const rectStep = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
 
   const startRun = () => {
     const next = new TimelineSession(tracks, blocks, bpm, useStageStore.getState(), {
@@ -376,9 +389,9 @@ export function App() {
 
   const hint = isStaging
     ? editable
-      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its left or right edge to change its start or end. Right-drag a media block's edge inward to set a fade, or outward to extend the block with that fade. Left-drag an internal phase boundary to adjust the fade. Click a block to select it; the inspector edits its properties. Delete removes the selected block."
+      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its left or right edge to change its start or end. Right-drag a media block's edge inward to set a fade, or outward to extend the block with that fade. Left-drag an internal phase boundary to adjust the fade. Click a block to select it; the inspector edits its properties. Rectangle blocks draw on the stage grid and are positioned in the inspector. Delete removes the selected block."
       : running
-        ? "Running. Dialogue and animation effects appear in the stage below the timeline. Press OK to finish a dialogue. Skip delivers a skip request to running blocks; the barrier still waits for them to complete."
+        ? "Running. Dialogue, animation, and rectangle effects appear in the stage below the timeline. Press OK to finish a dialogue. Skip delivers a skip request to running blocks; the barrier still waits for them to complete."
         : "Timeline ended. Reset to edit and run again."
     : editable
       ? "Preview gives the stage the workspace. Switch to Staging to place or edit blocks, or press Run to play the arrangement."
@@ -454,6 +467,28 @@ export function App() {
               step={1}
               disabled={!editable}
               onCommit={(value) => setBpm(Math.round(value))}
+            />
+          </label>
+          <label className="bpm-field">
+            <span>Grid</span>
+            <PropertyNumber
+              value={gridColumns}
+              min={MIN_GRID_SIZE}
+              max={MAX_GRID_SIZE}
+              step={1}
+              ariaLabel="Grid columns"
+              disabled={!editable}
+              onCommit={(value) => setGridColumns(Math.round(value))}
+            />
+            <span>×</span>
+            <PropertyNumber
+              value={gridRows}
+              min={MIN_GRID_SIZE}
+              max={MAX_GRID_SIZE}
+              step={1}
+              ariaLabel="Grid rows"
+              disabled={!editable}
+              onCommit={(value) => setGridRows(Math.round(value))}
             />
           </label>
         </div>
@@ -665,6 +700,115 @@ export function App() {
                       />
                       Sync beats to cell span
                     </label>
+                    {selectedRect ? (
+                      <>
+                        <div className="rect-fields">
+                          <label className="inspector-field">
+                            <span>X</span>
+                            <PropertyNumber
+                              key={`rect-x-${selectedRect.id}-${selectedRect.rectUnit}`}
+                              value={roundTo(selectedRect.x, 3)}
+                              min={0}
+                              max={rectMax}
+                              step={rectStep}
+                              ariaLabel="Rectangle x"
+                              disabled={!editable}
+                              onCommit={(value) =>
+                                setRectValue(selectedRect.id, "x", value)
+                              }
+                            />
+                          </label>
+                          <label className="inspector-field">
+                            <span>Y</span>
+                            <PropertyNumber
+                              key={`rect-y-${selectedRect.id}-${selectedRect.rectUnit}`}
+                              value={roundTo(selectedRect.y, 3)}
+                              min={0}
+                              max={rectMax}
+                              step={rectStep}
+                              ariaLabel="Rectangle y"
+                              disabled={!editable}
+                              onCommit={(value) =>
+                                setRectValue(selectedRect.id, "y", value)
+                              }
+                            />
+                          </label>
+                          <label className="inspector-field">
+                            <span>Width</span>
+                            <PropertyNumber
+                              key={`rect-w-${selectedRect.id}-${selectedRect.rectUnit}`}
+                              value={roundTo(selectedRect.w, 3)}
+                              min={rectMinSize}
+                              max={rectMax}
+                              step={rectStep}
+                              ariaLabel="Rectangle width"
+                              disabled={!editable}
+                              onCommit={(value) =>
+                                setRectValue(selectedRect.id, "w", value)
+                              }
+                            />
+                          </label>
+                          <label className="inspector-field">
+                            <span>Height</span>
+                            <PropertyNumber
+                              key={`rect-h-${selectedRect.id}-${selectedRect.rectUnit}`}
+                              value={roundTo(selectedRect.h, 3)}
+                              min={rectMinSize}
+                              max={rectMax}
+                              step={rectStep}
+                              ariaLabel="Rectangle height"
+                              disabled={!editable}
+                              onCommit={(value) =>
+                                setRectValue(selectedRect.id, "h", value)
+                              }
+                            />
+                          </label>
+                        </div>
+                        <div className="inspector-field">
+                          <span>Units</span>
+                          <div
+                            className="unit-toggle"
+                            role="group"
+                            aria-label="Rectangle units"
+                          >
+                            <button
+                              type="button"
+                              className={
+                                selectedRect.rectUnit === "span"
+                                  ? "is-active"
+                                  : ""
+                              }
+                              aria-pressed={selectedRect.rectUnit === "span"}
+                              disabled={!editable || stageSpan <= 0}
+                              onClick={() =>
+                                setRectUnit(selectedRect.id, "span", stageSpan)
+                              }
+                            >
+                              Span
+                            </button>
+                            <button
+                              type="button"
+                              className={
+                                selectedRect.rectUnit === "pixels"
+                                  ? "is-active"
+                                  : ""
+                              }
+                              aria-pressed={selectedRect.rectUnit === "pixels"}
+                              disabled={!editable || stageSpan <= 0}
+                              onClick={() =>
+                                setRectUnit(selectedRect.id, "pixels", stageSpan)
+                              }
+                            >
+                              Pixels
+                            </button>
+                          </div>
+                        </div>
+                        <p className="inspector-note">
+                          Span units follow the stage grid ({gridColumns} ×{" "}
+                          {gridRows}); pixels stay fixed when the stage resizes.
+                        </p>
+                      </>
+                    ) : null}
                     {isMediaPlacement(selected) ? (
                       <>
                         <label className="inspector-field">
@@ -734,7 +878,12 @@ export function App() {
         aria-label="Stage"
       >
         <div className="stage-heading">Stage</div>
-        <Stage items={stageItems} />
+        <Stage
+          items={stageItems}
+          columns={gridColumns}
+          rows={gridRows}
+          onSpanChange={setStageSpan}
+        />
       </section>
 
       <footer className="status">

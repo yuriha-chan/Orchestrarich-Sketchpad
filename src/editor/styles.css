@@ -105,6 +105,10 @@ body {
   background: #475569;
 }
 
+.palette-rectangle {
+  background: #db2777;
+}
+
 .toolbar-actions {
   display: flex;
   gap: 8px;
@@ -227,6 +231,12 @@ body {
   display: flex;
   align-items: stretch;
   gap: 6px;
+}
+
+.rect-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
 }
 
 .duration-control .inspector-number {
@@ -435,6 +445,11 @@ body {
   background: var(--block-color);
 }
 
+.block-rectangle {
+  --block-color: #db2777;
+  background: var(--block-color);
+}
+
 .block-label {
   position: relative;
   z-index: 1;
@@ -599,6 +614,36 @@ body {
   margin: 0;
   font-size: 13px;
   color: #94a3b8;
+}
+
+.stage-screen {
+  position: relative;
+  flex: none;
+  width: 100%;
+  height: 220px;
+  border-radius: 8px;
+  background: #000000;
+  overflow: hidden;
+}
+
+.stage.is-expanded .stage-screen {
+  height: 340px;
+}
+
+.stage-grid {
+  position: absolute;
+  background-color: #0f172a;
+  background-image:
+    linear-gradient(to right, rgb(148 163 184 / 0.25) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(148 163 184 / 0.25) 1px, transparent 1px);
+  border: 1px solid rgb(148 163 184 / 0.4);
+  box-sizing: border-box;
+}
+
+.stage-rect {
+  position: absolute;
+  background: #db2777;
+  opacity: 0.85;
 }
 
 .stage-tag {

@@ -1,6 +1,6 @@
 import type { BlockSnapshot, BlockStartResult, SkipReason } from "../core/execution/timeline-runner.ts";
 import type { ExecutionDefinition } from "./execution-definition";
-import { blockDurationSeconds, type DialoguePlacement, type DurationPlacement, type MediaPlacement } from "./model";
+import { blockDurationSeconds, type DialoguePlacement, type DurationPlacement, type MediaPlacement, type RectanglePlacement } from "./model";
 import type { AnimationPlayback, StageActions } from "./stage-state";
 
 export const SKIP_FADE_MS = 150;
@@ -170,12 +170,37 @@ export class MediaExecution extends TimedExecution {
   }
 }
 
+export class RectangleExecution extends TimedExecution {
+  constructor(
+    definition: ExecutionDefinition,
+    placement: RectanglePlacement,
+    context: ExecutionContext,
+  ) {
+    super(definition, placement, context);
+    context.stage.add({
+      kind: "rectangle",
+      id: this.id,
+      x: placement.x,
+      y: placement.y,
+      w: placement.w,
+      h: placement.h,
+      unit: placement.rectUnit,
+    });
+  }
+
+  override terminate(): void {
+    super.terminate();
+    this.context.stage.remove(this.id);
+  }
+}
+
 export function createExecution(definition: ExecutionDefinition, context: ExecutionContext): ExecutionInstance {
   const placement = definition.placement;
   switch (placement.kind) {
     case "dialogue": return new DialogueExecution(definition, placement, context);
     case "animation": return new MediaExecution(definition, placement, context, new AnimationPresentation(placement, context.stage));
     case "sound": return new MediaExecution(definition, placement, context);
+    case "rectangle": return new RectangleExecution(definition, placement, context);
     case "camera":
     case "wait": return new TimedExecution(definition, placement, context);
   }

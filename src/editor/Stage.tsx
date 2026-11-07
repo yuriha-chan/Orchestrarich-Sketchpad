@@ -1,10 +1,83 @@
-import { useEffect, useRef } from "react";
-import type { AnimationView, StageItem } from "./stage-state";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { RectGeometry } from "./model";
+import type { AnimationView, DialogueView, RectangleView, StageItem } from "./stage-state";
+import { computeStageLayout, rectPixels } from "./stage-geometry";
 
-export function Stage({ items }: { readonly items: readonly StageItem[] }) {
+export function Stage({
+  items,
+  columns,
+  rows,
+  onSpanChange,
+}: {
+  readonly items: readonly StageItem[];
+  readonly columns: number;
+  readonly rows: number;
+  readonly onSpanChange: (span: number) => void;
+}) {
+  const screenRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useLayoutEffect(() => {
+    const element = screenRef.current!;
+    const update = () =>
+      setSize({ width: element.clientWidth, height: element.clientHeight });
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const layout = computeStageLayout(size.width, size.height, columns, rows);
+
+  useEffect(() => {
+    onSpanChange(layout.span);
+  }, [layout.span, onSpanChange]);
+
+  const rectangles = items.filter(
+    (item): item is RectangleView => item.kind === "rectangle",
+  );
+  const cards = items.filter(
+    (item): item is DialogueView | AnimationView => item.kind !== "rectangle",
+  );
+
   return (
     <div className="stage-content">
-      {items.map((item) => item.kind === "dialogue" ? (
+      <div ref={screenRef} className="stage-screen" aria-label="Stage screen">
+        <div
+          className="stage-grid"
+          style={{
+            left: layout.left,
+            top: layout.top,
+            width: layout.width,
+            height: layout.height,
+            backgroundSize: `${layout.span}px ${layout.span}px`,
+          }}
+        >
+          {rectangles.map((view) => {
+            const geometry: RectGeometry = {
+              x: view.x,
+              y: view.y,
+              w: view.w,
+              h: view.h,
+              rectUnit: view.unit,
+            };
+            const pixels = rectPixels(geometry, layout.span);
+            return (
+              <div
+                key={view.id}
+                className="stage-rect"
+                style={{
+                  left: pixels.left,
+                  top: pixels.top,
+                  width: pixels.width,
+                  height: pixels.height,
+                }}
+              />
+            );
+          })}
+        </div>
+      </div>
+      {cards.map((item) => item.kind === "dialogue" ? (
         <div key={item.id} className="stage-dialogue">
           <span className="stage-tag">{item.label}</span>
           <p className="stage-dialogue-text">{item.text}</p>

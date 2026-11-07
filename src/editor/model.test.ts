@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   DialoguePlacement,
   MediaPlacement,
+  RectanglePlacement,
   TimedPlacement,
 } from "./model";
 import {
@@ -58,6 +59,26 @@ function media(overrides: Partial<MediaPlacement> = {}): MediaPlacement {
     syncBeatsToCellSpan: false,
     fadeIn: 0,
     fadeOut: 0,
+    ...overrides,
+  };
+}
+
+function rectangle(overrides: Partial<RectanglePlacement> = {}): RectanglePlacement {
+  return {
+    id: "placement-1",
+    trackId: DEFAULT_TRACKS[0].id,
+    kind: "rectangle",
+    start: 0,
+    length: 1,
+    cooperativeSkip: false,
+    duration: 1,
+    durationUnit: "beats",
+    syncBeatsToCellSpan: false,
+    x: 0,
+    y: 0,
+    w: 1,
+    h: 1,
+    rectUnit: "span",
     ...overrides,
   };
 }
@@ -230,6 +251,48 @@ describe("convertPlacementKind", () => {
       fadeIn: 1,
       fadeOut: 2,
     });
+  });
+
+  it("gives a rectangle geometry and a duration when a dialogue becomes a rectangle", () => {
+    const converted = convertPlacementKind(
+      dialogue({ start: 1, length: 2 }),
+      "rectangle",
+    );
+    expect(converted).toMatchObject({
+      kind: "rectangle",
+      duration: 2,
+      durationUnit: "beats",
+      syncBeatsToCellSpan: false,
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      rectUnit: "span",
+    });
+  });
+
+  it("keeps the duration and drops fades when a media block becomes a rectangle", () => {
+    const converted = convertPlacementKind(
+      media({ duration: 3, durationUnit: "seconds", fadeIn: 1, fadeOut: 2 }),
+      "rectangle",
+    );
+    expect(converted).toMatchObject({
+      kind: "rectangle",
+      duration: 3,
+      durationUnit: "seconds",
+      rectUnit: "span",
+    });
+    expect("fadeIn" in converted).toBe(false);
+  });
+
+  it("drops geometry when a rectangle becomes a timed kind", () => {
+    const converted = convertPlacementKind(
+      rectangle({ x: 3, y: 2, w: 2, h: 1, rectUnit: "pixels" }),
+      "camera",
+    );
+    expect(converted.kind).toBe("camera");
+    expect("x" in converted).toBe(false);
+    expect("rectUnit" in converted).toBe(false);
   });
 });
 

@@ -31,6 +31,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     The block adds its presentation at runtime execution start and removes it
     at container finalization. The renderer does not infer this lifetime.
   - A wait block only occupies logical time; it has no stage effect.
+  - A rectangle block draws a filled rectangle on the stage screen for the
+    block's duration. It is added at execution start and removed when the
+    block is finalized. Its geometry is document data in span or pixel units.
   - A skip request shortens a timed block to a 150 ms fade before completion.
   - Dialogue blocks have no skip handler and therefore ignore skip requests.
   - A media block (sound or animation) is a container with fade-in and fade-out
@@ -41,9 +44,15 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     across the phase barriers, so the media is not cut off by the fades. It is
     unmounted when the container is finalized, that is, when its last phase goes
     through termination.
+- The stage contains a screen with a configurable grid (default 16 x 9). The
+  grid is centered in the available stage area and the leftover space is
+  letterboxed. The cell size (span) is `min(width / columns, height / rows)`.
+  Grid columns and rows are timeline-level properties edited next to BPM and
+  locked during a run.
 - A selected placement is edited in an inspector beside the grid: kind,
   cooperative skip, duration and sync of beats to the cell span for timed and
-  media blocks, and fade lengths for media blocks. Start and the cell span are
+  media blocks, fade lengths for media blocks, and x/y/w/h plus a span/pixel
+  unit for rectangle blocks. Start and the cell span are
   read-only; the block is moved and stretched on the grid. The engine decides
   when to fire the automatic skip event.
 - A run uses the placements as they were when Run was pressed. Editing is
@@ -79,6 +88,12 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   BPM, a seconds duration does not, and a block whose beats are synced to its
   cell span follows the span.
 - A wait block holds its column for its duration and has no stage effect.
+- A rectangle block draws its rectangle on the stage screen while it executes
+  and removes it at finalization. Span units follow the current grid cell size;
+  pixel units stay fixed when the stage is resized. Changing the unit converts
+  the stored geometry at the current span.
+- A non-16:9 stage area centers the configured grid and letterboxes the excess
+  space instead of stretching the cells.
 - `barrierSpan(t)` splits logical time at the distinct block end times. For
   blocks ending at 2, 3, and 5, it returns [0,2] for t=0 and t=1, [2,3] for t=2,
   and [3,5] for t=3 and t=4.
@@ -102,8 +117,8 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 99 tests pass (49 core + 25 placement model + 19 integration +
-  6 fade editing and dot-pattern tests).
+- `pnpm test`: 111 tests pass (49 core + 28 placement model + 8 stage geometry +
+  20 integration + 6 fade editing and dot-pattern tests).
 - `pnpm build`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
@@ -270,6 +285,16 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     span. Dragging a boundary to an outer edge can remove that phase. Editing
     remains disabled during a run; outer-edge gestures are unchanged.
 
+29. A rectangle is a block kind with a duration, a cooperative-skip flag, and
+    a geometry stored as x/y/w/h plus a unit. It has no fade phases and is not
+    classified as media. The stage screen is a 16 x 9 grid by default with
+    configurable columns and rows; the span is the largest square cell that
+    fits, and the grid is centered with letterboxing. Span units are responsive
+    to the span, pixels are absolute; switching the unit converts the geometry
+    at the current span, mirroring the beats/seconds contract for durations.
+    Geometry is edited numerically in the inspector for now; a stage drag
+    gesture is not introduced.
+
 ## Carry-Over
 
 - How a failed block should be surfaced; the current UI has no way to make one
@@ -288,3 +313,7 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   container's cooperative skip.
 - Whether runtime fades need easing or a media-specific curve; the editor's
   dot mask is a phase indicator, not the playback interpolation contract.
+- Whether rectangles need fill/stroke/color properties, z-ordering, and a
+  direct stage drag gesture; only numeric geometry is exposed now.
+- Whether the stage grid should offer presets or separate the screen resolution
+  from the grid cell count.

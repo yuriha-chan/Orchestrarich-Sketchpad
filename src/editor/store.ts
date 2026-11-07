@@ -1,22 +1,37 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import type { BlockKind, DurationUnit, Placement, Track } from "./model";
+import type {
+  BlockKind,
+  DurationUnit,
+  Placement,
+  RectUnit,
+  Track,
+} from "./model";
 import {
   canPlace,
   clampFadesToLength,
   convertDuration,
   convertPlacementKind,
   DEFAULT_BPM,
+  DEFAULT_GRID_COLUMNS,
+  DEFAULT_GRID_ROWS,
+  DEFAULT_RECT_GEOMETRY,
   DEFAULT_TRACKS,
   isMediaKind,
   isMediaPlacement,
+  isRectanglePlacement,
+  MAX_GRID_SIZE,
+  MIN_GRID_SIZE,
 } from "./model";
 import type { WorkspaceId } from "./workspaces";
+import { convertRectUnit } from "./stage-geometry";
 
 interface ExperimentState {
   blocks: Placement[];
   tracks: Track[];
   bpm: number;
+  gridColumns: number;
+  gridRows: number;
   selectedKind: BlockKind;
   selectedId: string | null;
   workspace: WorkspaceId;
@@ -41,7 +56,11 @@ interface ExperimentState {
   setDuration: (id: string, value: number) => void;
   setDurationUnit: (id: string, unit: DurationUnit) => void;
   setSyncBeatsToCellSpan: (id: string, value: boolean) => void;
+  setRectValue: (id: string, field: "x" | "y" | "w" | "h", value: number) => void;
+  setRectUnit: (id: string, unit: RectUnit, span: number) => void;
   setBpm: (value: number) => void;
+  setGridColumns: (value: number) => void;
+  setGridRows: (value: number) => void;
   setWorkspace: (id: WorkspaceId) => void;
 }
 
@@ -94,6 +113,10 @@ function applySpan(
   }
 }
 
+function clampGridSize(value: number): number {
+  return Math.min(MAX_GRID_SIZE, Math.max(MIN_GRID_SIZE, Math.round(value)));
+}
+
 let nextId = 1;
 let nextTrackId = 1;
 
@@ -102,6 +125,8 @@ export const useExperimentStore = create<ExperimentState>()(
     blocks: [],
     tracks: DEFAULT_TRACKS.map((track) => ({ ...track })),
     bpm: DEFAULT_BPM,
+    gridColumns: DEFAULT_GRID_COLUMNS,
+    gridRows: DEFAULT_GRID_ROWS,
     selectedKind: "dialogue",
     selectedId: null,
     workspace: "staging",
@@ -130,13 +155,22 @@ export const useExperimentStore = create<ExperimentState>()(
                   fadeIn: 0,
                   fadeOut: 0,
                 }
-              : {
-                  ...base,
-                  kind,
-                  duration: length,
-                  durationUnit: "beats",
-                  syncBeatsToCellSpan: false,
-                };
+              : kind === "rectangle"
+                ? {
+                    ...base,
+                    kind,
+                    duration: length,
+                    durationUnit: "beats",
+                    syncBeatsToCellSpan: false,
+                    ...DEFAULT_RECT_GEOMETRY,
+                  }
+                : {
+                    ...base,
+                    kind,
+                    duration: length,
+                    durationUnit: "beats",
+                    syncBeatsToCellSpan: false,
+                  };
         if (!canPlace(state.tracks, state.blocks, candidate)) {
           return;
         }
@@ -273,10 +307,51 @@ export const useExperimentStore = create<ExperimentState>()(
           }
         });
       }),
+    setRectValue: (id, field, value) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (!isRectanglePlacement(block) || !Number.isFinite(value)) {
+            return;
+          }
+          if (field === "x" || field === "y") {
+            if (value >= 0) {
+              block[field] = value;
+            }
+          } else if (value > 0) {
+            block[field] = value;
+          }
+        });
+      }),
+    setRectUnit: (id, unit, span) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (!isRectanglePlacement(block) || block.rectUnit === unit) {
+            return;
+          }
+          const converted = convertRectUnit(block, unit, span);
+          block.x = converted.x;
+          block.y = converted.y;
+          block.w = converted.w;
+          block.h = converted.h;
+          block.rectUnit = unit;
+        });
+      }),
     setBpm: (value) =>
       set((state) => {
         if (Number.isFinite(value) && value > 0) {
           state.bpm = value;
+        }
+      }),
+    setGridColumns: (value) =>
+      set((state) => {
+        if (Number.isFinite(value)) {
+          state.gridColumns = clampGridSize(value);
+        }
+      }),
+    setGridRows: (value) =>
+      set((state) => {
+        if (Number.isFinite(value)) {
+          state.gridRows = clampGridSize(value);
         }
       }),
     setWorkspace: (id) =>

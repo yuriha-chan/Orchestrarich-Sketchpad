@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { RectUnit } from "./model";
 
 export interface DialogueView {
   readonly kind: "dialogue";
@@ -23,7 +24,17 @@ export interface AnimationPlayback {
   readonly playing: boolean;
 }
 
-export type StageItem = DialogueView | AnimationView;
+export interface RectangleView {
+  readonly kind: "rectangle";
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  readonly unit: RectUnit;
+}
+
+export type StageItem = DialogueView | AnimationView | RectangleView;
 
 export interface StageActions {
   readonly add: (item: StageItem) => void;

@@ -7,6 +7,7 @@ import type {
   DialoguePlacement,
   DurationUnit,
   Placement,
+  RectUnit,
 } from "./model";
 import { DEFAULT_TRACKS } from "./model";
 import { createStageStore, type DialogueView } from "./stage-state";
@@ -19,6 +20,11 @@ type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
   syncBeatsToCellSpan?: boolean;
   fadeIn?: number;
   fadeOut?: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  rectUnit?: RectUnit;
 };
 
 function placement(overrides: PlacementOverrides = {}): Placement {
@@ -29,6 +35,11 @@ function placement(overrides: PlacementOverrides = {}): Placement {
     syncBeatsToCellSpan,
     fadeIn,
     fadeOut,
+    x,
+    y,
+    w,
+    h,
+    rectUnit,
     ...rest
   } = overrides;
   const base = {
@@ -54,6 +65,18 @@ function placement(overrides: PlacementOverrides = {}): Placement {
       ...durationFields,
       fadeIn: fadeIn ?? 0,
       fadeOut: fadeOut ?? 0,
+    };
+  }
+  if (kind === "rectangle") {
+    return {
+      ...base,
+      kind,
+      ...durationFields,
+      x: x ?? 0,
+      y: y ?? 0,
+      w: w ?? 1,
+      h: h ?? 1,
+      rectUnit: rectUnit ?? "span",
     };
   }
   return { ...base, kind, ...durationFields };
@@ -209,6 +232,47 @@ describe("TimelineSession", () => {
     run.session.dispose();
     expect(vi.getTimerCount()).toBe(0);
     expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("keeps a rectangle on the stage until its block terminates", async () => {
+    const run = setup([
+      placement({ id: "gate", kind: "dialogue" }),
+      placement({
+        id: "rect",
+        trackId: DEFAULT_TRACKS[1].id,
+        kind: "rectangle",
+        x: 3,
+        y: 2,
+        w: 1,
+        h: 1,
+        rectUnit: "span",
+      }),
+    ]);
+
+    run.session.start();
+
+    const rectangle = run.startedInstances.find(
+      (instance) => instance.definition.placement.id === "rect",
+    )!;
+    expect(
+      run.stage.getState().items.filter((item) => item.kind === "rectangle"),
+    ).toEqual([
+      { kind: "rectangle", id: rectangle.id, x: 3, y: 2, w: 1, h: 1, unit: "span" },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(run.snapshot()?.time).toBe(0);
+    expect(run.blockState("rect")).toBe("completed");
+    expect(
+      run.stage.getState().items.filter((item) => item.kind === "rectangle"),
+    ).toHaveLength(1);
+
+    run.advanceDialogue("gate");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(run.stage.getState().items).toEqual([]);
+    expect(run.snapshot()?.time).toBe(1);
   });
 
   it("waits at the end barrier for the animation after the dialogue advances", async () => {

@@ -1,4 +1,4 @@
-export type BlockKind = "dialogue" | "camera" | "sound" | "animation" | "wait";
+export type BlockKind = "dialogue" | "camera" | "sound" | "animation" | "wait" | "rectangle";
 
 export type TimedBlockKind = Exclude<BlockKind, "dialogue">;
 
@@ -43,7 +43,29 @@ export interface MediaPlacement extends DurationPlacementBase {
   fadeOut: number;
 }
 
-export type DurationPlacement = TimedPlacement | MediaPlacement;
+export type RectUnit = "span" | "pixels";
+
+export interface RectGeometry {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rectUnit: RectUnit;
+}
+
+export const DEFAULT_RECT_GEOMETRY: RectGeometry = {
+  x: 0,
+  y: 0,
+  w: 1,
+  h: 1,
+  rectUnit: "span",
+};
+
+export interface RectanglePlacement extends DurationPlacementBase, RectGeometry {
+  kind: "rectangle";
+}
+
+export type DurationPlacement = TimedPlacement | MediaPlacement | RectanglePlacement;
 
 export type Placement = DialoguePlacement | DurationPlacement;
 
@@ -53,9 +75,20 @@ export function isMediaPlacement(
   return isMediaKind(placement.kind);
 }
 
+export function isRectanglePlacement(
+  placement: Placement,
+): placement is RectanglePlacement {
+  return placement.kind === "rectangle";
+}
+
 export const DEFAULT_BPM = 120;
 export const MIN_BPM = 20;
 export const MAX_BPM = 400;
+
+export const DEFAULT_GRID_COLUMNS = 16;
+export const DEFAULT_GRID_ROWS = 9;
+export const MIN_GRID_SIZE = 1;
+export const MAX_GRID_SIZE = 64;
 
 export function blockDurationSeconds(placement: DurationPlacement, bpm: number): number {
   if (placement.syncBeatsToCellSpan) {
@@ -154,21 +187,29 @@ export function convertPlacementKind(
   if (kind === "dialogue") {
     return { ...base, kind };
   }
-  if (placement.kind === "dialogue") {
-    const durationFields = {
-      duration: placement.length,
-      durationUnit: "beats" as const,
-      syncBeatsToCellSpan: false,
-    };
-    return isMediaKind(kind)
-      ? { ...base, kind, ...durationFields, fadeIn: 0, fadeOut: 0 }
-      : { ...base, kind, ...durationFields };
+  const durationFields = placement.kind === "dialogue"
+    ? {
+        duration: placement.length,
+        durationUnit: "beats" as const,
+        syncBeatsToCellSpan: false,
+      }
+    : {
+        duration: placement.duration,
+        durationUnit: placement.durationUnit,
+        syncBeatsToCellSpan: placement.syncBeatsToCellSpan,
+      };
+  if (kind === "rectangle") {
+    const geometry = isRectanglePlacement(placement)
+      ? {
+          x: placement.x,
+          y: placement.y,
+          w: placement.w,
+          h: placement.h,
+          rectUnit: placement.rectUnit,
+        }
+      : { ...DEFAULT_RECT_GEOMETRY };
+    return { ...base, kind, ...durationFields, ...geometry };
   }
-  const durationFields = {
-    duration: placement.duration,
-    durationUnit: placement.durationUnit,
-    syncBeatsToCellSpan: placement.syncBeatsToCellSpan,
-  };
   const fades = isMediaPlacement(placement)
     ? { fadeIn: placement.fadeIn, fadeOut: placement.fadeOut }
     : { fadeIn: 0, fadeOut: 0 };
@@ -195,6 +236,7 @@ export const BLOCK_KINDS: readonly BlockKind[] = [
   "sound",
   "animation",
   "wait",
+  "rectangle",
 ];
 
 export const BLOCK_LABELS: Record<BlockKind, string> = {
@@ -203,6 +245,7 @@ export const BLOCK_LABELS: Record<BlockKind, string> = {
   sound: "Sound",
   animation: "Animation",
   wait: "Wait",
+  rectangle: "Rectangle",
 };
 
 export function intervalsOverlap(
