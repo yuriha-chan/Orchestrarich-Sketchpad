@@ -35,6 +35,9 @@ body {
 }
 
 .workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: -1px;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -70,6 +73,9 @@ body {
 }
 
 .palette-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid transparent;
   border-radius: 999px;
   padding: 6px 14px;
@@ -116,6 +122,9 @@ body {
 }
 
 .toolbar-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
   background: #ffffff;
@@ -158,6 +167,9 @@ body {
 }
 
 .inspector-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid #e2e8f0;
   background: #f8fafc;
@@ -257,6 +269,9 @@ body {
 }
 
 .unit-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 0;
   background: #ffffff;
   padding: 5px 8px;
@@ -339,6 +354,9 @@ body {
 }
 
 .slot-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   flex: none;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
@@ -382,6 +400,9 @@ body {
 }
 
 .slot-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   height: 20px;
   border: 1px solid #cbd5e1;
@@ -403,6 +424,11 @@ body {
 .slot-action.is-danger {
   border-color: #fecaca;
   color: #b91c1c;
+}
+
+.slot-action.is-icon {
+  width: 20px;
+  padding: 0;
 }
 
 .slot-label-form {
@@ -558,9 +584,14 @@ body {
 }
 
 .slot-editor button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
-  padding: 1px 4px;
+  padding: 1px 0;
   background: #ffffff;
   font-size: 10px;
   cursor: pointer;
@@ -579,6 +610,9 @@ body {
 }
 
 .slot-validation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: -8px 0 16px;
   border: 1px solid #fecaca;
   border-radius: 6px;
@@ -693,12 +727,25 @@ body {
 }
 
 .block-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   position: relative;
   z-index: 1;
   overflow: hidden;
+  pointer-events: none;
+}
+
+.block-label > svg {
+  flex: none;
+}
+
+.block-label-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  pointer-events: none;
 }
 
 .resize-handle {
@@ -755,6 +802,9 @@ body {
 }
 
 .run-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
   background: #ffffff;
@@ -835,6 +885,9 @@ body {
 }
 
 .stage-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid #e2e8f0;
   font-size: 11px;
@@ -853,6 +906,9 @@ body {
 }
 
 .stage-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
   font-size: 13px;
   color: #94a3b8;
@@ -889,6 +945,9 @@ body {
 }
 
 .stage-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -918,6 +977,9 @@ body {
 }
 
 .stage-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 0;
   border-radius: 6px;
   padding: 6px 18px;
@@ -1003,6 +1065,9 @@ body {
 }
 
 .context-menu-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 8px;
   font-size: 11px;
   font-weight: 700;
@@ -1035,12 +1100,6 @@ body {
 
 .context-menu-item.is-danger:hover {
   background: #fef2f2;
-}
-
-.context-menu-check {
-  flex: 0 0 12px;
-  font-weight: 700;
-  color: #0f172a;
 }
 
 .context-menu-separator {

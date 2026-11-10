@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Check, CircleDashed, Clapperboard, MessageSquare } from "lucide-react";
 import type { RectGeometry } from "./model";
 import type { AnimationView, DialogueView, RectangleView, StageItem } from "./stage-state";
 import { computeStageLayout, rectPixels } from "./stage-geometry";
@@ -79,14 +80,25 @@ export function Stage({
       </div>
       {cards.map((item) => item.kind === "dialogue" ? (
         <div key={item.id} className="stage-dialogue">
-          <span className="stage-tag">{item.label}</span>
+          <span className="stage-tag">
+            <MessageSquare size={12} aria-hidden="true" />
+            {item.label}
+          </span>
           <p className="stage-dialogue-text">{item.text}</p>
-          <button type="button" className="stage-ok" onClick={item.confirm}>OK</button>
+          <button type="button" className="stage-ok" onClick={item.confirm}>
+            <Check size={14} aria-hidden="true" />
+            OK
+          </button>
         </div>
       ) : (
         <StageAnimation key={item.id} view={item} />
       ))}
-      {items.length === 0 ? <p className="stage-empty">Nothing playing</p> : null}
+      {items.length === 0 ? (
+        <p className="stage-empty">
+          <CircleDashed size={14} aria-hidden="true" />
+          Nothing playing
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -136,7 +148,10 @@ function StageAnimation({ view }: { readonly view: AnimationView }) {
 
   return (
     <div className="stage-animation">
-      <span className="stage-tag">{view.label}</span>
+      <span className="stage-tag">
+        <Clapperboard size={12} aria-hidden="true" />
+        {view.label}
+      </span>
       <div ref={ref} className="stage-animation-preview" role="img" aria-label="Animation fade preview" />
       <div className="stage-progress" role="progressbar" aria-label={view.label}>
         <div ref={progressRef} className="stage-progress-fill" />

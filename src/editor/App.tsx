@@ -12,6 +12,33 @@ import type {
   PointerEvent as ReactPointerEvent,
   UIEvent as ReactUIEvent,
 } from "react";
+import {
+  AudioLines,
+  Check,
+  Clapperboard,
+  Clock,
+  Eraser,
+  Grid2x2,
+  Grid3x3,
+  Hourglass,
+  LayoutGrid,
+  MessageSquare,
+  Monitor,
+  MonitorPlay,
+  Pencil,
+  Play,
+  Plus,
+  RotateCcw,
+  SkipForward,
+  SlidersHorizontal,
+  Square,
+  Trash,
+  TriangleAlert,
+  Video,
+  Volume2,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import type {
   BlockKind,
   Placement,
@@ -78,6 +105,26 @@ const STATE_RANK: Record<BlockState, number> = {
 };
 
 const FADE_HANDLE_PX = 10;
+
+const KIND_ICONS: Record<BlockKind, LucideIcon> = {
+  dialogue: MessageSquare,
+  camera: Video,
+  sound: Volume2,
+  animation: Clapperboard,
+  wait: Hourglass,
+  rectangle: Square,
+};
+
+function BlockKindIcon({
+  kind,
+  size = 14,
+}: {
+  readonly kind: BlockKind;
+  readonly size?: number;
+}) {
+  const Icon = KIND_ICONS[kind];
+  return <Icon size={size} aria-hidden="true" />;
+}
 
 interface DragState {
   readonly pointerId: number;
@@ -443,22 +490,26 @@ export function App() {
   return (
     <main className="app" style={gridVariables}>
       <nav className="workspace-bar" role="tablist" aria-label="Workspaces">
-        {WORKSPACES.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            role="tab"
-            aria-selected={workspace === entry.id}
-            className={`workspace-tab${workspace === entry.id ? " is-active" : ""}`}
-            onClick={() => {
-              setContextMenu(null);
-              setCreation(null);
-              setWorkspace(entry.id);
-            }}
-          >
-            {entry.label}
-          </button>
-        ))}
+        {WORKSPACES.map((entry) => {
+          const Icon = entry.id === "staging" ? LayoutGrid : MonitorPlay;
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={workspace === entry.id}
+              className={`workspace-tab${workspace === entry.id ? " is-active" : ""}`}
+              onClick={() => {
+                setContextMenu(null);
+                setCreation(null);
+                setWorkspace(entry.id);
+              }}
+            >
+              <Icon size={14} aria-hidden="true" />
+              {entry.label}
+            </button>
+          );
+        })}
       </nav>
 
       <header className="toolbar">
@@ -473,6 +524,7 @@ export function App() {
                 disabled={!editable}
                 onClick={() => setKind(kind)}
               >
+                <BlockKindIcon kind={kind} />
                 {BLOCK_LABELS[kind]}
               </button>
             ))}
@@ -490,6 +542,7 @@ export function App() {
                 invalidSlotReads.length > 0
               }
             >
+              <Play size={14} aria-hidden="true" />
               Run
             </button>
             <button
@@ -497,13 +550,16 @@ export function App() {
               onClick={requestSkip}
               disabled={requestSkip === undefined}
             >
+              <SkipForward size={14} aria-hidden="true" />
               Skip
             </button>
             <button type="button" onClick={resetRun} disabled={editable}>
+              <RotateCcw size={14} aria-hidden="true" />
               Reset
             </button>
           </div>
           <label className="bpm-field">
+            <AudioLines size={13} aria-hidden="true" />
             <span>BPM</span>
             <PropertyNumber
               value={bpm}
@@ -515,6 +571,7 @@ export function App() {
             />
           </label>
           <label className="bpm-field">
+            <Grid3x3 size={13} aria-hidden="true" />
             <span>Grid</span>
             <PropertyNumber
               value={gridColumns}
@@ -540,6 +597,7 @@ export function App() {
         {isStaging ? (
           <div className="toolbar-actions">
             <button type="button" onClick={addTrack} disabled={!editable}>
+              <Plus size={14} aria-hidden="true" />
               Add track
             </button>
             <button
@@ -547,6 +605,7 @@ export function App() {
               onClick={deleteSelected}
               disabled={deleteSelected === undefined}
             >
+              <Trash size={14} aria-hidden="true" />
               Delete selected
             </button>
             <button
@@ -554,6 +613,7 @@ export function App() {
               onClick={clearAll}
               disabled={clearAll === undefined}
             >
+              <Eraser size={14} aria-hidden="true" />
               Clear all
             </button>
           </div>
@@ -562,6 +622,7 @@ export function App() {
 
       {slotValidationMessage ? (
         <p className="slot-validation" role="alert">
+          <TriangleAlert size={15} aria-hidden="true" />
           {slotValidationMessage}
         </p>
       ) : null}
@@ -570,7 +631,10 @@ export function App() {
         className={`stage${isStaging ? "" : " is-expanded"}`}
         aria-label="Stage"
       >
-        <div className="stage-heading">Stage</div>
+        <div className="stage-heading">
+          <Monitor size={14} aria-hidden="true" />
+          Stage
+        </div>
         <Stage
           items={stageItems}
           columns={gridColumns}
@@ -603,6 +667,7 @@ export function App() {
                         disabled={!editable}
                         onClick={() => addSlot(track.id)}
                       >
+                        <Plus size={11} aria-hidden="true" />
                         Add slot
                       </button>
                     </div>
@@ -630,6 +695,7 @@ export function App() {
                   disabled={!editable}
                   onClick={() => addSlot(null)}
                 >
+                  <Plus size={11} aria-hidden="true" />
                   Add shared slot
                 </button>
               </div>
@@ -714,7 +780,12 @@ export function App() {
                             height: TRACK_HEIGHT - 6,
                           }}
                         >
-                          <span className="block-label">{BLOCK_LABELS[creation.kind]}</span>
+                          <span className="block-label">
+                            <BlockKindIcon kind={creation.kind} size={12} />
+                            <span className="block-label-text">
+                              {BLOCK_LABELS[creation.kind]}
+                            </span>
+                          </span>
                         </div>
                       ) : null}
                     </div>
@@ -741,7 +812,10 @@ export function App() {
             </div>
           </div>
           <aside className="inspector" aria-label="Block properties">
-            <div className="inspector-heading">Properties</div>
+            <div className="inspector-heading">
+              <SlidersHorizontal size={13} aria-hidden="true" />
+              Properties
+            </div>
             {selected ? (
               <div className="inspector-body">
                 <div className="inspector-summary">
@@ -809,6 +883,7 @@ export function App() {
                               setDurationUnit(selected.id, "beats")
                             }
                           >
+                            <AudioLines size={12} aria-hidden="true" />
                             Beats
                           </button>
                           <button
@@ -824,6 +899,7 @@ export function App() {
                               setDurationUnit(selected.id, "seconds")
                             }
                           >
+                            <Clock size={12} aria-hidden="true" />
                             Seconds
                           </button>
                         </div>
@@ -931,6 +1007,7 @@ export function App() {
                                 setRectUnit(selectedRect.id, "span", stageSpan)
                               }
                             >
+                              <Grid2x2 size={12} aria-hidden="true" />
                               Span
                             </button>
                             <button
@@ -946,6 +1023,7 @@ export function App() {
                                 setRectUnit(selectedRect.id, "pixels", stageSpan)
                               }
                             >
+                              <Monitor size={12} aria-hidden="true" />
                               Pixels
                             </button>
                           </div>
@@ -1049,6 +1127,7 @@ export function App() {
           onContextMenu={(event) => event.preventDefault()}
         >
           <div className="context-menu-title">
+            <BlockKindIcon kind={menuBlock.kind} size={12} />
             {BLOCK_LABELS[menuBlock.kind]} at t={menuBlock.start}–
             {menuBlock.start + menuBlock.length}
           </div>
@@ -1062,7 +1141,7 @@ export function App() {
               setContextMenu(null);
             }}
           >
-            <span className="context-menu-check" />
+            <Trash size={14} aria-hidden="true" />
             Delete
           </button>
         </div>
@@ -1139,15 +1218,22 @@ function SlotLabel({
               }
             }}
           />
-          <button type="submit" className="slot-action">
-            Save
+          <button
+            type="submit"
+            className="slot-action is-icon"
+            aria-label="Save slot name"
+            title="Save name"
+          >
+            <Check size={12} aria-hidden="true" />
           </button>
           <button
             type="button"
-            className="slot-action"
+            className="slot-action is-icon"
+            aria-label="Cancel renaming"
+            title="Cancel"
             onClick={() => setEditing(false)}
           >
-            Cancel
+            <X size={12} aria-hidden="true" />
           </button>
         </form>
       ) : (
@@ -1157,21 +1243,23 @@ function SlotLabel({
           </span>
           <button
             type="button"
-            className="slot-action"
+            className="slot-action is-icon"
             aria-label={`Rename ${name}`}
+            title={`Rename ${name}`}
             disabled={!editable}
             onClick={startRenaming}
           >
-            Rename
+            <Pencil size={12} aria-hidden="true" />
           </button>
           <button
             type="button"
-            className="slot-action is-danger"
+            className="slot-action is-icon is-danger"
             aria-label={`Remove ${name}`}
+            title={`Remove ${name}`}
             disabled={!editable}
             onClick={() => removeSlot(slot.id)}
           >
-            Remove
+            <Trash size={12} aria-hidden="true" />
           </button>
         </>
       )}
@@ -1303,27 +1391,33 @@ function SlotRow({
               }
             }}
           />
-          <button type="submit" aria-label={`Set ${name} at time ${editing}`}>
-            Set
+          <button
+            type="submit"
+            aria-label={`Set ${name} at time ${editing}`}
+            title="Set value"
+          >
+            <Check size={12} aria-hidden="true" />
           </button>
           <button
             type="button"
             aria-label={`Cancel editing ${name} at time ${editing}`}
+            title="Cancel"
             onClick={() => setEditing(null)}
           >
-            Cancel
+            <X size={12} aria-hidden="true" />
           </button>
           {initialization !== null ? (
             <button
               type="button"
               className="slot-editor-delete"
               aria-label={`Delete initialization for ${name} at time ${initialization.time}`}
+              title="Delete initialization"
               onClick={() => {
                 clearSlotInitialization(slot.id);
                 setEditing(null);
               }}
             >
-              Delete
+              <Trash size={12} aria-hidden="true" />
             </button>
           ) : null}
         </form>
@@ -1703,7 +1797,10 @@ function BlockView({
             ))}
         </>
       ) : null}
-      <span className="block-label">{BLOCK_LABELS[block.kind]}</span>
+      <span className="block-label">
+        <BlockKindIcon kind={block.kind} size={12} />
+        <span className="block-label-text">{BLOCK_LABELS[block.kind]}</span>
+      </span>
       {editable ? (
         <>
           <span
