@@ -62,6 +62,7 @@ import { TimelineSession, rectangleSlotReads } from "./execution";
 import { Stage } from "./Stage";
 import { createStageStore } from "./stage-state";
 import { compilePlacement, definitionBlocks } from "./execution-definition";
+import { slotValueRail } from "./slot-value-rail";
 import { WORKSPACES } from "./workspaces";
 import {
   rowTop,
@@ -89,6 +90,7 @@ const INITIAL_COLUMNS = 16;
 const COLUMN_CHUNK = 16;
 const SLOT_EDITOR_WIDTH = 210;
 const SLOT_CONTROL_HEIGHT = 32;
+const SLOT_VALUE_DOT_RADIUS = 8; // half the 16px slot value label height in styles.css
 
 const PHASE_LABELS: Record<TimelinePhase, string> = {
   idle: "Not running",
@@ -1320,6 +1322,9 @@ function SlotRow({
     setEditing(null);
   };
 
+  const rail = slotValueRail(slot.initializations, columnCount);
+  const gapCenter = (time: number) => time * CELL_WIDTH + CELL_GAP / 2;
+
   return (
     <div
       className={`slot-row${groupStart ? " is-group-start" : ""}`}
@@ -1327,6 +1332,31 @@ function SlotRow({
       role="group"
       aria-label={`${name} slot row`}
     >
+      <svg
+        className="slot-value-rail"
+        width="100%"
+        height="100%"
+        aria-hidden="true"
+        focusable="false"
+      >
+        {rail.spans.map((span) => (
+          <line
+            key={`span-${span.start}-${span.end}`}
+            x1={gapCenter(span.start)}
+            x2={span.end * CELL_WIDTH}
+            y1={SLOT_HEIGHT / 2}
+            y2={SLOT_HEIGHT / 2}
+          />
+        ))}
+        {rail.dots.map((time) => (
+          <circle
+            key={`dot-${time}`}
+            cx={gapCenter(time)}
+            cy={SLOT_HEIGHT / 2}
+            r={SLOT_VALUE_DOT_RADIUS}
+          />
+        ))}
+      </svg>
       {Array.from({ length: columnCount }, (_, time) => {
         const initialization = initializationAt(time);
         const initialized = initialization !== undefined;
