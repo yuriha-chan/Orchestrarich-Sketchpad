@@ -27,11 +27,27 @@ to the slot, like the inspector's source selector. The capable parameters are
 per-kind data in `SLOT_CAPABLE_PROPERTIES`; only rectangle geometry is capable
 in the current slice. A track-local slot can bind only within its track.
 
+A reference is also drawn on the timeline: a 4 px rail-colored line runs from the
+block's bottom edge down to the slot's row, so a wire never runs along a block
+edge. Every slot-capable parameter of every block in a start column is assigned
+its own lane, in track order then property order, across the first cell. Only
+bound parameters draw a wire, but an unbound parameter keeps its lane, so wires
+never overlap and a parameter reaches the same lane whatever its neighbours bind.
+There is one wire per bound parameter, so two properties bound to the same slot
+draw two wires. A small dot marks the wire's endpoint on the block's bottom
+edge. Each vertical line is drawn over a white casing, so crossing a horizontal
+rail reads as an overpass rather than a junction. The casing stops just above
+the rail the wire branches from, so that connection stays continuous; only
+crossings with other slots' rails are isolated. Wires are drawn beneath the
+blocks, so wires crossing other tracks do not cover block labels; the dots are
+drawn above the blocks so the endpoint stays visible where it crosses the block
+edge. A binding to a removed slot has no row to connect to and draws nothing.
+
 The editor reports invalid reads and disables Run. The execution session also
 refuses to start if a referenced slot is missing, inaccessible, empty, or only
 initialized after the read. Numeric slots and read validation are independent of
-the UI framework. Block output, discard, other value types, ownership, wires, and
-slot-backed properties beyond rectangle geometry remain outside this slice.
+the UI framework. Block output, discard, other value types, ownership, value-transfer wires,
+and slot-backed properties beyond rectangle geometry remain outside this slice.
 
 The runner invokes its time-start callback once per processed logical time,
 before starting blocks at that time. Slot initialization uses this boundary so

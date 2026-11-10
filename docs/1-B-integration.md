@@ -117,8 +117,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 111 tests pass (49 core + 28 placement model + 8 stage geometry +
-  20 integration + 6 fade editing and dot-pattern tests).
+- `pnpm test`: 204 tests pass (53 core + 12 numeric slots + 29 placement model
+  + 33 store + 16 timeline rows + 33 integration + 8 stage geometry + 7 slot
+  value rail + 7 slot wires + 6 fade editing and dot-pattern tests).
 - `pnpm build`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
@@ -306,6 +307,25 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     literal value. A track-local slot can bind only to blocks on its track; a
     shared slot can bind on any track. The inspector's source selector remains
     the non-pointer path.
+
+31. A slot reference is drawn as a wire on the timeline: a 4 px line in the
+    rail color from the block's bottom edge down to the slot row's rail. Ending
+    at the bottom edge means the wire never runs along a block edge. Every
+    slot-capable parameter of every block in a start column owns a lane across
+    the first cell, ordered by track and then by parameter; only bound
+    parameters draw a wire, but unbound parameters keep their lane. Wires
+    starting in the same column therefore never overlap, and different columns
+    use different cells. There is one wire per bound parameter, so two
+    properties bound to the same slot draw two wires. A small dot marks each
+    wire's endpoint on the block's bottom edge. Each vertical line is drawn over
+    a white casing, so crossing a horizontal rail reads as an overpass rather
+    than a junction; the casing stops just above the rail the wire branches
+    from, so that connection stays continuous and only crossings with other
+    slots' rails are isolated. Wires are drawn beneath the block layer so that
+    wires crossing intervening tracks do not cover block labels; dots are drawn
+    above the blocks so the endpoint remains visible where it crosses the block
+    edge. A binding whose slot no longer exists has no row and therefore no
+    wire; the read is still reported as invalid.
 
 ## Carry-Over
 

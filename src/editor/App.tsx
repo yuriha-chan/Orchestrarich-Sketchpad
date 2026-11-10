@@ -64,6 +64,7 @@ import { Stage } from "./Stage";
 import { createStageStore } from "./stage-state";
 import { compilePlacement, definitionBlocks } from "./execution-definition";
 import { slotValueRail } from "./slot-value-rail";
+import { slotWires } from "./slot-wires";
 import { WORKSPACES } from "./workspaces";
 import {
   rowTop,
@@ -87,10 +88,20 @@ const CELL_WIDTH = 128;
 const CELL_GAP = 32;
 const TRACK_HEIGHT = 48;
 const SLOT_HEIGHT = 24;
+const BLOCK_INSET = 3;
 const INITIAL_COLUMNS = 16;
 const COLUMN_CHUNK = 16;
 const SLOT_EDITOR_WIDTH = 210;
 const SLOT_CONTROL_HEIGHT = 32;
+const SLOT_WIRE_CASING_INSET = 4;
+
+const SLOT_WIRE_LAYOUT = {
+  cellWidth: CELL_WIDTH,
+  cellGap: CELL_GAP,
+  blockInset: BLOCK_INSET,
+  trackHeight: TRACK_HEIGHT,
+  slotHeight: SLOT_HEIGHT,
+};
 
 const PHASE_LABELS: Record<TimelinePhase, string> = {
   idle: "Not running",
@@ -347,6 +358,7 @@ export function App() {
   const rectStep = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
 
   const rows = useMemo(() => timelineRows(tracks, slots), [tracks, slots]);
+  const wires = useMemo(() => slotWires(rows, blocks, SLOT_WIRE_LAYOUT), [rows, blocks]);
   const slotsById = useMemo(
     () => Object.fromEntries(slots.map((slot) => [slot.id, slot])) as Record<string, NumericSlot>,
     [slots],
@@ -889,6 +901,25 @@ export function App() {
                         />
                       ),
                     )}
+                    <svg className="slot-wire-layer" aria-hidden="true">
+                      {wires.map((wire) => (
+                        <g key={wire.key}>
+                          <line
+                            className="slot-wire-casing"
+                            x1={wire.x}
+                            y1={wire.blockBottomY}
+                            x2={wire.x}
+                            y2={wire.slotY - SLOT_WIRE_CASING_INSET}
+                          />
+                          <line
+                            x1={wire.x}
+                            y1={wire.blockBottomY}
+                            x2={wire.x}
+                            y2={wire.slotY}
+                          />
+                        </g>
+                      ))}
+                    </svg>
                     <div className="block-layer">
                       {blocks.map((block) => (
                         <BlockView
@@ -907,16 +938,19 @@ export function App() {
                         <div
                           className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
                           style={{
-                            left: previewStart * CELL_WIDTH + CELL_GAP + 3,
+                            left: previewStart * CELL_WIDTH + CELL_GAP + BLOCK_INSET,
                             top:
                               rowTop(
                                 rows,
                                 previewRowIndex,
                                 TRACK_HEIGHT,
                                 SLOT_HEIGHT,
-                              ) + 3,
-                            width: previewLength * CELL_WIDTH - CELL_GAP - 6,
-                            height: TRACK_HEIGHT - 6,
+                              ) + BLOCK_INSET,
+                            width:
+                              previewLength * CELL_WIDTH -
+                              CELL_GAP -
+                              2 * BLOCK_INSET,
+                            height: TRACK_HEIGHT - 2 * BLOCK_INSET,
                           }}
                         >
                           <span className="block-label">
@@ -928,6 +962,16 @@ export function App() {
                         </div>
                       ) : null}
                     </div>
+                    <svg className="slot-dot-layer" aria-hidden="true">
+                      {wires.map((wire) => (
+                        <circle
+                          key={wire.key}
+                          cx={wire.x}
+                          cy={wire.blockBottomY}
+                          r={4}
+                        />
+                      ))}
+                    </svg>
                     {barrierSpan ? (
                       <div
                         className="time-cursor"
@@ -2113,10 +2157,10 @@ function BlockView({
       className={className}
       data-block-id={block.id}
       style={{
-        left: block.start * CELL_WIDTH + CELL_GAP + 3,
-        top: rowTop(rows, trackIndex, TRACK_HEIGHT, SLOT_HEIGHT) + 3,
-        width: block.length * CELL_WIDTH - CELL_GAP - 6,
-        height: TRACK_HEIGHT - 6,
+        left: block.start * CELL_WIDTH + CELL_GAP + BLOCK_INSET,
+        top: rowTop(rows, trackIndex, TRACK_HEIGHT, SLOT_HEIGHT) + BLOCK_INSET,
+        width: block.length * CELL_WIDTH - CELL_GAP - 2 * BLOCK_INSET,
+        height: TRACK_HEIGHT - 2 * BLOCK_INSET,
       }}
       title={title}
       onContextMenu={handleContextMenu}
@@ -2188,8 +2232,11 @@ function FadeSurface({ className, cells, length, inward }: {
   inward: boolean;
 }) {
   const maskImage = useMemo(() => {
-    const width = (length * CELL_WIDTH - CELL_GAP - 6) * cells / length;
-    const svg = generateDotGradientSVG(Math.ceil(width / 6) * 6, TRACK_HEIGHT - 6, 6,
+    const width = (length * CELL_WIDTH - CELL_GAP - 2 * BLOCK_INSET) * cells / length;
+    const svg = generateDotGradientSVG(
+      Math.ceil(width / 6) * 6,
+      TRACK_HEIGHT - 2 * BLOCK_INSET,
+      6,
       inward ? 0.25 : 4.5, inward ? 4.5 : 0.25);
     return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
   }, [cells, length, inward]);
