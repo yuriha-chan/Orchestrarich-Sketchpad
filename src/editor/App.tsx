@@ -440,18 +440,6 @@ export function App() {
       length: previewLength,
     });
 
-  const hint = isStaging
-    ? editable
-      ? "Pick a kind, then drag across empty cells to place a block from its start to its end. Drag a block to move it. Drag its left or right edge to change its start or end. Right-drag a media block's edge inward to set a fade, or outward to extend the block with that fade. Left-drag an internal phase boundary to adjust the fade. Click a block to select it; the inspector edits its properties. Rectangle blocks draw on the stage grid and are positioned in the inspector. Delete removes the selected block."
-      : running
-        ? "Running. Dialogue, animation, and rectangle effects appear in the stage below the timeline. Press OK to finish a dialogue. Skip delivers a skip request to running blocks; the barrier still waits for them to complete."
-        : "Timeline ended. Reset to edit and run again."
-    : editable
-      ? "Preview gives the stage the workspace. Switch to Staging to place or edit blocks, or press Run to play the arrangement."
-      : running
-        ? "Running. The status bar shows logical time and the blocks blocking it; switching workspaces does not interrupt the run."
-        : "Timeline ended. Reset to run again, or switch to Staging to edit.";
-
   return (
     <main className="app" style={gridVariables}>
       <nav className="workspace-bar" role="tablist" aria-label="Workspaces">
@@ -572,13 +560,24 @@ export function App() {
         ) : null}
       </header>
 
-      <p className="hint">{hint}</p>
-
       {slotValidationMessage ? (
         <p className="slot-validation" role="alert">
           {slotValidationMessage}
         </p>
       ) : null}
+
+      <section
+        className={`stage${isStaging ? "" : " is-expanded"}`}
+        aria-label="Stage"
+      >
+        <div className="stage-heading">Stage</div>
+        <Stage
+          items={stageItems}
+          columns={gridColumns}
+          rows={gridRows}
+          onSpanChange={setStageSpan}
+        />
+      </section>
 
       {isStaging ? (
         <div className="staging-area">
@@ -1020,19 +1019,6 @@ export function App() {
           </aside>
         </div>
       ) : null}
-
-      <section
-        className={`stage${isStaging ? "" : " is-expanded"}`}
-        aria-label="Stage"
-      >
-        <div className="stage-heading">Stage</div>
-        <Stage
-          items={stageItems}
-          columns={gridColumns}
-          rows={gridRows}
-          onSpanChange={setStageSpan}
-        />
-      </section>
 
       <footer className="status">
         <div className={`status-run status-${phase}`}>

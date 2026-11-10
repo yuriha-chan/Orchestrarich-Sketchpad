@@ -129,12 +129,6 @@ body {
   opacity: 0.5;
 }
 
-.hint {
-  margin: 16px 0;
-  font-size: 13px;
-  color: #475569;
-}
-
 .staging-area {
   display: flex;
   gap: 16px;
