@@ -253,6 +253,15 @@ export function App() {
       if (event.key !== "Delete" && event.key !== "Backspace") {
         return;
       }
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement)
+      ) {
+        return;
+      }
       const current = useExperimentStore.getState();
       if (!current.selectedId) {
         return;
@@ -1454,11 +1463,6 @@ function SlotLabel({
               if (event.key === "Escape") {
                 event.stopPropagation();
                 setEditing(false);
-              } else if (
-                event.key === "Backspace" ||
-                event.key === "Delete"
-              ) {
-                event.stopPropagation();
               }
             }}
           />
@@ -1749,11 +1753,6 @@ function SlotRow({
               if (event.key === "Escape") {
                 event.stopPropagation();
                 setEditing(null);
-              } else if (
-                event.key === "Backspace" ||
-                event.key === "Delete"
-              ) {
-                event.stopPropagation();
               }
             }}
           />

@@ -528,6 +528,7 @@ body {
 .slot-value-rail line {
   stroke: #93c5fd;
   stroke-width: 6;
+  stroke-linecap: round;
 }
 
 .slot-cell {
@@ -557,9 +558,14 @@ body {
   position: absolute;
   top: 50%;
   left: calc(var(--cell-gap) / 2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
   transform: translate(-50%, -50%);
   border-radius: 999px;
-  padding: 2px 4px;
+  padding: 0 4px;
+  border: 2px solid #93c5fd;
   background: #dbeafe;
   font-size: 12px;
   font-weight: 700;
