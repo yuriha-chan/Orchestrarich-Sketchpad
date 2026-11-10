@@ -13,18 +13,24 @@ export interface SlotValueRail {
 export function slotValueRail(
   initializations: readonly NumericSlotInitialization[],
   columnCount: number,
+  assignmentTimes: readonly number[] = [],
 ): SlotValueRail {
-  const ordered = [...initializations].sort((a, b) => a.time - b.time);
+  const times = [
+    ...new Set([
+      ...initializations.map((initialization) => initialization.time),
+      ...assignmentTimes,
+    ]),
+  ].sort((a, b) => a - b);
   const spans: SlotValueSpan[] = [];
   const dots: number[] = [];
 
-  for (let index = 0; index < ordered.length; index += 1) {
-    const start = ordered[index].time;
+  for (let index = 0; index < times.length; index += 1) {
+    const start = times[index];
     if (start >= columnCount) {
       break;
     }
-    const next = ordered[index + 1];
-    const end = next ? Math.min(next.time, columnCount) : columnCount;
+    const next = times[index + 1];
+    const end = next !== undefined ? Math.min(next, columnCount) : columnCount;
     spans.push({ start, end });
 
     for (let time = start + 1; time < end; time += 1) {

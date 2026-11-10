@@ -74,4 +74,25 @@ describe("slotValueRail", () => {
       dots: [],
     });
   });
+
+  it("ends the previous value at a block output assignment", () => {
+    expect(slotValueRail([initialization(0, 3)], 8, [3])).toEqual({
+      spans: [
+        { start: 0, end: 3 },
+        { start: 3, end: 8 },
+      ],
+      dots: [1, 2, 4, 5, 6, 7],
+    });
+  });
+
+  it("draws a rail for a value produced only by a block output", () => {
+    expect(slotValueRail([], 5, [2])).toEqual({
+      spans: [{ start: 2, end: 5 }],
+      dots: [3, 4],
+    });
+  });
+
+  it("clips an output assignment beyond the rendered columns", () => {
+    expect(slotValueRail([], 4, [10])).toEqual({ spans: [], dots: [] });
+  });
 });

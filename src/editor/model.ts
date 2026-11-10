@@ -1,4 +1,4 @@
-export type BlockKind = "dialogue" | "camera" | "sound" | "animation" | "wait" | "rectangle";
+export type BlockKind = "dialogue" | "camera" | "sound" | "animation" | "wait" | "rectangle" | "addition";
 
 export type TimedBlockKind = Exclude<BlockKind, "dialogue">;
 
@@ -27,9 +27,12 @@ export const TRACK_COLORS = [
 
 export type TrackColor = (typeof TRACK_COLORS)[number];
 
+export type SlotDirection = "input" | "output";
+
 export interface SlotProperty {
   readonly key: string;
   readonly label: string;
+  readonly direction: SlotDirection;
 }
 
 interface PlacementBase {
@@ -83,9 +86,21 @@ export interface RectanglePlacement extends DurationPlacementBase, RectGeometry 
   kind: "rectangle";
 }
 
-export type DurationPlacement = TimedPlacement | MediaPlacement | RectanglePlacement;
+export interface AdditionPlacement extends PlacementBase {
+  kind: "addition";
+  inputA: number;
+  inputB: number;
+}
 
-export type Placement = DialoguePlacement | DurationPlacement;
+export type DurationPlacement =
+  | TimedPlacement
+  | MediaPlacement
+  | RectanglePlacement;
+
+export type Placement =
+  | DialoguePlacement
+  | DurationPlacement
+  | AdditionPlacement;
 
 export function isMediaPlacement(
   placement: Placement,
@@ -99,6 +114,42 @@ export function isRectanglePlacement(
   return placement.kind === "rectangle";
 }
 
+export function isDurationPlacement(
+  placement: Placement,
+): placement is DurationPlacement {
+  return (
+    placement.kind !== "dialogue" &&
+    placement.kind !== "addition"
+  );
+}
+
+
+export interface BoundSlotProperty {
+  readonly key: string;
+  readonly slotId: string;
+}
+
+export function boundSlotProperties(
+  placement: Placement,
+  direction: SlotDirection,
+): readonly BoundSlotProperty[] {
+  const bindings = placement.slotBindings;
+  if (bindings === undefined) {
+    return [];
+  }
+  const bound: BoundSlotProperty[] = [];
+  for (const property of SLOT_CAPABLE_PROPERTIES[placement.kind]) {
+    if (property.direction !== direction) {
+      continue;
+    }
+    const slotId = bindings[property.key];
+    if (slotId !== undefined) {
+      bound.push({ key: property.key, slotId });
+    }
+  }
+  return bound;
+}
+
 export const SLOT_CAPABLE_PROPERTIES: Record<BlockKind, readonly SlotProperty[]> = {
   dialogue: [],
   camera: [],
@@ -106,10 +157,15 @@ export const SLOT_CAPABLE_PROPERTIES: Record<BlockKind, readonly SlotProperty[]>
   animation: [],
   wait: [],
   rectangle: [
-    { key: "x", label: "X" },
-    { key: "y", label: "Y" },
-    { key: "w", label: "Width" },
-    { key: "h", label: "Height" },
+    { key: "x", label: "X", direction: "input" },
+    { key: "y", label: "Y", direction: "input" },
+    { key: "w", label: "Width", direction: "input" },
+    { key: "h", label: "Height", direction: "input" },
+  ],
+  addition: [
+    { key: "a", label: "A", direction: "input" },
+    { key: "b", label: "B", direction: "input" },
+    { key: "out", label: "Output", direction: "output" },
   ],
 };
 
@@ -229,17 +285,25 @@ export function convertPlacementKind(
   if (kind === "dialogue") {
     return { ...base, kind };
   }
-  const durationFields = placement.kind === "dialogue"
-    ? {
-        duration: placement.length,
-        durationUnit: "beats" as const,
-        syncBeatsToCellSpan: false,
-      }
-    : {
-        duration: placement.duration,
-        durationUnit: placement.durationUnit,
-        syncBeatsToCellSpan: placement.syncBeatsToCellSpan,
-      };
+  if (kind === "addition") {
+    const inputs =
+      placement.kind === "addition"
+        ? { inputA: placement.inputA, inputB: placement.inputB }
+        : { inputA: 0, inputB: 0 };
+    return { ...base, kind, ...inputs };
+  }
+  const durationFields =
+    placement.kind === "dialogue" || placement.kind === "addition"
+      ? {
+          duration: placement.length,
+          durationUnit: "beats" as const,
+          syncBeatsToCellSpan: false,
+        }
+      : {
+          duration: placement.duration,
+          durationUnit: placement.durationUnit,
+          syncBeatsToCellSpan: placement.syncBeatsToCellSpan,
+        };
   if (kind === "rectangle") {
     const geometry = isRectanglePlacement(placement)
       ? {
@@ -279,6 +343,7 @@ export const BLOCK_KINDS: readonly BlockKind[] = [
   "animation",
   "wait",
   "rectangle",
+  "addition",
 ];
 
 export const BLOCK_LABELS: Record<BlockKind, string> = {
@@ -288,6 +353,7 @@ export const BLOCK_LABELS: Record<BlockKind, string> = {
   animation: "Animation",
   wait: "Wait",
   rectangle: "Rectangle",
+  addition: "Addition",
 };
 
 export function intervalsOverlap(

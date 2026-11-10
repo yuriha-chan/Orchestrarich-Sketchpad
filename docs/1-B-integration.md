@@ -117,9 +117,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 216 tests pass (53 core + 12 numeric slots + 29 placement model
-  + 43 store + 16 timeline rows + 33 integration + 8 stage geometry + 7 slot
-  value rail + 9 slot wires + 6 fade editing and dot-pattern tests).
+- `pnpm test`: 254 tests pass (55 core + 19 numeric slots + 34 placement model
+  + 52 store + 16 timeline rows + 39 integration + 8 stage geometry + 10 slot
+  value rail + 15 slot wires + 6 fade editing and dot-pattern tests).
 - `pnpm build`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
@@ -311,21 +311,22 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 31. A slot reference is drawn as a wire on the timeline: a 4 px line in the
     rail color from the block's bottom edge down to the slot row's rail. Ending
     at the bottom edge means the wire never runs along a block edge. Every
-    slot-capable parameter of every block in a start column owns a lane across
-    the first cell, ordered by track and then by parameter; only bound
+    slot-capable input parameter of every block in a start column owns a lane
+    across the first cell, ordered by track and then by parameter; only bound
     parameters draw a wire, but unbound parameters keep their lane. Wires
     starting in the same column therefore never overlap, and different columns
-    use different cells. There is one wire per bound parameter, so two
-    properties bound to the same slot draw two wires. A small dot marks each
-    wire's endpoint on the block's bottom edge. Each vertical line is drawn over
-    a white casing, so crossing a horizontal rail reads as an overpass rather
-    than a junction; the casing stops just above the rail the wire branches
-    from, so that connection stays continuous and only crossings with other
-    slots' rails are isolated. Wires are drawn beneath the block layer so that
-    wires crossing intervening tracks do not cover block labels; dots are drawn
-    above the blocks so the endpoint remains visible where it crosses the block
-    edge. A binding whose slot no longer exists has no row and therefore no
-    wire; the read is still reported as invalid.
+    use different cells. Output parameters do not take a column lane because
+    their wire is routed at the assignment boundary instead. There is one wire
+    per bound parameter, so two properties bound to the same slot draw two
+    wires. A small dot marks each wire's endpoint on the block's bottom edge.
+    Each vertical line is drawn over a white casing, so crossing a horizontal
+    rail reads as an overpass rather than a junction; the casing stops just above
+    the rail the wire branches from, so that connection stays continuous and
+    only crossings with other slots' rails are isolated. Wires are drawn beneath
+    the block layer so that wires crossing intervening tracks do not cover block
+    labels; dots are drawn above the blocks so the endpoint remains visible where
+    it crosses the block edge. A binding whose slot no longer exists has no row
+    and therefore no wire; the read is still reported as invalid.
 
 32. A track label carries a color accent and a right-click menu. The menu adds
     a track below the clicked one, renames it inline, duplicates it, picks one
@@ -338,8 +339,34 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     data and appears as an inset accent on the label. The Add track button sits
     at the foot of the label column; Add slot stays on each track label.
 
+33. The addition block reads two numbers and outputs their sum. Each input is an
+    immediate number or a slot binding; the output is defined the same way as an
+    input, as a slot-capable property with direction `output` (`out`), so its
+    binding lives in `slotBindings.out` and the inspector and drag-to-bind treat
+    it like any other slot property. The addition has no duration: it computes
+    instantly on its start. The block does not write the slot itself; its
+    execution resolves with the output value and the runner assigns that value
+    to the bound slot when the block reaches its end time, so a block starting at
+    or after the addition's end time reads it. Read validation accepts a slot
+    value from an authoring initialization at or before the read time or from an
+    output whose block ends by the read time. Write validation rejects a missing
+    slot or a local slot on another track. The addition has no stage effect.
+
+34. An output reference is drawn differently from an input reference. It starts
+    at the block's right edge, at the vertical center of the block, and lands at
+    the gap of the block's end time, which is the boundary where the slot is
+    written. The vertical part runs in that gap corridor, and the wire has no
+    block-edge endpoint dot. This assignment also bounds the slot's value rail:
+    the previous value's rail ends at the assignment gap, and a new rail starts
+    there, so the rail reflects that the block replaces the previous value
+    rather than the value continuing. Wires paint above slot value dots and the
+    horizontal rails; blocks paint above wires, and endpoint dots paint above
+    blocks, so a crossing rail or dot never covers the vertical wire.
+
 ## Carry-Over
 
+- Multiple blocks may write the same slot; ordering is by completion time and
+  the result is not statically checked or rejected yet.
 - How a failed block should be surfaced; the current UI has no way to make one
   fail.
 - Whether editing should remain possible while a run is paused or rewound.

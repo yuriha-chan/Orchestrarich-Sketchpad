@@ -1,6 +1,7 @@
 import {
   TimelineRunner,
   type BarrierSpan,
+  type BlockOutputs,
   type BlockSnapshot,
   type BlockStartResult,
   type TimelineDefinition,
@@ -9,10 +10,16 @@ import {
 } from "../core/execution/timeline-runner.ts";
 import {
   validateNumericSlotReads,
+  validateNumericSlotWrites,
   type NumericSlot,
   type NumericSlotRead,
+  type NumericSlotWrite,
 } from "../core/slots/numeric-slots.ts";
-import { SLOT_CAPABLE_PROPERTIES, type Placement, type Track } from "./model";
+import {
+  boundSlotProperties,
+  type Placement,
+  type Track,
+} from "./model";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";
 
@@ -42,25 +49,25 @@ export function toTimelineDefinition(
 }
 
 export function slotReads(placements: readonly Placement[]): NumericSlotRead[] {
-  const reads: NumericSlotRead[] = [];
-  for (const placement of placements) {
-    const bindings = placement.slotBindings;
-    if (bindings === undefined) {
-      continue;
-    }
-    for (const { key } of SLOT_CAPABLE_PROPERTIES[placement.kind]) {
-      const slotId = bindings[key];
-      if (slotId === undefined) {
-        continue;
-      }
-      reads.push({
-        slotId,
-        trackId: placement.trackId,
-        time: placement.start,
-      });
-    }
-  }
-  return reads;
+  return placements.flatMap((placement) =>
+    boundSlotProperties(placement, "input").map(({ slotId }) => ({
+      slotId,
+      trackId: placement.trackId,
+      time: placement.start,
+    })),
+  );
+}
+
+export function slotWrites(
+  placements: readonly Placement[],
+): NumericSlotWrite[] {
+  return placements.flatMap((placement) =>
+    boundSlotProperties(placement, "output").map(({ slotId }) => ({
+      slotId,
+      trackId: placement.trackId,
+      time: placement.start + placement.length,
+    })),
+  );
 }
 
 export class TimelineSession {
@@ -104,7 +111,8 @@ export class TimelineSession {
       {
         onTimeStart: (time) => this.applyTimeStart(time),
         onBlockStart: (block) => this.startBlock(block),
-        onBlockTerminate: (block) => this.terminateBlock(block),
+        onBlockTerminate: (block, outputs) =>
+          this.terminateBlock(block, outputs),
       },
     );
     this.unsubscribe = this.runner.subscribe((snapshot) => {
@@ -128,9 +136,19 @@ export class TimelineSession {
   }
 
   start(): void {
+    const slots = this.options.slots ?? [];
+    const writes = slotWrites(this.placements);
+    const invalidWrites = validateNumericSlotWrites(slots, writes);
+    if (invalidWrites.length > 0) {
+      const details = invalidWrites
+        .map((write) => `${write.slotId}@${write.time}`)
+        .join(", ");
+      throw new Error(`Invalid numeric slot writes: ${details}`);
+    }
     const invalidReads = validateNumericSlotReads(
-      this.options.slots ?? [],
+      slots,
       slotReads(this.placements),
+      writes,
     );
     if (invalidReads.length > 0) {
       const details = invalidReads
@@ -192,12 +210,17 @@ export class TimelineSession {
     return this.activeExecutions.get(definition)!.startPhase(block);
   }
 
-  private terminateBlock(block: BlockSnapshot): void {
+  private terminateBlock(block: BlockSnapshot, outputs: BlockOutputs): void {
     const definition = this.definitionByBlockId[block.id];
     const placement = definition.placement;
     const instance = this.activeExecutions.get(definition)!;
     instance.terminatePhase(block);
     if (block.end === placement.start + placement.length) {
+      if (block.state === "completed") {
+        for (const { key, slotId } of boundSlotProperties(placement, "output")) {
+          this.runtimeSlots.set(slotId, outputs[key]);
+        }
+      }
       this.activeExecutions.delete(definition);
       this.finalizeInstance(instance);
     }

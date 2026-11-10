@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+  AdditionPlacement,
   DialoguePlacement,
   MediaPlacement,
   RectanglePlacement,
@@ -60,6 +61,22 @@ function media(overrides: Partial<MediaPlacement> = {}): MediaPlacement {
     syncBeatsToCellSpan: false,
     fadeIn: 0,
     fadeOut: 0,
+    ...overrides,
+  };
+}
+
+function addition(
+  overrides: Partial<AdditionPlacement> = {},
+): AdditionPlacement {
+  return {
+    id: "addition-1",
+    kind: "addition",
+    trackId: "dialogue",
+    start: 0,
+    length: 1,
+    cooperativeSkip: false,
+    inputA: 0,
+    inputB: 0,
     ...overrides,
   };
 }
@@ -338,5 +355,73 @@ describe("fades", () => {
   it("names phase blocks from the placement id", () => {
     expect(phaseBlockId("clip", 0)).toBe("clip~0");
     expect(phaseBlockId("clip", 2)).toBe("clip~2");
+  });
+});
+
+describe("addition kind conversion", () => {
+  it("gives an addition zero inputs when another kind becomes an addition", () => {
+    const converted = convertPlacementKind(
+      timed({ duration: 2, durationUnit: "seconds" }),
+      "addition",
+    );
+
+    expect(converted).toMatchObject({
+      kind: "addition",
+      inputA: 0,
+      inputB: 0,
+    });
+    expect("duration" in converted).toBe(false);
+    expect("durationUnit" in converted).toBe(false);
+  });
+
+  it("gives an addition a span duration when it becomes a timed block", () => {
+    const converted = convertPlacementKind(
+      addition({ length: 3, inputA: 2, inputB: 3 }),
+      "camera",
+    );
+
+    expect(converted).toMatchObject({
+      kind: "camera",
+      duration: 3,
+      durationUnit: "beats",
+      syncBeatsToCellSpan: false,
+    });
+    expect("inputA" in converted).toBe(false);
+  });
+
+  it("keeps the addition inputs and bindings when the kind stays an addition", () => {
+    const source = addition({
+      inputA: 2,
+      inputB: 3,
+      slotBindings: { a: "left", out: "sum" },
+    });
+
+    expect(convertPlacementKind(source, "addition")).toBe(source);
+  });
+
+  it("drops the addition inputs and output binding when it becomes a camera", () => {
+    const converted = convertPlacementKind(
+      addition({
+        inputA: 2,
+        inputB: 3,
+        slotBindings: { a: "left", out: "sum" },
+      }),
+      "camera",
+    );
+
+    expect(converted.kind).toBe("camera");
+    expect("inputA" in converted).toBe(false);
+    expect("inputB" in converted).toBe(false);
+    expect("slotBindings" in converted).toBe(false);
+  });
+
+  it("drops rectangle bindings when a rectangle becomes an addition", () => {
+    const converted = convertPlacementKind(
+      rectangle({ slotBindings: { x: "left" } }),
+      "addition",
+    );
+
+    expect(converted.kind).toBe("addition");
+    expect("slotBindings" in converted).toBe(false);
   });
 });

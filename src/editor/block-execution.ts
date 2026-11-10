@@ -1,6 +1,13 @@
 import type { BlockSnapshot, BlockStartResult, SkipReason } from "../core/execution/timeline-runner.ts";
 import type { ExecutionDefinition } from "./execution-definition";
-import { blockDurationSeconds, type DialoguePlacement, type DurationPlacement, type MediaPlacement, type RectanglePlacement } from "./model";
+import {
+  blockDurationSeconds,
+  type AdditionPlacement,
+  type DialoguePlacement,
+  type DurationPlacement,
+  type MediaPlacement,
+  type RectanglePlacement,
+} from "./model";
 import type { AnimationPlayback, StageActions } from "./stage-state";
 
 export const SKIP_FADE_MS = 150;
@@ -196,6 +203,36 @@ export class RectangleExecution extends TimedExecution {
   }
 }
 
+export class AdditionExecution extends ExecutionInstance {
+  private readonly value: number;
+
+  constructor(
+    definition: ExecutionDefinition,
+    placement: AdditionPlacement,
+    context: ExecutionContext,
+  ) {
+    super(definition);
+    const bindings = placement.slotBindings;
+    const a =
+      bindings?.a === undefined
+        ? placement.inputA
+        : context.readNumericSlot(bindings.a);
+    const b =
+      bindings?.b === undefined
+        ? placement.inputB
+        : context.readNumericSlot(bindings.b);
+    this.value = a + b;
+  }
+
+  startPhase(_block: BlockSnapshot): BlockStartResult {
+    return { execution: Promise.resolve({ out: this.value }) };
+  }
+
+  terminatePhase(_block: BlockSnapshot): void {}
+
+  terminate(): void {}
+}
+
 export function createExecution(definition: ExecutionDefinition, context: ExecutionContext): ExecutionInstance {
   const placement = definition.placement;
   switch (placement.kind) {
@@ -203,6 +240,7 @@ export function createExecution(definition: ExecutionDefinition, context: Execut
     case "animation": return new MediaExecution(definition, placement, context, new AnimationPresentation(placement, context.stage));
     case "sound": return new MediaExecution(definition, placement, context);
     case "rectangle": return new RectangleExecution(definition, placement, context);
+    case "addition": return new AdditionExecution(definition, placement, context);
     case "camera":
     case "wait": return new TimedExecution(definition, placement, context);
   }

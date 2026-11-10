@@ -20,6 +20,7 @@ import {
   DEFAULT_TRACKS,
   isMediaKind,
   isMediaPlacement,
+  isDurationPlacement,
   isRectanglePlacement,
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
@@ -68,6 +69,7 @@ interface ExperimentState {
   setSyncBeatsToCellSpan: (id: string, value: boolean) => void;
   setRectValue: (id: string, field: "x" | "y" | "w" | "h", value: number) => void;
   setRectUnit: (id: string, unit: RectUnit, span: number) => void;
+  setAdditionInput: (id: string, field: "a" | "b", value: number) => void;
   addSlot: (trackId: string | null) => void;
   renameSlot: (id: string, name: string) => void;
   removeSlot: (id: string) => void;
@@ -119,7 +121,7 @@ function applySpan(
   }
   block.start = start;
   block.length = length;
-  if (block.kind !== "dialogue" && block.syncBeatsToCellSpan) {
+  if (isDurationPlacement(block) && block.syncBeatsToCellSpan) {
     block.duration = length;
   }
   if (isMediaPlacement(block)) {
@@ -284,6 +286,13 @@ export const useExperimentStore = create<ExperimentState>()(
                     syncBeatsToCellSpan: false,
                     ...DEFAULT_RECT_GEOMETRY,
                   }
+                : kind === "addition"
+                  ? {
+                      ...base,
+                      kind,
+                      inputA: 0,
+                      inputB: 0,
+                    }
                 : {
                     ...base,
                     kind,
@@ -385,7 +394,7 @@ export const useExperimentStore = create<ExperimentState>()(
       set((state) => {
         editBlock(state, id, (block) => {
           if (
-            block.kind === "dialogue" ||
+            !isDurationPlacement(block) ||
             block.syncBeatsToCellSpan ||
             !Number.isFinite(value) ||
             value <= 0
@@ -399,7 +408,7 @@ export const useExperimentStore = create<ExperimentState>()(
       set((state) => {
         editBlock(state, id, (block) => {
           if (
-            block.kind === "dialogue" ||
+            !isDurationPlacement(block) ||
             block.syncBeatsToCellSpan ||
             block.durationUnit === unit
           ) {
@@ -417,7 +426,7 @@ export const useExperimentStore = create<ExperimentState>()(
     setSyncBeatsToCellSpan: (id, value) =>
       set((state) => {
         editBlock(state, id, (block) => {
-          if (block.kind === "dialogue") {
+          if (!isDurationPlacement(block)) {
             return;
           }
           block.syncBeatsToCellSpan = value;
@@ -532,6 +541,21 @@ export const useExperimentStore = create<ExperimentState>()(
           block.slotBindings ??= {};
           block.slotBindings[key] = slotId;
         });
+      }),
+    setAdditionInput: (id, field, value) =>
+      set((state) => {
+        const block = state.blocks.find((candidate) => candidate.id === id);
+        if (block === undefined || block.kind !== "addition") {
+          return;
+        }
+        if (!Number.isFinite(value)) {
+          return;
+        }
+        if (field === "a") {
+          block.inputA = value;
+        } else {
+          block.inputB = value;
+        }
       }),
     setBpm: (value) =>
       set((state) => {

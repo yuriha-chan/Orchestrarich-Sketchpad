@@ -1514,3 +1514,46 @@ describe("barrierSpan", () => {
     expect(runner.barrierSpan(4)).toEqual({ start: 0, end: 0 });
   });
 });
+
+describe("TimelineRunner block outputs", () => {
+  it("delivers execution outputs to the block's end termination", async () => {
+    const terminated: { id: string; outputs: unknown; time: number }[] = [];
+    const runner = new TimelineRunner(
+      { tracks: [{ id: "t", blocks: [{ id: "sum", start: 0, length: 2 }] }] },
+      {
+        onBlockStart: () => ({ execution: Promise.resolve({ out: 9 }) }),
+        onBlockTerminate: (block, outputs) => {
+          terminated.push({ id: block.id, outputs, time: runner.time });
+        },
+      },
+    );
+
+    runner.start();
+    await flush();
+
+    expect(terminated).toEqual([{ id: "sum", outputs: { out: 9 }, time: 1 }]);
+    expect(runner.snapshot().phase).toBe("finished");
+    expect(runner.time).toBe(2);
+  });
+
+  it("does not assign outputs when the execution fails", async () => {
+    const terminated: { outputs: unknown }[] = [];
+    const runner = new TimelineRunner(
+      { tracks: [{ id: "t", blocks: [{ id: "sum", start: 0, length: 1 }] }] },
+      {
+        onBlockStart: () => ({
+          execution: Promise.reject(new Error("boom")),
+        }),
+        onBlockTerminate: (_block, outputs) => {
+          terminated.push({ outputs });
+        },
+      },
+    );
+
+    runner.start();
+    await flush();
+
+    expect(terminated).toEqual([{ outputs: {} }]);
+    expect(runner.snapshot().phase).toBe("failed");
+  });
+});

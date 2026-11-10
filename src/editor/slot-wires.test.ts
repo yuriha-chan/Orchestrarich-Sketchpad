@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { NumericSlot } from "../core/slots/numeric-slots";
 import {
   DEFAULT_RECT_GEOMETRY,
+  type AdditionPlacement,
   type Placement,
   type RectanglePlacement,
   type TimedPlacement,
   type Track,
 } from "./model";
-import { slotWires, type SlotWireLayout } from "./slot-wires";
+import { outputWires, slotWires, type SlotWireLayout } from "./slot-wires";
 import { timelineRows } from "./timeline-rows";
 
 const tracks: readonly Track[] = [
@@ -62,6 +63,20 @@ function camera(
     duration: 1,
     durationUnit: "beats",
     syncBeatsToCellSpan: false,
+    ...overrides,
+  };
+}
+
+function addition(
+  overrides: Partial<AdditionPlacement> & { id: string; trackId: string },
+): AdditionPlacement {
+  return {
+    kind: "addition",
+    start: 0,
+    length: 1,
+    cooperativeSkip: false,
+    inputA: 0,
+    inputB: 0,
     ...overrides,
   };
 }
@@ -202,5 +217,98 @@ describe("slotWires", () => {
     });
 
     expect(slotWires(rows, [block], layout)).toEqual([]);
+  });
+
+  it("spreads only input properties into lanes for a block with an output", () => {
+    const block = addition({
+      id: "sum",
+      trackId: "first",
+      start: 0,
+      slotBindings: {
+        a: "first-slot",
+        b: "second-slot",
+        out: "shared-slot",
+      },
+    });
+
+    expect(slotWires(rows, [block], layout)).toEqual([
+      { key: "sum:a", x: 60, blockBottomY: 38, slotY: 60 },
+      { key: "sum:b", x: 90, blockBottomY: 38, slotY: 132 },
+    ]);
+  });
+});
+
+describe("outputWires", () => {
+  it("runs from the block's right edge to the assignment gap", () => {
+    const block = addition({
+      id: "sum",
+      trackId: "first",
+      start: 2,
+      length: 3,
+      slotBindings: { out: "shared-slot" },
+    });
+
+    expect(outputWires(rows, [block], layout)).toEqual([
+      {
+        key: "sum:out",
+        blockRightX: 640,
+        blockCenterY: 24,
+        gapX: 660,
+        slotY: 156,
+      },
+    ]);
+  });
+
+  it("uses the end time gap for a block starting in another column", () => {
+    const block = addition({
+      id: "sum",
+      trackId: "second",
+      start: 0,
+      length: 1,
+      slotBindings: { out: "second-slot" },
+    });
+
+    expect(outputWires(rows, [block], layout)).toEqual([
+      {
+        key: "sum:out",
+        blockRightX: 120,
+        blockCenterY: 96,
+        gapX: 140,
+        slotY: 132,
+      },
+    ]);
+  });
+
+  it("does not draw input bindings as output wires", () => {
+    const block = addition({
+      id: "sum",
+      trackId: "first",
+      start: 0,
+      slotBindings: { a: "first-slot", b: "shared-slot" },
+    });
+
+    expect(outputWires(rows, [block], layout)).toEqual([]);
+  });
+
+  it("ignores an output binding on a kind without output properties", () => {
+    const block = rectangle({
+      id: "r",
+      trackId: "first",
+      start: 0,
+      slotBindings: { out: "first-slot" },
+    });
+
+    expect(outputWires(rows, [block], layout)).toEqual([]);
+  });
+
+  it("skips an output binding whose slot row no longer exists", () => {
+    const block = addition({
+      id: "sum",
+      trackId: "first",
+      start: 0,
+      slotBindings: { out: "removed" },
+    });
+
+    expect(outputWires(rows, [block], layout)).toEqual([]);
   });
 });

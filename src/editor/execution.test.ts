@@ -12,7 +12,11 @@ import type {
   Track,
 } from "./model";
 import { DEFAULT_TRACKS } from "./model";
-import { createStageStore, type DialogueView } from "./stage-state";
+import {
+  createStageStore,
+  type DialogueView,
+  type RectangleView,
+} from "./stage-state";
 import { MediaExecution, TimedExecution } from "./block-execution";
 
 type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
@@ -27,6 +31,8 @@ type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
   w?: number;
   h?: number;
   rectUnit?: RectUnit;
+  inputA?: number;
+  inputB?: number;
   slotBindings?: Partial<Record<string, string>>;
 };
 
@@ -43,6 +49,8 @@ function placement(overrides: PlacementOverrides = {}): Placement {
     w,
     h,
     rectUnit,
+    inputA,
+    inputB,
     slotBindings,
     ...rest
   } = overrides;
@@ -82,6 +90,15 @@ function placement(overrides: PlacementOverrides = {}): Placement {
       w: w ?? 1,
       h: h ?? 1,
       rectUnit: rectUnit ?? "span",
+    };
+  }
+  if (kind === "addition") {
+    return {
+      ...base,
+      kind,
+      ...durationFields,
+      inputA: inputA ?? 0,
+      inputB: inputB ?? 0,
     };
   }
   return { ...base, kind, ...durationFields };
@@ -147,7 +164,8 @@ function rectangleItem(run: ReturnType<typeof setup>, placementId: string) {
     (started) => started.definition.placement.id === placementId,
   )!;
   return run.stage.getState().items.find(
-    (item) => item.kind === "rectangle" && item.id === instance.id,
+    (item): item is RectangleView =>
+      item.kind === "rectangle" && item.id === instance.id,
   );
 }
 
@@ -1022,5 +1040,196 @@ describe("TimelineSession", () => {
     expect(() => run.session.start()).toThrow();
     expect(run.startedInstances).toEqual([]);
     expect(run.stage.getState().items).toEqual([]);
+  });
+});
+
+describe("addition blocks", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("writes the sum to its output slot before the next column starts", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "add",
+          kind: "addition",
+          start: 0,
+          length: 1,
+          inputA: 2,
+          inputB: 3,
+          slotBindings: { out: "sum" },
+        }),
+        placement({
+          id: "reader",
+          kind: "rectangle",
+          start: 1,
+          length: 1,
+          duration: 1,
+          slotBindings: { x: "sum" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("sum", null)],
+    );
+
+    run.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(run.blockState("add")).toBe("completed");
+    expect(run.snapshot()?.time).toBe(1);
+    expect(rectangleItem(run, "reader")?.x).toBe(5);
+  });
+
+  it("reads its two inputs from slots", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "add",
+          kind: "addition",
+          start: 0,
+          length: 1,
+          slotBindings: { a: "left", b: "right", out: "sum" },
+        }),
+        placement({
+          id: "reader",
+          kind: "rectangle",
+          start: 1,
+          length: 1,
+          duration: 1,
+          slotBindings: { x: "sum" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        numericSlot("left", null, [{ time: 0, value: 4 }]),
+        numericSlot("right", null, [{ time: 0, value: 6 }]),
+        numericSlot("sum", null),
+      ],
+    );
+
+    run.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(rectangleItem(run, "reader")?.x).toBe(10);
+  });
+
+  it("assigns the output at the block's end time", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "add",
+          kind: "addition",
+          start: 0,
+          length: 3,
+          inputA: 2,
+          inputB: 3,
+          slotBindings: { out: "sum" },
+        }),
+        placement({
+          id: "reader",
+          kind: "rectangle",
+          start: 3,
+          length: 1,
+          duration: 1,
+          slotBindings: { x: "sum" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("sum", null)],
+    );
+
+    run.session.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(run.blockState("add")).toBe("completed");
+    expect(run.snapshot()?.time).toBe(3);
+    expect(rectangleItem(run, "reader")?.x).toBe(5);
+  });
+
+  it("rejects a read inside the block's span", () => {
+    const run = setup(
+      [
+        placement({
+          id: "reader",
+          kind: "rectangle",
+          start: 1,
+          length: 1,
+          duration: 1,
+          slotBindings: { x: "sum" },
+        }),
+        placement({
+          id: "add",
+          kind: "addition",
+          trackId: DEFAULT_TRACKS[1].id,
+          start: 0,
+          length: 3,
+          inputA: 2,
+          inputB: 3,
+          slotBindings: { out: "sum" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("sum", null)],
+    );
+
+    expect(() => run.session.start()).toThrow(/Invalid numeric slot reads/);
+  });
+
+  it("rejects a read of a slot that is only produced later", () => {
+    const run = setup(
+      [
+        placement({
+          id: "reader",
+          kind: "rectangle",
+          start: 0,
+          length: 1,
+          duration: 1,
+          slotBindings: { x: "sum" },
+        }),
+        placement({
+          id: "add",
+          kind: "addition",
+          start: 1,
+          length: 1,
+          duration: 1,
+          inputA: 1,
+          inputB: 1,
+          slotBindings: { out: "sum" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("sum", null)],
+    );
+
+    expect(() => run.session.start()).toThrow(/Invalid numeric slot reads/);
+  });
+
+  it("rejects an output binding to another track's local slot", () => {
+    const run = setup(
+      [
+        placement({
+          id: "add",
+          kind: "addition",
+          inputA: 1,
+          inputB: 1,
+          slotBindings: { out: "local" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("local", DEFAULT_TRACKS[1].id)],
+    );
+
+    expect(() => run.session.start()).toThrow(/Invalid numeric slot writes/);
   });
 });

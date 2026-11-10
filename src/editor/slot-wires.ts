@@ -1,5 +1,6 @@
 import {
   SLOT_CAPABLE_PROPERTIES,
+  boundSlotProperties,
   type Placement,
   type SlotProperty,
 } from "./model";
@@ -28,11 +29,7 @@ interface PendingBlock {
   readonly bindings: Placement["slotBindings"];
 }
 
-export function slotWires(
-  rows: readonly TimelineRow[],
-  blocks: readonly Placement[],
-  layout: SlotWireLayout,
-): readonly SlotWire[] {
+function rowIndices(rows: readonly TimelineRow[]) {
   const trackRows = new Map<string, number>();
   const slotRows = new Map<string, number>();
   rows.forEach((row, index) => {
@@ -42,11 +39,22 @@ export function slotWires(
       slotRows.set(row.slotId, index);
     }
   });
+  return { trackRows, slotRows };
+}
+
+export function slotWires(
+  rows: readonly TimelineRow[],
+  blocks: readonly Placement[],
+  layout: SlotWireLayout,
+): readonly SlotWire[] {
+  const { trackRows, slotRows } = rowIndices(rows);
 
   const columns = new Map<number, PendingBlock[]>();
 
   for (const block of blocks) {
-    const properties = SLOT_CAPABLE_PROPERTIES[block.kind];
+    const properties = SLOT_CAPABLE_PROPERTIES[block.kind].filter(
+      (property) => property.direction === "input",
+    );
     if (properties.length === 0) {
       continue;
     }
@@ -100,6 +108,52 @@ export function slotWires(
         }
         lane += 1;
       }
+    }
+  }
+
+  return wires;
+}
+
+export interface OutputWire {
+  readonly key: string;
+  readonly blockRightX: number;
+  readonly blockCenterY: number;
+  readonly gapX: number;
+  readonly slotY: number;
+}
+
+export function outputWires(
+  rows: readonly TimelineRow[],
+  blocks: readonly Placement[],
+  layout: SlotWireLayout,
+): readonly OutputWire[] {
+  const { trackRows, slotRows } = rowIndices(rows);
+
+  const wires: OutputWire[] = [];
+
+  for (const block of blocks) {
+    const outputs = boundSlotProperties(block, "output");
+    if (outputs.length === 0) {
+      continue;
+    }
+    const trackIndex = trackRows.get(block.trackId)!;
+    const assignmentTime = block.start + block.length;
+    for (const { key, slotId } of outputs) {
+      const slotIndex = slotRows.get(slotId);
+      if (slotIndex === undefined) {
+        continue;
+      }
+      wires.push({
+        key: `${block.id}:${key}`,
+        blockRightX: assignmentTime * layout.cellWidth - layout.blockInset,
+        blockCenterY:
+          rowTop(rows, trackIndex, layout.trackHeight, layout.slotHeight) +
+          layout.trackHeight / 2,
+        gapX: assignmentTime * layout.cellWidth + layout.cellGap / 2,
+        slotY:
+          rowTop(rows, slotIndex, layout.trackHeight, layout.slotHeight) +
+          layout.slotHeight / 2,
+      });
     }
   }
 

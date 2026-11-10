@@ -45,8 +45,10 @@ export type SkipHandler = (
   reason: SkipReason,
 ) => void | Promise<void>;
 
+export type BlockOutputs = Readonly<Record<string, number>>;
+
 export interface BlockStartResult {
-  readonly execution: Promise<void>;
+  readonly execution: Promise<void | BlockOutputs>;
   readonly skip?: SkipHandler;
 }
 
@@ -55,7 +57,10 @@ export interface TimelineRunnerOptions {
   readonly onBlockStart?: (
     block: BlockSnapshot,
   ) => BlockStartResult | undefined;
-  readonly onBlockTerminate?: (block: BlockSnapshot) => void;
+  readonly onBlockTerminate?: (
+    block: BlockSnapshot,
+    outputs: BlockOutputs,
+  ) => void;
 }
 
 interface BlockExecution {
@@ -67,6 +72,7 @@ interface BlockExecution {
   state: BlockState;
   autoSkipFired: boolean;
   skipHandler?: SkipHandler;
+  outputs: BlockOutputs;
 }
 
 function flattenAndValidate(definition: TimelineDefinition): BlockExecution[] {
@@ -111,6 +117,7 @@ function flattenAndValidate(definition: TimelineDefinition): BlockExecution[] {
         cooperativeSkip: block.cooperativeSkip ?? false,
         state: "pending",
         autoSkipFired: false,
+        outputs: {},
       });
     }
   }
@@ -248,7 +255,7 @@ export class TimelineRunner {
     }
     placement.skipHandler = result.skip;
     result.execution.then(
-      () => this.completeBlock(placement),
+      (outputs) => this.completeBlock(placement, outputs ?? {}),
       () => this.failBlock(placement),
     );
   }
@@ -270,7 +277,10 @@ export class TimelineRunner {
     }
   }
 
-  private completeBlock(placement: BlockExecution): void {
+  private completeBlock(
+    placement: BlockExecution,
+    outputs: BlockOutputs,
+  ): void {
     if (this.currentPhase !== "running") {
       return;
     }
@@ -278,6 +288,7 @@ export class TimelineRunner {
       return;
     }
     placement.state = "completed";
+    placement.outputs = outputs;
     placement.skipHandler = undefined;
     this.pump();
   }
@@ -343,7 +354,10 @@ export class TimelineRunner {
       if (placement.end !== end) {
         continue;
       }
-      this.options.onBlockTerminate?.(this.toBlockSnapshot(placement));
+      this.options.onBlockTerminate?.(
+        this.toBlockSnapshot(placement),
+        placement.outputs,
+      );
     }
   }
 
@@ -353,7 +367,10 @@ export class TimelineRunner {
         continue;
       }
       placement.skipHandler = undefined;
-      this.options.onBlockTerminate?.(this.toBlockSnapshot(placement));
+      this.options.onBlockTerminate?.(
+        this.toBlockSnapshot(placement),
+        placement.outputs,
+      );
     }
   }
 

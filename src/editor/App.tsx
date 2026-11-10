@@ -14,6 +14,7 @@ import type {
 } from "react";
 import {
   AudioLines,
+  Calculator,
   Check,
   Clapperboard,
   Clock,
@@ -55,19 +56,21 @@ import {
   MIN_GRID_SIZE,
   SLOT_CAPABLE_PROPERTIES,
   TRACK_COLORS,
+  boundSlotProperties,
   canPlace,
+  isDurationPlacement,
   isMediaPlacement,
 } from "./model";
 import { generateDotGradientSVG } from "./dot-gradient";
 import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
 import type { FadeBoundary } from "./fade-editing";
 import { useExperimentStore } from "./store";
-import { TimelineSession, slotReads } from "./execution";
+import { TimelineSession, slotReads, slotWrites } from "./execution";
 import { Stage } from "./Stage";
 import { createStageStore } from "./stage-state";
 import { compilePlacement, definitionBlocks } from "./execution-definition";
 import { slotValueRail } from "./slot-value-rail";
-import { slotWires } from "./slot-wires";
+import { outputWires, slotWires } from "./slot-wires";
 import { WORKSPACES } from "./workspaces";
 import {
   rowTop,
@@ -78,8 +81,10 @@ import {
 } from "./timeline-rows";
 import {
   validateNumericSlotReads,
+  validateNumericSlotWrites,
   type NumericSlot,
   type NumericSlotRead,
+  type NumericSlotWrite,
 } from "../core/slots/numeric-slots";
 import type {
   BlockState,
@@ -129,6 +134,7 @@ const KIND_ICONS: Record<BlockKind, LucideIcon> = {
   animation: Clapperboard,
   wait: Hourglass,
   rectangle: Square,
+  addition: Calculator,
 };
 
 function BlockKindIcon({
@@ -239,6 +245,10 @@ export function App() {
   const setDurationUnit = useExperimentStore((state) => state.setDurationUnit);
   const setSyncBeatsToCellSpan = useExperimentStore(
     (state) => state.setSyncBeatsToCellSpan,
+  );
+  const setRectValue = useExperimentStore((state) => state.setRectValue);
+  const setAdditionInput = useExperimentStore(
+    (state) => state.setAdditionInput,
   );
   const workspace = useExperimentStore((state) => state.workspace);
   const setWorkspace = useExperimentStore((state) => state.setWorkspace);
@@ -378,19 +388,38 @@ export function App() {
     ? (tracks.find((track) => track.id === trackMenu.trackId) ?? null)
     : null;
   const selectedDuration =
-    selected && selected.kind !== "dialogue"
+    selected && isDurationPlacement(selected)
       ? roundTo(
           selected.syncBeatsToCellSpan ? selected.length : selected.duration,
           3,
         )
       : 0;
   const selectedRect = selected?.kind === "rectangle" ? selected : null;
+  const selectedAddition = selected?.kind === "addition" ? selected : null;
   const rectMax = selectedRect?.rectUnit === "pixels" ? 4096 : 512;
   const rectMinSize = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
   const rectStep = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
 
   const rows = useMemo(() => timelineRows(tracks, slots), [tracks, slots]);
   const wires = useMemo(() => slotWires(rows, blocks, SLOT_WIRE_LAYOUT), [rows, blocks]);
+  const outputWireList = useMemo(
+    () => outputWires(rows, blocks, SLOT_WIRE_LAYOUT),
+    [rows, blocks],
+  );
+  const slotAssignments = useMemo(() => {
+    const assignments = new Map<string, number[]>();
+    for (const block of blocks) {
+      for (const { slotId } of boundSlotProperties(block, "output")) {
+        const times = assignments.get(slotId);
+        if (times === undefined) {
+          assignments.set(slotId, [block.start + block.length]);
+        } else {
+          times.push(block.start + block.length);
+        }
+      }
+    }
+    return assignments;
+  }, [blocks]);
   const slotsById = useMemo(
     () => Object.fromEntries(slots.map((slot) => [slot.id, slot])) as Record<string, NumericSlot>,
     [slots],
@@ -412,13 +441,18 @@ export function App() {
     );
     return names;
   }, [slots, tracks]);
+  const writes = useMemo(() => slotWrites(blocks), [blocks]);
+  const invalidSlotWrites = useMemo(
+    () => validateNumericSlotWrites(slots, writes),
+    [slots, writes],
+  );
   const invalidSlotReads = useMemo(
-    () => validateNumericSlotReads(slots, slotReads(blocks)),
-    [slots, blocks],
+    () => validateNumericSlotReads(slots, slotReads(blocks), writes),
+    [slots, blocks, writes],
   );
   const slotValidationMessage = useMemo(
-    () => formatSlotValidation(invalidSlotReads, slots, tracks),
-    [invalidSlotReads, slots, tracks],
+    () => formatSlotValidation(invalidSlotReads, invalidSlotWrites, slots, tracks),
+    [invalidSlotReads, invalidSlotWrites, slots, tracks],
   );
 
   const beginSlotDrag = useCallback(
@@ -737,7 +771,8 @@ export function App() {
               disabled={
                 !editable ||
                 blocks.length === 0 ||
-                invalidSlotReads.length > 0
+                invalidSlotReads.length > 0 ||
+                invalidSlotWrites.length > 0
               }
             >
               <Play size={14} aria-hidden="true" />
@@ -947,6 +982,7 @@ export function App() {
                           columnCount={columnCount}
                           editable={editable}
                           groupStart={rowGroupStarts[rowIndex]}
+                          assignmentTimes={slotAssignments.get(row.slotId) ?? []}
                           onValueDragStart={beginSlotDrag}
                         />
                       ),
@@ -966,6 +1002,17 @@ export function App() {
                             y1={wire.blockBottomY}
                             x2={wire.x}
                             y2={wire.slotY}
+                          />
+                        </g>
+                      ))}
+                      {outputWireList.map((wire) => (
+                        <g key={`out-${wire.key}`}>
+                          <polyline
+                            className="slot-wire-casing"
+                            points={`${wire.blockRightX},${wire.blockCenterY} ${wire.gapX},${wire.blockCenterY} ${wire.gapX},${wire.slotY - SLOT_WIRE_CASING_INSET}`}
+                          />
+                          <polyline
+                            points={`${wire.blockRightX},${wire.blockCenterY} ${wire.gapX},${wire.blockCenterY} ${wire.gapX},${wire.slotY}`}
                           />
                         </g>
                       ))}
@@ -1083,6 +1130,11 @@ export function App() {
                   <p className="inspector-note">
                     Dialogue completes with the OK button.
                   </p>
+                ) : selected.kind === "addition" ? (
+                  <p className="inspector-note">
+                    The addition computes instantly; its output is assigned
+                    when the block ends.
+                  </p>
                 ) : (
                   <>
                     <div className="inspector-field">
@@ -1152,10 +1204,73 @@ export function App() {
                       />
                       Sync beats to cell span
                     </label>
+                    {selectedAddition ? (
+                      <>
+                        <div className="rect-fields">
+                          <SlotPropertyField
+                            placementId={selectedAddition.id}
+                            field="a"
+                            label="A"
+                            value={selectedAddition.inputA}
+                            min={-1000000}
+                            max={1000000}
+                            step={1}
+                            valueKey="number"
+                            boundSlotId={selectedAddition.slotBindings?.a}
+                            trackId={selectedAddition.trackId}
+                            slots={slots}
+                            tracks={tracks}
+                            editable={editable}
+                            ariaLabel="Addition input A"
+                            onCommit={(next) =>
+                              setAdditionInput(selectedAddition.id, "a", next)
+                            }
+                          />
+                          <SlotPropertyField
+                            placementId={selectedAddition.id}
+                            field="b"
+                            label="B"
+                            value={selectedAddition.inputB}
+                            min={-1000000}
+                            max={1000000}
+                            step={1}
+                            valueKey="number"
+                            boundSlotId={selectedAddition.slotBindings?.b}
+                            trackId={selectedAddition.trackId}
+                            slots={slots}
+                            tracks={tracks}
+                            editable={editable}
+                            ariaLabel="Addition input B"
+                            onCommit={(next) =>
+                              setAdditionInput(selectedAddition.id, "b", next)
+                            }
+                          />
+                        </div>
+                        {SLOT_CAPABLE_PROPERTIES.addition
+                          .filter(
+                            (property) => property.direction === "output",
+                          )
+                          .map((property) => (
+                            <OutputSlotField
+                              key={property.key}
+                              placementId={selectedAddition.id}
+                              field={property.key}
+                              label={`${property.label} slot`}
+                              trackId={selectedAddition.trackId}
+                              boundSlotId={
+                                selectedAddition.slotBindings?.[property.key]
+                              }
+                              slots={slots}
+                              tracks={tracks}
+                              editable={editable}
+                            />
+                          ))}
+                      </>
+                    ) : null}
                     {selectedRect ? (
                       <>
                         <div className="rect-fields">
-                          <RectangleProperty
+                          <SlotPropertyField
                             placementId={selectedRect.id}
                             field="x"
                             label="X"
@@ -1163,15 +1278,18 @@ export function App() {
                             min={0}
                             max={rectMax}
                             step={rectStep}
-                            rectUnit={selectedRect.rectUnit}
+                            valueKey={selectedRect.rectUnit}
                             boundSlotId={selectedRect.slotBindings?.x}
                             trackId={selectedRect.trackId}
                             slots={slots}
                             tracks={tracks}
                             editable={editable}
                             ariaLabel="Rectangle x"
+                            onCommit={(next) =>
+                              setRectValue(selectedRect.id, "x", next)
+                            }
                           />
-                          <RectangleProperty
+                          <SlotPropertyField
                             placementId={selectedRect.id}
                             field="y"
                             label="Y"
@@ -1179,15 +1297,18 @@ export function App() {
                             min={0}
                             max={rectMax}
                             step={rectStep}
-                            rectUnit={selectedRect.rectUnit}
+                            valueKey={selectedRect.rectUnit}
                             boundSlotId={selectedRect.slotBindings?.y}
                             trackId={selectedRect.trackId}
                             slots={slots}
                             tracks={tracks}
                             editable={editable}
                             ariaLabel="Rectangle y"
+                            onCommit={(next) =>
+                              setRectValue(selectedRect.id, "y", next)
+                            }
                           />
-                          <RectangleProperty
+                          <SlotPropertyField
                             placementId={selectedRect.id}
                             field="w"
                             label="Width"
@@ -1195,15 +1316,18 @@ export function App() {
                             min={rectMinSize}
                             max={rectMax}
                             step={rectStep}
-                            rectUnit={selectedRect.rectUnit}
+                            valueKey={selectedRect.rectUnit}
                             boundSlotId={selectedRect.slotBindings?.w}
                             trackId={selectedRect.trackId}
                             slots={slots}
                             tracks={tracks}
                             editable={editable}
                             ariaLabel="Rectangle width"
+                            onCommit={(next) =>
+                              setRectValue(selectedRect.id, "w", next)
+                            }
                           />
-                          <RectangleProperty
+                          <SlotPropertyField
                             placementId={selectedRect.id}
                             field="h"
                             label="Height"
@@ -1211,13 +1335,16 @@ export function App() {
                             min={rectMinSize}
                             max={rectMax}
                             step={rectStep}
-                            rectUnit={selectedRect.rectUnit}
+                            valueKey={selectedRect.rectUnit}
                             boundSlotId={selectedRect.slotBindings?.h}
                             trackId={selectedRect.trackId}
                             slots={slots}
                             tracks={tracks}
                             editable={editable}
                             ariaLabel="Rectangle height"
+                            onCommit={(next) =>
+                              setRectValue(selectedRect.id, "h", next)
+                            }
                           />
                         </div>
                         <div className="inspector-field">
@@ -1796,6 +1923,7 @@ function SlotRow({
   columnCount,
   editable,
   groupStart,
+  assignmentTimes,
   onValueDragStart,
 }: {
   slot: NumericSlot;
@@ -1803,6 +1931,7 @@ function SlotRow({
   columnCount: number;
   editable: boolean;
   groupStart: boolean;
+  assignmentTimes: readonly number[];
   onValueDragStart: (
     slotId: string,
     slotName: string,
@@ -1901,7 +2030,7 @@ function SlotRow({
     setEditing(null);
   };
 
-  const rail = slotValueRail(slot.initializations, columnCount);
+  const rail = slotValueRail(slot.initializations, columnCount, assignmentTimes);
   const gapCenter = (time: number) => time * CELL_WIDTH + CELL_GAP / 2;
 
   return (
@@ -2066,7 +2195,7 @@ function SlotRow({
   );
 }
 
-function RectangleProperty({
+function SlotPropertyField({
   placementId,
   field,
   label,
@@ -2074,47 +2203,44 @@ function RectangleProperty({
   min,
   max,
   step,
-  rectUnit,
+  valueKey,
   boundSlotId,
   trackId,
   slots,
   tracks,
   editable,
   ariaLabel,
+  onCommit,
 }: {
   placementId: string;
-  field: RectField;
+  field: string;
   label: string;
   value: number;
   min: number;
   max: number;
   step: number;
-  rectUnit: "span" | "pixels";
+  valueKey: string;
   boundSlotId: string | undefined;
   trackId: string;
   slots: readonly NumericSlot[];
   tracks: readonly Track[];
   editable: boolean;
   ariaLabel: string;
+  onCommit: (value: number) => void;
 }) {
-  const setRectValue = useExperimentStore((state) => state.setRectValue);
   const setSlotBinding = useExperimentStore((state) => state.setSlotBinding);
-  const available = slots
-    .map((slot, index) => ({ slot, name: slotDisplayName(slot, index, tracks) }))
-    .filter(
-      ({ slot }) => slot.trackId === null || slot.trackId === trackId,
-    );
-  const local = available.filter(({ slot }) => slot.trackId !== null);
-  const shared = available.filter(({ slot }) => slot.trackId === null);
+  const { local, shared } = slotChoices(slots, tracks, trackId);
   const missingBound =
     boundSlotId !== undefined &&
-    !available.some(({ slot }) => slot.id === boundSlotId);
+    ![...local, ...shared].some(({ slot }) => slot.id === boundSlotId);
 
   return (
     <div className="inspector-field">
-      <label htmlFor={`rect-${placementId}-${field}-source`}>{label}</label>
+      <label htmlFor={`property-${placementId}-${field}-source`}>
+        {label}
+      </label>
       <select
-        id={`rect-${placementId}-${field}-source`}
+        id={`property-${placementId}-${field}-source`}
         className="rect-source"
         aria-label={`${ariaLabel} source`}
         value={boundSlotId ?? ""}
@@ -2148,15 +2274,81 @@ function RectangleProperty({
         ) : null}
       </select>
       <PropertyNumber
-        key={`rect-${field}-${placementId}-${rectUnit}`}
+        key={`property-${field}-${placementId}-${valueKey}`}
         value={roundTo(value, 3)}
         min={min}
         max={max}
         step={step}
         ariaLabel={ariaLabel}
         disabled={!editable || boundSlotId !== undefined}
-        onCommit={(next) => setRectValue(placementId, field, next)}
+        onCommit={onCommit}
       />
+    </div>
+  );
+}
+
+function OutputSlotField({
+  placementId,
+  field,
+  label,
+  trackId,
+  boundSlotId,
+  slots,
+  tracks,
+  editable,
+}: {
+  placementId: string;
+  field: string;
+  label: string;
+  trackId: string;
+  boundSlotId: string | undefined;
+  slots: readonly NumericSlot[];
+  tracks: readonly Track[];
+  editable: boolean;
+}) {
+  const setSlotBinding = useExperimentStore((state) => state.setSlotBinding);
+  const { local, shared } = slotChoices(slots, tracks, trackId);
+  const missingBound =
+    boundSlotId !== undefined &&
+    ![...local, ...shared].some(({ slot }) => slot.id === boundSlotId);
+
+  return (
+    <div className="inspector-field">
+      <label htmlFor={`property-${placementId}-${field}-output`}>{label}</label>
+      <select
+        id={`property-${placementId}-${field}-output`}
+        className="rect-source"
+        aria-label={`${label} slot`}
+        value={boundSlotId ?? ""}
+        disabled={!editable}
+        onChange={(event) => {
+          const next = event.target.value;
+          setSlotBinding(placementId, field, next === "" ? null : next);
+        }}
+      >
+        <option value="">None</option>
+        {local.length > 0 ? (
+          <optgroup label="Track slots">
+            {local.map(({ slot, name }) => (
+              <option key={slot.id} value={slot.id}>
+                {name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {shared.length > 0 ? (
+          <optgroup label="Shared slots">
+            {shared.map(({ slot, name }) => (
+              <option key={slot.id} value={slot.id}>
+                {name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {missingBound ? (
+          <option value={boundSlotId}>{`${boundSlotId} (unavailable)`}</option>
+        ) : null}
+      </select>
     </div>
   );
 }
@@ -2529,6 +2721,23 @@ function PropertyNumber({
   );
 }
 
+function slotChoices(
+  slots: readonly NumericSlot[],
+  tracks: readonly Track[],
+  trackId: string,
+): {
+  local: { slot: NumericSlot; name: string }[];
+  shared: { slot: NumericSlot; name: string }[];
+} {
+  const available = slots
+    .map((slot, index) => ({ slot, name: slotDisplayName(slot, index, tracks) }))
+    .filter(({ slot }) => slot.trackId === null || slot.trackId === trackId);
+  return {
+    local: available.filter(({ slot }) => slot.trackId !== null),
+    shared: available.filter(({ slot }) => slot.trackId === null),
+  };
+}
+
 function slotDisplayName(
   slot: NumericSlot,
   index: number,
@@ -2549,10 +2758,11 @@ function slotDisplayName(
 
 function formatSlotValidation(
   reads: readonly NumericSlotRead[],
+  writes: readonly NumericSlotWrite[],
   slots: readonly NumericSlot[],
   tracks: readonly Track[],
 ): string | null {
-  if (reads.length === 0) {
+  if (reads.length === 0 && writes.length === 0) {
     return null;
   }
   const slotsById = new Map(
@@ -2574,7 +2784,7 @@ function formatSlotValidation(
     }
     const initializations = entry.slot.initializations;
     if (initializations.length === 0) {
-      messages.add(`${name} is empty; initialize it at or before ${readAt}.`);
+      messages.add(`${name} has no value at or before ${readAt}.`);
       continue;
     }
     if (entry.slot.trackId !== null && entry.slot.trackId !== read.trackId) {
@@ -2591,6 +2801,17 @@ function formatSlotValidation(
         `${name} initializes at time ${firstInitializationTime}, after it is read at ${readAt}.`,
       );
     }
+  }
+  for (const write of writes) {
+    const entry = slotsById.get(write.slotId);
+    const name = entry?.name ?? `Slot ${write.slotId}`;
+    if (entry === undefined) {
+      messages.add(`${name} is unavailable but is written by a block.`);
+      continue;
+    }
+    messages.add(
+      `${name} belongs to ${trackLabel(entry.slot.trackId!)} and cannot be written from ${trackLabel(write.trackId)}.`,
+    );
   }
   return messages.size > 0
     ? `Cannot run: ${Array.from(messages).join(" ")}`

@@ -22,6 +22,15 @@ function addSlot(trackId: string | null): string {
   return slots[slots.length - 1].id;
 }
 
+function createAddition(
+  trackId: string = DEFAULT_TRACKS[1].id,
+  start = 0,
+): string {
+  useExperimentStore.getState().create(trackId, "addition", start, 1);
+  const blocks = useExperimentStore.getState().blocks;
+  return blocks[blocks.length - 1].id;
+}
+
 function createRectangle(
   trackId: string = DEFAULT_TRACKS[1].id,
   start = 0,
@@ -590,5 +599,78 @@ describe("track removal", () => {
     useExperimentStore.getState().removeTrack(DEFAULT_TRACKS[1].id);
 
     expect(useExperimentStore.getState().selectedId).toBe(rectangleId);
+  });
+});
+
+describe("addition blocks", () => {
+  it("creates an addition with zero immediate inputs and no output binding", () => {
+    const id = createAddition();
+    const block = useExperimentStore
+      .getState()
+      .blocks.find((candidate) => candidate.id === id)!;
+
+    expect(block.kind).toBe("addition");
+    if (block.kind !== "addition") {
+      throw new Error("expected an addition");
+    }
+    expect(block.inputA).toBe(0);
+    expect(block.inputB).toBe(0);
+    expect(block.slotBindings).toBeUndefined();
+  });
+
+  it("creates an addition without a duration and ignores duration commands", () => {
+    const id = createAddition();
+    const store = useExperimentStore.getState();
+    store.setDuration(id, 4);
+    store.setDurationUnit(id, "seconds");
+    store.setSyncBeatsToCellSpan(id, true);
+
+    const block = useExperimentStore
+      .getState()
+      .blocks.find((candidate) => candidate.id === id)!;
+    expect("duration" in block).toBe(false);
+    expect("durationUnit" in block).toBe(false);
+    expect("syncBeatsToCellSpan" in block).toBe(false);
+  });
+
+  it("stores immediate inputs", () => {
+    const id = createAddition();
+
+    useExperimentStore.getState().setAdditionInput(id, "a", 4);
+    useExperimentStore.getState().setAdditionInput(id, "b", 7);
+
+    const block = useExperimentStore
+      .getState()
+      .blocks.find((candidate) => candidate.id === id)!;
+    if (block.kind !== "addition") {
+      throw new Error("expected an addition");
+    }
+    expect(block.inputA).toBe(4);
+    expect(block.inputB).toBe(7);
+  });
+
+  it("binds the output slot like an input property", () => {
+    const trackId = DEFAULT_TRACKS[1].id;
+    const slotId = addSlot(trackId);
+    const id = createAddition(trackId);
+
+    useExperimentStore.getState().setSlotBinding(id, "out", slotId);
+
+    const block = useExperimentStore
+      .getState()
+      .blocks.find((candidate) => candidate.id === id)!;
+    expect(block.slotBindings).toEqual({ out: slotId });
+  });
+
+  it("rejects an output binding to another track's local slot", () => {
+    const foreignSlot = addSlot(DEFAULT_TRACKS[0].id);
+    const id = createAddition(DEFAULT_TRACKS[1].id);
+
+    useExperimentStore.getState().setSlotBinding(id, "out", foreignSlot);
+
+    const block = useExperimentStore
+      .getState()
+      .blocks.find((candidate) => candidate.id === id)!;
+    expect(block.slotBindings).toBeUndefined();
   });
 });
