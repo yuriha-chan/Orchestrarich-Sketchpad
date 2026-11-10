@@ -8,8 +8,9 @@ removes the initialization, leaving the slot available to be initialized again.
 Removing a slot does not remove bindings to it, so those bindings remain invalid
 until repaired.
 
-Grouped slot rows are half-height. The initialized cell shows its value without
-duplicating the time and value label.
+Grouped slot rows are half-height. Cells are separated by a horizontal gap, with
+a leading gap before the first column. An initialization is shown as a value
+badge in the gap at its time boundary.
 
 Rectangle X, Y, width, and height accept either an immediate number or a slot
 reference. A slot expression supplies a number to the property; it does not have

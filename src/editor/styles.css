@@ -18,7 +18,8 @@ body {
 }
 
 .app {
-  --cell-width: 64px;
+  --cell-width: 128px;
+  --cell-gap: 32px;
   --track-height: 48px;
   --ruler-height: 24px;
   max-width: 1200px;
@@ -465,7 +466,7 @@ body {
   align-items: center;
   justify-content: center;
   width: var(--cell-width);
-  border-right: 1px solid #e2e8f0;
+  padding-left: var(--cell-gap);
   font-size: 11px;
   color: #64748b;
 }
@@ -483,13 +484,13 @@ body {
   display: flex;
   height: var(--slot-height);
   border-bottom: 1px solid #e2e8f0;
-  background-color: #f8fafc;
+  background-color: #eef2f7;
   background-image: linear-gradient(
     to right,
     transparent 0,
-    transparent calc(var(--cell-width) - 1px),
-    #e2e8f0 calc(var(--cell-width) - 1px),
-    #e2e8f0 var(--cell-width)
+    transparent var(--cell-gap),
+    #f8fafc var(--cell-gap),
+    #f8fafc var(--cell-width)
   );
   background-size: var(--cell-width) 100%;
 }
@@ -499,11 +500,12 @@ body {
 }
 
 .slot-cell {
+  position: relative;
   flex: 0 0 var(--cell-width);
   width: var(--cell-width);
   height: 100%;
   border: 0;
-  padding: 0 4px;
+  padding: 0;
   background: transparent;
   color: #475569;
   font: inherit;
@@ -520,20 +522,19 @@ body {
   color: #cbd5e1;
 }
 
-.slot-cell.is-initialized {
-  color: #1d4ed8;
-}
-
 .slot-cell-value {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
+  position: absolute;
+  top: 50%;
+  left: calc(var(--cell-gap) / 2);
+  transform: translate(-50%, -50%);
   border-radius: 999px;
-  padding: 2px 6px;
+  padding: 2px 3px;
   background: #dbeafe;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
+  line-height: 1;
+  color: #1d4ed8;
+  white-space: nowrap;
 }
 
 .slot-editor {
@@ -606,12 +607,13 @@ body {
 .track-row {
   height: var(--track-height);
   border-bottom: 1px solid #e2e8f0;
+  background-color: #eef2f7;
   background-image: linear-gradient(
     to right,
     transparent 0,
-    transparent calc(var(--cell-width) - 1px),
-    #e2e8f0 calc(var(--cell-width) - 1px),
-    #e2e8f0 var(--cell-width)
+    transparent var(--cell-gap),
+    #ffffff var(--cell-gap),
+    #ffffff var(--cell-width)
   );
   background-size: var(--cell-width) 100%;
   cursor: crosshair;

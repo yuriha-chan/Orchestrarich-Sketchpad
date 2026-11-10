@@ -54,7 +54,8 @@ import type {
   TimelineSnapshot,
 } from "../core/execution/timeline-runner.ts";
 
-const CELL_WIDTH = 64;
+const CELL_WIDTH = 128;
+const CELL_GAP = 32;
 const TRACK_HEIGHT = 48;
 const SLOT_HEIGHT = 24;
 const INITIAL_COLUMNS = 16;
@@ -114,6 +115,7 @@ type RectField = "x" | "y" | "w" | "h";
 
 const gridVariables = {
   "--cell-width": `${CELL_WIDTH}px`,
+  "--cell-gap": `${CELL_GAP}px`,
   "--track-height": `${TRACK_HEIGHT}px`,
   "--slot-height": `${SLOT_HEIGHT}px`,
 } as CSSProperties;
@@ -701,7 +703,7 @@ export function App() {
                         <div
                           className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
                           style={{
-                            left: previewStart * CELL_WIDTH + 3,
+                            left: previewStart * CELL_WIDTH + CELL_GAP + 3,
                             top:
                               rowTop(
                                 rows,
@@ -709,7 +711,7 @@ export function App() {
                                 TRACK_HEIGHT,
                                 SLOT_HEIGHT,
                               ) + 3,
-                            width: previewLength * CELL_WIDTH - 6,
+                            width: previewLength * CELL_WIDTH - CELL_GAP - 6,
                             height: TRACK_HEIGHT - 6,
                           }}
                         >
@@ -721,9 +723,10 @@ export function App() {
                       <div
                         className="time-cursor"
                         style={{
-                          left: barrierSpan.start * CELL_WIDTH,
+                          left: barrierSpan.start * CELL_WIDTH + CELL_GAP,
                           width:
-                            (barrierSpan.end - barrierSpan.start) * CELL_WIDTH,
+                            (barrierSpan.end - barrierSpan.start) * CELL_WIDTH -
+                            CELL_GAP,
                         }}
                         aria-hidden="true"
                       />
@@ -1282,7 +1285,7 @@ function SlotRow({
             left: Math.max(
               2,
               Math.min(
-                editing * CELL_WIDTH + 2,
+                editing * CELL_WIDTH + CELL_GAP + 2,
                 columnCount * CELL_WIDTH - SLOT_EDITOR_WIDTH - 2,
               ),
             ),
@@ -1664,9 +1667,9 @@ function BlockView({
     <div
       className={className}
       style={{
-        left: block.start * CELL_WIDTH + 3,
+        left: block.start * CELL_WIDTH + CELL_GAP + 3,
         top: rowTop(rows, trackIndex, TRACK_HEIGHT, SLOT_HEIGHT) + 3,
-        width: block.length * CELL_WIDTH - 6,
+        width: block.length * CELL_WIDTH - CELL_GAP - 6,
         height: TRACK_HEIGHT - 6,
       }}
       title={title}
@@ -1736,7 +1739,7 @@ function FadeSurface({ className, cells, length, inward }: {
   inward: boolean;
 }) {
   const maskImage = useMemo(() => {
-    const width = (length * CELL_WIDTH - 6) * cells / length;
+    const width = (length * CELL_WIDTH - CELL_GAP - 6) * cells / length;
     const svg = generateDotGradientSVG(Math.ceil(width / 6) * 6, TRACK_HEIGHT - 6, 6,
       inward ? 0.25 : 4.5, inward ? 4.5 : 0.25);
     return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
