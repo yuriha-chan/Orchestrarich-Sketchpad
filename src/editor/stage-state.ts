@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { RectUnit } from "./model";
+import type { RectUnit, Vec3 } from "./model";
 
 export interface DialogueView {
   readonly kind: "dialogue";
@@ -32,6 +32,7 @@ export interface RectangleView {
   readonly w: number;
   readonly h: number;
   readonly unit: RectUnit;
+  readonly color: Vec3;
 }
 
 export type StageItem = DialogueView | AnimationView | RectangleView;

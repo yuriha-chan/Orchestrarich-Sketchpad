@@ -7,6 +7,7 @@ import type {
   RectUnit,
   Track,
   TrackColor,
+  Vec3,
 } from "./model";
 import {
   canPlace,
@@ -17,6 +18,7 @@ import {
   DEFAULT_GRID_COLUMNS,
   DEFAULT_GRID_ROWS,
   DEFAULT_RECT_GEOMETRY,
+  DEFAULT_RECT_COLOR,
   DEFAULT_TRACKS,
   isMediaKind,
   isMediaPlacement,
@@ -71,6 +73,7 @@ interface ExperimentState {
   setSyncBeatsToCellSpan: (id: string, value: boolean) => void;
   setRectValue: (id: string, field: "x" | "y" | "w" | "h", value: number) => void;
   setRectUnit: (id: string, unit: RectUnit, span: number) => void;
+  setRectColor: (id: string, color: Vec3) => void;
   setAdditionInput: (id: string, field: "a" | "b", value: number) => void;
   addSlot: (trackId: string | null) => void;
   renameSlot: (id: string, name: string) => void;
@@ -139,6 +142,10 @@ function applySpan(
 
 function clampGridSize(value: number): number {
   return Math.min(MAX_GRID_SIZE, Math.max(MIN_GRID_SIZE, Math.round(value)));
+}
+
+function clampColorChannel(value: number): number {
+  return Math.min(255, Math.max(0, Math.round(value)));
 }
 
 let nextId = 1;
@@ -287,6 +294,7 @@ export const useExperimentStore = create<ExperimentState>()(
                     durationUnit: "beats",
                     syncBeatsToCellSpan: false,
                     ...DEFAULT_RECT_GEOMETRY,
+                    color: DEFAULT_RECT_COLOR,
                   }
                 : kind === "addition"
                   ? {
@@ -490,6 +498,19 @@ export const useExperimentStore = create<ExperimentState>()(
           block.w = converted.w;
           block.h = converted.h;
           block.rectUnit = unit;
+        });
+      }),
+    setRectColor: (id, color) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (!isRectanglePlacement(block) || !color.every(Number.isFinite)) {
+            return;
+          }
+          block.color = [
+            clampColorChannel(color[0]),
+            clampColorChannel(color[1]),
+            clampColorChannel(color[2]),
+          ];
         });
       }),
     addSlot: (trackId) =>

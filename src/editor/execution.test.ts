@@ -10,8 +10,9 @@ import type {
   Placement,
   RectUnit,
   Track,
+  Vec3,
 } from "./model";
-import { DEFAULT_TRACKS } from "./model";
+import { DEFAULT_RECT_COLOR, DEFAULT_TRACKS } from "./model";
 import {
   createStageStore,
   type DialogueView,
@@ -31,6 +32,7 @@ type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
   w?: number;
   h?: number;
   rectUnit?: RectUnit;
+  color?: Vec3;
   inputA?: number;
   inputB?: number;
   slotBindings?: Partial<Record<string, string>>;
@@ -49,6 +51,7 @@ function placement(overrides: PlacementOverrides = {}): Placement {
     w,
     h,
     rectUnit,
+    color,
     inputA,
     inputB,
     slotBindings,
@@ -90,6 +93,7 @@ function placement(overrides: PlacementOverrides = {}): Placement {
       w: w ?? 1,
       h: h ?? 1,
       rectUnit: rectUnit ?? "span",
+      color: color ?? DEFAULT_RECT_COLOR,
     };
   }
   if (kind === "addition") {
@@ -314,6 +318,19 @@ describe("TimelineSession", () => {
     expect(run.stage.getState().items).toEqual([]);
   });
 
+  it("passes the rectangle color to its stage view", () => {
+    const run = setup([
+      placement({ id: "rect", kind: "rectangle", color: [12, 34, 56] }),
+    ]);
+
+    run.session.start();
+
+    expect(rectangleItem(run, "rect")).toMatchObject({
+      kind: "rectangle",
+      color: [12, 34, 56],
+    });
+  });
+
   it("keeps a rectangle on the stage until its block terminates", async () => {
     const run = setup([
       placement({ id: "gate", kind: "dialogue" }),
@@ -337,7 +354,7 @@ describe("TimelineSession", () => {
     expect(
       run.stage.getState().items.filter((item) => item.kind === "rectangle"),
     ).toEqual([
-      { kind: "rectangle", id: rectangle.id, x: 3, y: 2, w: 1, h: 1, unit: "span" },
+      { kind: "rectangle", id: rectangle.id, x: 3, y: 2, w: 1, h: 1, unit: "span", color: DEFAULT_RECT_COLOR },
     ]);
 
     await vi.advanceTimersByTimeAsync(500);

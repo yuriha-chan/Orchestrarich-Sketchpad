@@ -194,6 +194,7 @@ export class RectangleExecution extends TimedExecution {
       w: bindings?.w === undefined ? placement.w : context.readNumericSlot(bindings.w),
       h: bindings?.h === undefined ? placement.h : context.readNumericSlot(bindings.h),
       unit: placement.rectUnit,
+      color: placement.color,
     });
   }
 

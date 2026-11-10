@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { validateNumericSlotReads } from "../core/slots/numeric-slots";
 import { slotReads } from "./execution";
-import { DEFAULT_TRACKS, TRACK_COLORS, type RectanglePlacement } from "./model";
+import { DEFAULT_RECT_COLOR, DEFAULT_TRACKS, TRACK_COLORS, type RectanglePlacement } from "./model";
 import { useExperimentStore } from "./store";
 
 function resetStore(): void {
@@ -599,6 +599,50 @@ describe("track removal", () => {
     useExperimentStore.getState().removeTrack(DEFAULT_TRACKS[1].id);
 
     expect(useExperimentStore.getState().selectedId).toBe(rectangleId);
+  });
+});
+
+describe("rectangle color", () => {
+  it("creates rectangles with the default rgb color", () => {
+    const rectangleId = createRectangle();
+
+    expect(rectangle(rectangleId).color).toEqual(DEFAULT_RECT_COLOR);
+  });
+
+  it("stores an rgb color", () => {
+    const rectangleId = createRectangle();
+
+    useExperimentStore.getState().setRectColor(rectangleId, [12, 34, 56]);
+
+    expect(rectangle(rectangleId).color).toEqual([12, 34, 56]);
+  });
+
+  it("clamps each channel into 0-255 and rounds it", () => {
+    const rectangleId = createRectangle();
+
+    useExperimentStore.getState().setRectColor(rectangleId, [300, -5, 12.6]);
+
+    expect(rectangle(rectangleId).color).toEqual([255, 0, 13]);
+  });
+
+  it("rejects a color with a non-finite channel", () => {
+    const rectangleId = createRectangle();
+
+    useExperimentStore
+      .getState()
+      .setRectColor(rectangleId, [Number.NaN, 10, 20]);
+
+    expect(rectangle(rectangleId).color).toEqual(DEFAULT_RECT_COLOR);
+  });
+
+  it("ignores blocks that are not rectangles", () => {
+    useExperimentStore.getState().create(DEFAULT_TRACKS[0].id, "camera", 3, 1);
+    const cameraId = useExperimentStore.getState().blocks[0].id;
+    const before = useExperimentStore.getState().blocks;
+
+    useExperimentStore.getState().setRectColor(cameraId, [1, 2, 3]);
+
+    expect(useExperimentStore.getState().blocks).toEqual(before);
   });
 });
 

@@ -46,6 +46,7 @@ import type {
   BlockKind,
   Placement,
   Track,
+  Vec3,
 } from "./model";
 import {
   BLOCK_KINDS,
@@ -248,6 +249,7 @@ export function App() {
     (state) => state.setSyncBeatsToCellSpan,
   );
   const setRectValue = useExperimentStore((state) => state.setRectValue);
+  const setRectColor = useExperimentStore((state) => state.setRectColor);
   const setAdditionInput = useExperimentStore(
     (state) => state.setAdditionInput,
   );
@@ -1397,6 +1399,39 @@ export function App() {
                               <Monitor size={12} aria-hidden="true" />
                               Pixels
                             </button>
+                          </div>
+                        </div>
+                        <div className="inspector-field">
+                          <span>Color</span>
+                          <div className="rect-color">
+                            <span
+                              className="rect-color-swatch"
+                              style={{
+                                background: `rgb(${selectedRect.color[0]}, ${selectedRect.color[1]}, ${selectedRect.color[2]})`,
+                              }}
+                              aria-hidden="true"
+                            />
+                            <div className="rect-color-fields">
+                              {(["R", "G", "B"] as const).map((label, index) => (
+                                <label key={label} className="inspector-field">
+                                  <span>{label}</span>
+                                  <PropertyNumber
+                                    key={`color-${selectedRect.id}-${index}`}
+                                    value={selectedRect.color[index]}
+                                    min={0}
+                                    max={255}
+                                    step={1}
+                                    ariaLabel={`Rectangle ${label}`}
+                                    disabled={!editable}
+                                    onCommit={(value) => {
+                                      const next: Vec3 = [...selectedRect.color];
+                                      next[index] = value;
+                                      setRectColor(selectedRect.id, next);
+                                    }}
+                                  />
+                                </label>
+                              ))}
+                            </div>
                           </div>
                         </div>
                         <p className="inspector-note">

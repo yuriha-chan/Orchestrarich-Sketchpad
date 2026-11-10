@@ -14,6 +14,7 @@ import {
   clampFadesToLength,
   convertDuration,
   convertPlacementKind,
+  DEFAULT_RECT_COLOR,
   DEFAULT_TRACKS,
   intervalsOverlap,
   mediaPhases,
@@ -98,6 +99,7 @@ function rectangle(overrides: Partial<RectanglePlacement> = {}): RectanglePlacem
     w: 1,
     h: 1,
     rectUnit: "span",
+    color: DEFAULT_RECT_COLOR,
     ...overrides,
   };
 }
@@ -290,6 +292,7 @@ describe("convertPlacementKind", () => {
       w: 1,
       h: 1,
       rectUnit: "span",
+      color: DEFAULT_RECT_COLOR,
     });
   });
 
@@ -315,6 +318,7 @@ describe("convertPlacementKind", () => {
     expect(converted.kind).toBe("camera");
     expect("x" in converted).toBe(false);
     expect("rectUnit" in converted).toBe(false);
+    expect("color" in converted).toBe(false);
   });
   it("drops slot bindings the new kind does not expose", () => {
     const converted = convertPlacementKind(

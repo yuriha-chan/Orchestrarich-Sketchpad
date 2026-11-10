@@ -72,6 +72,7 @@ export function Stage({
                   top: pixels.top,
                   width: pixels.width,
                   height: pixels.height,
+                  background: `rgb(${view.color[0]}, ${view.color[1]}, ${view.color[2]})`,
                 }}
               />
             );

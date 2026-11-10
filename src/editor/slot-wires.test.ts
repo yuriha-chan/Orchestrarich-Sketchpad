@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { NumericSlot } from "../core/slots/numeric-slots";
 import {
+  DEFAULT_RECT_COLOR,
   DEFAULT_RECT_GEOMETRY,
   type AdditionPlacement,
   type Placement,
@@ -48,6 +49,7 @@ function rectangle(
     durationUnit: "beats",
     syncBeatsToCellSpan: false,
     ...DEFAULT_RECT_GEOMETRY,
+    color: DEFAULT_RECT_COLOR,
     ...overrides,
   };
 }

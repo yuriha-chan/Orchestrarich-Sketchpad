@@ -66,6 +66,10 @@ export interface MediaPlacement extends DurationPlacementBase {
 
 export type RectUnit = "span" | "pixels";
 
+export type Vec3 = [number, number, number];
+
+export const DEFAULT_RECT_COLOR: Vec3 = [219, 39, 119];
+
 export interface RectGeometry {
   x: number;
   y: number;
@@ -84,6 +88,7 @@ export const DEFAULT_RECT_GEOMETRY: RectGeometry = {
 
 export interface RectanglePlacement extends DurationPlacementBase, RectGeometry {
   kind: "rectangle";
+  color: Vec3;
 }
 
 export interface AdditionPlacement extends PlacementBase {
@@ -312,8 +317,9 @@ export function convertPlacementKind(
           w: placement.w,
           h: placement.h,
           rectUnit: placement.rectUnit,
+          color: placement.color,
         }
-      : { ...DEFAULT_RECT_GEOMETRY };
+      : { ...DEFAULT_RECT_GEOMETRY, color: DEFAULT_RECT_COLOR };
     return { ...base, kind, ...durationFields, ...geometry };
   }
   const fades = isMediaPlacement(placement)

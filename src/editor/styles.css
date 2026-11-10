@@ -260,6 +260,34 @@ body {
   min-width: 0;
 }
 
+.rect-color {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.rect-color-swatch {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border: 1px solid rgb(15 23 42 / 0.15);
+  border-radius: 6px;
+  margin-bottom: 1px;
+}
+
+.rect-color-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.rect-color-fields .inspector-number {
+  width: 100%;
+  min-width: 0;
+}
+
 .duration-control .inspector-number {
   flex: 1 1 auto;
   min-width: 0;
@@ -1163,7 +1191,6 @@ body {
 
 .stage-rect {
   position: absolute;
-  background: #db2777;
   opacity: 0.85;
 }
 

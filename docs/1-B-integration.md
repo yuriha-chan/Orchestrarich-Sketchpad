@@ -33,7 +33,8 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   - A wait block only occupies logical time; it has no stage effect.
   - A rectangle block draws a filled rectangle on the stage screen for the
     block's duration. It is added at execution start and removed when the
-    block is finalized. Its geometry is document data in span or pixel units.
+    block is finalized. Its geometry is document data in span or pixel units,
+    and its fill color is an RGB vec3 edited numerically in the inspector.
   - A skip request shortens a timed block to a 150 ms fade before completion.
   - Dialogue blocks have no skip handler and therefore ignore skip requests.
   - A media block (sound or animation) is a container with fade-in and fade-out
@@ -91,7 +92,8 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 - A rectangle block draws its rectangle on the stage screen while it executes
   and removes it at finalization. Span units follow the current grid cell size;
   pixel units stay fixed when the stage is resized. Changing the unit converts
-  the stored geometry at the current span.
+  the stored geometry at the current span. The fill color is RGB with channels
+  from 0 to 255.
 - A non-16:9 stage area centers the configured grid and letterboxes the excess
   space instead of stretching the cells.
 - `barrierSpan(t)` splits logical time at the distinct block end times. For
@@ -363,10 +365,17 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     horizontal rails; blocks paint above wires, and endpoint dots paint above
     blocks, so a crossing rail or dot never covers the vertical wire.
 
-35. Duplicating a block keeps its kind, duration, geometry, and slot bindings.
+35. Duplicating a block keeps its kind, duration, geometry, color, and slot
+    bindings.
     The copy is placed on the same track at the next free space at or after the
     source's end, scanning forward past occupied spans, and becomes the selected
     block. There is no separate "paste at pointer" placement for duplicates yet.
+
+36. A rectangle stores an RGB fill color as a vec3 document property. Channels
+    are integers from 0 to 255; the inspector edits R, G, and B numerically and
+    shows a swatch. The color is not slot-capable in this increment, because
+    slots currently carry scalar numbers. The stage applies the color when the
+    rectangle is drawn; the timeline block keeps its kind color.
 
 ## Carry-Over
 
@@ -388,7 +397,7 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   container's cooperative skip.
 - Whether runtime fades need easing or a media-specific curve; the editor's
   dot mask is a phase indicator, not the playback interpolation contract.
-- Whether rectangles need fill/stroke/color properties, z-ordering, and a
-  direct stage drag gesture; only numeric geometry is exposed now.
+- Whether rectangles need stroke properties, z-ordering, and a direct stage
+  drag gesture; numeric geometry and an RGB fill color are exposed now.
 - Whether the stage grid should offer presets or separate the screen resolution
   from the grid cell count.
