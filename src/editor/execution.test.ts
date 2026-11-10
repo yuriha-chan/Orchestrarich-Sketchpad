@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimelineSnapshot } from "../core/execution/timeline-runner.ts";
+import type { NumericSlot } from "../core/slots/numeric-slots.ts";
 import { TimelineSession, SKIP_FADE_MS, toTimelineDefinition, type ExecutionInstance } from "./execution";
 import { compilePlacement, definitionBlocks, isMultiPhase, type ExecutionDefinition } from "./execution-definition";
 import type {
@@ -25,6 +26,7 @@ type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
   w?: number;
   h?: number;
   rectUnit?: RectUnit;
+  slotBindings?: Partial<Record<"x" | "y" | "w" | "h", string>>;
 };
 
 function placement(overrides: PlacementOverrides = {}): Placement {
@@ -40,6 +42,7 @@ function placement(overrides: PlacementOverrides = {}): Placement {
     w,
     h,
     rectUnit,
+    slotBindings,
     ...rest
   } = overrides;
   const base = {
@@ -77,18 +80,33 @@ function placement(overrides: PlacementOverrides = {}): Placement {
       w: w ?? 1,
       h: h ?? 1,
       rectUnit: rectUnit ?? "span",
+      ...(slotBindings === undefined ? {} : { slotBindings }),
     };
   }
   return { ...base, kind, ...durationFields };
 }
 
-function setup(placements: Placement[], bpm = 120, stage = createStageStore()) {
+function numericSlot(
+  id: string,
+  trackId: string | null,
+  initialization: { time: number; value: number } | null,
+): NumericSlot {
+  return { id, trackId, initialization };
+}
+
+function setup(
+  placements: Placement[],
+  bpm = 120,
+  stage = createStageStore(),
+  slots: readonly NumericSlot[] = [],
+) {
   const activities: string[] = [];
   const finalized: string[] = [];
   const startedInstances: ExecutionInstance[] = [];
   const finalizedInstances: ExecutionInstance[] = [];
   let snapshot: TimelineSnapshot | null = null;
   const session = new TimelineSession(DEFAULT_TRACKS, placements, bpm, stage.getState(), {
+    slots,
     onSnapshot: (value) => {
       snapshot = value;
     },
@@ -121,6 +139,15 @@ function setup(placements: Placement[], bpm = 120, stage = createStageStore()) {
     blockState: (id: string) =>
       snapshot?.blocks.find((block) => block.id === id)?.state,
   };
+}
+
+function rectangleItem(run: ReturnType<typeof setup>, placementId: string) {
+  const instance = run.startedInstances.find(
+    (started) => started.definition.placement.id === placementId,
+  )!;
+  return run.stage.getState().items.find(
+    (item) => item.kind === "rectangle" && item.id === instance.id,
+  );
 }
 
 describe("toTimelineDefinition", () => {
@@ -681,5 +708,256 @@ describe("TimelineSession", () => {
     expect(run.blockState("clip~2")).toBe("completed");
     expect(run.finalized).toEqual(["clip"]);
     expect(run.snapshot()?.phase).toBe("finished");
+  });
+
+  it("reads a slot initialized at the same logical time before the rectangle starts", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 0,
+          slotBindings: { x: "same-time" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("same-time", DEFAULT_TRACKS[1].id, { time: 0, value: 4 })],
+    );
+
+    run.session.start();
+
+    expect(rectangleItem(run, "rect")).toMatchObject({
+      x: 4,
+      y: 0,
+      w: 1,
+      h: 1,
+      unit: "span",
+    });
+  });
+
+  it("reads a slot initialized in an earlier empty column", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 3,
+          slotBindings: { h: "earlier" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("earlier", DEFAULT_TRACKS[1].id, { time: 1, value: 7 })],
+    );
+
+    run.session.start();
+
+    expect(run.snapshot()?.time).toBe(3);
+    expect(rectangleItem(run, "rect")).toMatchObject({
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 7,
+      unit: "span",
+    });
+  });
+
+  it("uses immediate numbers for fields without a slot binding", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          x: 9,
+          y: 3,
+          w: 2,
+          h: 5,
+          slotBindings: { x: "x-slot" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("x-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 1 })],
+    );
+
+    run.session.start();
+
+    expect(rectangleItem(run, "rect")).toMatchObject({
+      x: 1,
+      y: 3,
+      w: 2,
+      h: 5,
+      unit: "span",
+    });
+  });
+
+  it("binds all four rectangle properties to slots", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          slotBindings: { x: "x-slot", y: "y-slot", w: "w-slot", h: "h-slot" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        numericSlot("x-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 1 }),
+        numericSlot("y-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 2 }),
+        numericSlot("w-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 3 }),
+        numericSlot("h-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 4 }),
+      ],
+    );
+
+    run.session.start();
+
+    expect(rectangleItem(run, "rect")).toMatchObject({
+      x: 1,
+      y: 2,
+      w: 3,
+      h: 4,
+      unit: "span",
+    });
+  });
+
+  it("reads one slot through multiple rectangle properties", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          x: 1,
+          y: 2,
+          slotBindings: { w: "size", h: "size" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("size", DEFAULT_TRACKS[1].id, { time: 0, value: 6 })],
+    );
+
+    run.session.start();
+
+    expect(rectangleItem(run, "rect")).toMatchObject({
+      x: 1,
+      y: 2,
+      w: 6,
+      h: 6,
+      unit: "span",
+    });
+  });
+
+  it("reads a shared slot from multiple blocks on different tracks", () => {
+    const run = setup(
+      [
+        placement({
+          id: "dialogue-rect",
+          trackId: DEFAULT_TRACKS[0].id,
+          kind: "rectangle",
+          start: 0,
+          slotBindings: { x: "shared" },
+        }),
+        placement({
+          id: "camera-rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 0,
+          slotBindings: { x: "shared" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("shared", null, { time: 0, value: 8 })],
+    );
+
+    run.session.start();
+
+    expect(rectangleItem(run, "dialogue-rect")).toMatchObject({ x: 8 });
+    expect(rectangleItem(run, "camera-rect")).toMatchObject({ x: 8 });
+  });
+
+  it("rejects start for a nonexistent slot without producing stage output", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          slotBindings: { x: "missing" },
+        }),
+      ],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("rejects start for an uninitialized slot without producing stage output", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          slotBindings: { x: "empty" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("empty", DEFAULT_TRACKS[1].id, null)],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("rejects start for a later-initialized slot without producing stage output", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 0,
+          slotBindings: { x: "late" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("late", DEFAULT_TRACKS[1].id, { time: 2, value: 5 })],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("rejects start for a local slot read from another track without producing stage output", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          slotBindings: { x: "other-track" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("other-track", DEFAULT_TRACKS[2].id, { time: 0, value: 3 })],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
   });
 });

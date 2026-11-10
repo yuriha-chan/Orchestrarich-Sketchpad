@@ -31,6 +31,7 @@ function flush(): Promise<void> {
 }
 
 interface RunnerConfig {
+  readonly onTimeStart?: (time: number) => void;
   readonly onStart?: (block: BlockSnapshot) => void;
   readonly onSkip?: (
     block: BlockSnapshot,
@@ -63,6 +64,7 @@ function createRunner(
   };
 
   const runner = new TimelineRunner(definition, {
+    onTimeStart: config.onTimeStart,
     onBlockStart: (block) => {
       config.onStart?.(block);
       const execution = deferred();
@@ -284,6 +286,161 @@ describe("TimelineRunner column barrier", () => {
 
     expect(runner.phase).toBe("finished");
     expect(runner.time).toBe(0);
+  });
+});
+
+describe("TimelineRunner time boundary", () => {
+  it("notifies each time boundary before the blocks at that time", async () => {
+    const events: Array<["time", number] | ["block", string]> = [];
+    const { runner, resolve } = createRunner(createTimeline(), {
+      onTimeStart: (time) => events.push(["time", time]),
+      onStart: (block) => events.push(["block", block.id]),
+    });
+
+    runner.start();
+
+    expect(events).toEqual([
+      ["time", 0],
+      ["block", "click-wait"],
+      ["block", "animation"],
+      ["block", "sfx"],
+    ]);
+
+    resolve("animation");
+    resolve("sfx");
+    await flush();
+
+    expect(events).toEqual([
+      ["time", 0],
+      ["block", "click-wait"],
+      ["block", "animation"],
+      ["block", "sfx"],
+    ]);
+
+    resolve("click-wait");
+    await flush();
+
+    expect(events).toEqual([
+      ["time", 0],
+      ["block", "click-wait"],
+      ["block", "animation"],
+      ["block", "sfx"],
+      ["time", 1],
+      ["block", "next-line"],
+    ]);
+
+    resolve("next-line");
+    await flush();
+
+    expect(events).toEqual([
+      ["time", 0],
+      ["block", "click-wait"],
+      ["block", "animation"],
+      ["block", "sfx"],
+      ["time", 1],
+      ["block", "next-line"],
+    ]);
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(2);
+  });
+
+  it("observes empty intermediate times between blocks", async () => {
+    const events: Array<["time", number] | ["block", string]> = [];
+    const { runner, resolve } = createRunner(
+      {
+        tracks: [
+          {
+            id: "a",
+            blocks: [
+              { id: "first", start: 0, length: 1 },
+              { id: "second", start: 2, length: 1 },
+            ],
+          },
+        ],
+      },
+      {
+        onTimeStart: (time) => events.push(["time", time]),
+        onStart: (block) => events.push(["block", block.id]),
+      },
+    );
+
+    runner.start();
+
+    expect(events).toEqual([
+      ["time", 0],
+      ["block", "first"],
+    ]);
+
+    resolve("first");
+    await flush();
+
+    expect(events).toEqual([
+      ["time", 0],
+      ["block", "first"],
+      ["time", 1],
+      ["time", 2],
+      ["block", "second"],
+    ]);
+
+    resolve("second");
+    await flush();
+
+    expect(events).toEqual([
+      ["time", 0],
+      ["block", "first"],
+      ["time", 1],
+      ["time", 2],
+      ["block", "second"],
+    ]);
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(3);
+  });
+
+  it("does not re-fire a time boundary when the pump revisits a time", async () => {
+    const times: number[] = [];
+    const { runner, resolve } = createRunner(createTimeline(), {
+      onTimeStart: (time) => times.push(time),
+    });
+
+    runner.start();
+    expect(times).toEqual([0]);
+
+    resolve("animation");
+    await flush();
+    expect(times).toEqual([0]);
+
+    resolve("sfx");
+    await flush();
+    expect(times).toEqual([0]);
+
+    resolve("click-wait");
+    await flush();
+    expect(times).toEqual([0, 1]);
+
+    resolve("next-line");
+    await flush();
+    expect(times).toEqual([0, 1]);
+    expect(runner.phase).toBe("finished");
+  });
+
+  it("does not fire a time boundary at the horizon", async () => {
+    const times: number[] = [];
+    const { runner, resolve } = createRunner(
+      {
+        tracks: [{ id: "a", blocks: [{ id: "only", start: 0, length: 1 }] }],
+      },
+      { onTimeStart: (time) => times.push(time) },
+    );
+
+    runner.start();
+    expect(times).toEqual([0]);
+
+    resolve("only");
+    await flush();
+
+    expect(times).toEqual([0]);
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(1);
   });
 });
 

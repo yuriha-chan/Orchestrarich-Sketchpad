@@ -22,6 +22,7 @@ interface ExecutionContext {
   readonly stage: StageActions;
   readonly report: (message: string) => void;
   readonly time: () => number;
+  readonly readNumericSlot: (slotId: string) => number;
 }
 
 class DialogueExecution extends ExecutionInstance {
@@ -177,13 +178,14 @@ export class RectangleExecution extends TimedExecution {
     context: ExecutionContext,
   ) {
     super(definition, placement, context);
+    const bindings = placement.slotBindings;
     context.stage.add({
       kind: "rectangle",
       id: this.id,
-      x: placement.x,
-      y: placement.y,
-      w: placement.w,
-      h: placement.h,
+      x: bindings?.x === undefined ? placement.x : context.readNumericSlot(bindings.x),
+      y: bindings?.y === undefined ? placement.y : context.readNumericSlot(bindings.y),
+      w: bindings?.w === undefined ? placement.w : context.readNumericSlot(bindings.w),
+      h: bindings?.h === undefined ? placement.h : context.readNumericSlot(bindings.h),
       unit: placement.rectUnit,
     });
   }

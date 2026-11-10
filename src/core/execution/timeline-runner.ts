@@ -51,6 +51,7 @@ export interface BlockStartResult {
 }
 
 export interface TimelineRunnerOptions {
+  readonly onTimeStart?: (time: number) => void;
   readonly onBlockStart?: (
     block: BlockSnapshot,
   ) => BlockStartResult | undefined;
@@ -127,6 +128,7 @@ export class TimelineRunner {
   private currentTime = 0;
   private currentPhase: TimelinePhase = "idle";
   private pumping = false;
+  private lastTimeStart: number | undefined;
 
   constructor(
     definition: TimelineDefinition,
@@ -363,6 +365,14 @@ export class TimelineRunner {
     this.pumping = true;
     try {
       while (this.currentPhase === "running") {
+        if (
+          this.currentTime < this.horizon &&
+          this.lastTimeStart !== this.currentTime
+        ) {
+          this.lastTimeStart = this.currentTime;
+          this.options.onTimeStart?.(this.currentTime);
+        }
+
         const due = this.placements.filter(
           (placement) =>
             placement.start === this.currentTime &&

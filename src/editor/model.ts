@@ -63,6 +63,7 @@ export const DEFAULT_RECT_GEOMETRY: RectGeometry = {
 
 export interface RectanglePlacement extends DurationPlacementBase, RectGeometry {
   kind: "rectangle";
+  slotBindings?: Partial<Record<"x" | "y" | "w" | "h", string>>;
 }
 
 export type DurationPlacement = TimedPlacement | MediaPlacement | RectanglePlacement;

@@ -7,6 +7,11 @@ import {
   type TimelinePhase,
   type TimelineSnapshot,
 } from "../core/execution/timeline-runner.ts";
+import {
+  validateNumericSlotReads,
+  type NumericSlot,
+  type NumericSlotRead,
+} from "../core/slots/numeric-slots.ts";
 import type { Placement, Track } from "./model";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";
@@ -15,6 +20,7 @@ import { createExecution, type ExecutionInstance } from "./block-execution";
 export { SKIP_FADE_MS, type ExecutionInstance } from "./block-execution";
 
 export interface TimelineSessionOptions {
+  readonly slots?: readonly NumericSlot[];
   readonly onSnapshot?: (snapshot: TimelineSnapshot) => void;
   readonly onActivity?: (message: string) => void;
   readonly onExecutionStart?: (instance: ExecutionInstance) => void;
@@ -35,6 +41,24 @@ export function toTimelineDefinition(
   };
 }
 
+export function rectangleSlotReads(placements: readonly Placement[]): NumericSlotRead[] {
+  const reads: NumericSlotRead[] = [];
+  for (const placement of placements) {
+    if (placement.kind !== "rectangle") continue;
+    const bindings = placement.slotBindings;
+    if (bindings === undefined) continue;
+    for (const slotId of [bindings.x, bindings.y, bindings.w, bindings.h]) {
+      if (slotId === undefined) continue;
+      reads.push({
+        slotId,
+        trackId: placement.trackId,
+        time: placement.start,
+      });
+    }
+  }
+  return reads;
+}
+
 export class TimelineSession {
   private readonly runner: TimelineRunner;
   private readonly unsubscribe: () => void;
@@ -42,6 +66,8 @@ export class TimelineSession {
   private readonly activeExecutions = new Map<ExecutionDefinition, ExecutionInstance>();
   private readonly options: TimelineSessionOptions;
   private readonly bpm: number;
+  private readonly placements: readonly Placement[];
+  private readonly runtimeSlots = new Map<string, number>();
   private lastPhase: TimelinePhase = "idle";
 
   constructor(
@@ -53,6 +79,7 @@ export class TimelineSession {
   ) {
     this.options = options;
     this.bpm = bpm;
+    this.placements = placements;
     const definitions = placements.map(compilePlacement);
     const byBlock: Record<string, ExecutionDefinition> = {};
     for (const definition of definitions) {
@@ -71,6 +98,7 @@ export class TimelineSession {
         })),
       },
       {
+        onTimeStart: (time) => this.applyTimeStart(time),
         onBlockStart: (block) => this.startBlock(block),
         onBlockTerminate: (block) => this.terminateBlock(block),
       },
@@ -96,6 +124,16 @@ export class TimelineSession {
   }
 
   start(): void {
+    const invalidReads = validateNumericSlotReads(
+      this.options.slots ?? [],
+      rectangleSlotReads(this.placements),
+    );
+    if (invalidReads.length > 0) {
+      const details = invalidReads
+        .map((read) => `${read.slotId}@${read.time}`)
+        .join(", ");
+      throw new Error(`Invalid numeric slot reads: ${details}`);
+    }
     this.runner.start();
   }
 
@@ -111,13 +149,36 @@ export class TimelineSession {
     this.activeExecutions.clear();
   }
 
+  private applyTimeStart(time: number): void {
+    for (const slot of this.options.slots ?? []) {
+      const initialization = slot.initialization;
+      if (initialization !== null && initialization.time === time) {
+        this.runtimeSlots.set(slot.id, initialization.value);
+      }
+    }
+  }
+
+  private readRuntimeSlot(slotId: string): number {
+    const value = this.runtimeSlots.get(slotId);
+    if (value === undefined) {
+      throw new Error(`Numeric slot "${slotId}" has no runtime value`);
+    }
+    return value;
+  }
+
   private startBlock(block: BlockSnapshot): BlockStartResult {
     const definition = this.definitionByBlockId[block.id];
     const placement = definition.placement;
     if (block.start === placement.start) {
       const instance = createExecution(
         definition,
-        { bpm: this.bpm, stage: this.stage, report: (message) => this.report(message), time: () => this.runner.time },
+        {
+          bpm: this.bpm,
+          stage: this.stage,
+          report: (message) => this.report(message),
+          time: () => this.runner.time,
+          readNumericSlot: (slotId) => this.readRuntimeSlot(slotId),
+        },
       );
       this.activeExecutions.set(definition, instance);
       this.options.onExecutionStart?.(instance);

@@ -31,11 +31,23 @@ import { generateDotGradientSVG } from "./dot-gradient";
 import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
 import type { FadeBoundary } from "./fade-editing";
 import { useExperimentStore } from "./store";
-import { TimelineSession } from "./execution";
+import { TimelineSession, rectangleSlotReads } from "./execution";
 import { Stage } from "./Stage";
 import { createStageStore } from "./stage-state";
 import { compilePlacement, definitionBlocks } from "./execution-definition";
 import { WORKSPACES } from "./workspaces";
+import {
+  rowTop,
+  timelineRows,
+  trackAtY,
+  trackRowIndex,
+  type TimelineRow,
+} from "./timeline-rows";
+import {
+  validateNumericSlotReads,
+  type NumericSlot,
+  type NumericSlotRead,
+} from "../core/slots/numeric-slots";
 import type {
   BlockState,
   TimelinePhase,
@@ -44,8 +56,11 @@ import type {
 
 const CELL_WIDTH = 64;
 const TRACK_HEIGHT = 48;
+const SLOT_HEIGHT = 24;
 const INITIAL_COLUMNS = 16;
 const COLUMN_CHUNK = 16;
+const SLOT_EDITOR_WIDTH = 210;
+const SLOT_CONTROL_HEIGHT = 32;
 
 const PHASE_LABELS: Record<TimelinePhase, string> = {
   idle: "Not running",
@@ -95,9 +110,12 @@ interface RunState {
   readonly snapshot: TimelineSnapshot;
 }
 
+type RectField = "x" | "y" | "w" | "h";
+
 const gridVariables = {
   "--cell-width": `${CELL_WIDTH}px`,
   "--track-height": `${TRACK_HEIGHT}px`,
+  "--slot-height": `${SLOT_HEIGHT}px`,
 } as CSSProperties;
 
 export function App() {
@@ -105,7 +123,9 @@ export function App() {
   const stageItems = useStageStore((state) => state.items);
   const blocks = useExperimentStore((state) => state.blocks);
   const tracks = useExperimentStore((state) => state.tracks);
+  const slots = useExperimentStore((state) => state.slots);
   const addTrack = useExperimentStore((state) => state.addTrack);
+  const addSlot = useExperimentStore((state) => state.addSlot);
   const selectedKind = useExperimentStore((state) => state.selectedKind);
   const selectedId = useExperimentStore((state) => state.selectedId);
   const setKind = useExperimentStore((state) => state.setKind);
@@ -127,7 +147,6 @@ export function App() {
   const gridRows = useExperimentStore((state) => state.gridRows);
   const setGridColumns = useExperimentStore((state) => state.setGridColumns);
   const setGridRows = useExperimentStore((state) => state.setGridRows);
-  const setRectValue = useExperimentStore((state) => state.setRectValue);
   const setRectUnit = useExperimentStore((state) => state.setRectUnit);
   const setDuration = useExperimentStore((state) => state.setDuration);
   const setDurationUnit = useExperimentStore((state) => state.setDurationUnit);
@@ -254,8 +273,40 @@ export function App() {
   const rectMinSize = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
   const rectStep = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
 
+  const rows = useMemo(() => timelineRows(tracks, slots), [tracks, slots]);
+  const slotsById = useMemo(
+    () => Object.fromEntries(slots.map((slot) => [slot.id, slot])) as Record<string, NumericSlot>,
+    [slots],
+  );
+  const rowGroupStarts = useMemo(() => {
+    const keys = rows.map((row) => {
+      if (row.kind === "track") {
+        return `track:${row.trackId}`;
+      }
+      const trackId = slotsById[row.slotId]?.trackId ?? null;
+      return trackId === null ? "shared" : `track:${trackId}`;
+    });
+    return keys.map((key, index) => index > 0 && keys[index - 1] !== key);
+  }, [rows, slotsById]);
+  const slotNames = useMemo(() => {
+    const names = new Map<string, string>();
+    slots.forEach((slot, index) =>
+      names.set(slot.id, slotDisplayName(slot, index, tracks)),
+    );
+    return names;
+  }, [slots, tracks]);
+  const invalidSlotReads = useMemo(
+    () => validateNumericSlotReads(slots, rectangleSlotReads(blocks)),
+    [slots, blocks],
+  );
+  const slotValidationMessage = useMemo(
+    () => formatSlotValidation(invalidSlotReads, slots, tracks),
+    [invalidSlotReads, slots, tracks],
+  );
+
   const startRun = () => {
     const next = new TimelineSession(tracks, blocks, bpm, useStageStore.getState(), {
+      slots,
       onSnapshot: (snapshot) =>
         setRun((current) =>
           current === null ? null : { ...current, snapshot },
@@ -376,8 +427,8 @@ export function App() {
   const previewLength = creation
     ? Math.abs(creation.current - creation.anchor) + 1
     : 0;
-  const previewTrackIndex = creation
-    ? tracks.findIndex((track) => track.id === creation.trackId)
+  const previewRowIndex = creation
+    ? trackRowIndex(rows, creation.trackId)
     : -1;
   const previewValid =
     creation !== null &&
@@ -443,7 +494,11 @@ export function App() {
               type="button"
               className="run-button"
               onClick={startRun}
-              disabled={!editable || blocks.length === 0}
+              disabled={
+                !editable ||
+                blocks.length === 0 ||
+                invalidSlotReads.length > 0
+              }
             >
               Run
             </button>
@@ -517,16 +572,66 @@ export function App() {
 
       <p className="hint">{hint}</p>
 
+      {slotValidationMessage ? (
+        <p className="slot-validation" role="alert">
+          {slotValidationMessage}
+        </p>
+      ) : null}
+
       {isStaging ? (
         <div className="staging-area">
           <div className="table">
             <div className="track-labels">
               <div className="ruler-spacer" />
-              {tracks.map((track) => (
-                <div key={track.id} className="track-label" title={track.label}>
-                  {track.label}
-                </div>
-              ))}
+              {rows.map((row, rowIndex) => {
+                if (row.kind === "track") {
+                  const track = tracks.find(
+                    (candidate) => candidate.id === row.trackId,
+                  )!;
+                  return (
+                    <div
+                      key={`track-${row.trackId}`}
+                      className={`track-label${rowGroupStarts[rowIndex] ? " is-group-start" : ""}`}
+                      title={track.label}
+                    >
+                      <span className="track-label-text">{track.label}</span>
+                      <button
+                        type="button"
+                        className="slot-add"
+                        aria-label={`Add slot to ${track.label}`}
+                        disabled={!editable}
+                        onClick={() => addSlot(track.id)}
+                      >
+                        Add slot
+                      </button>
+                    </div>
+                  );
+                }
+                const slot = slotsById[row.slotId];
+                return (
+                  <SlotLabel
+                    key={`slot-${row.slotId}`}
+                    slot={slot}
+                    name={slotNames.get(slot.id) ?? slot.id}
+                    editable={editable}
+                    groupStart={rowGroupStarts[rowIndex]}
+                  />
+                );
+              })}
+              <div
+                className="shared-slot-add"
+                style={{ height: SLOT_CONTROL_HEIGHT }}
+              >
+                <button
+                  type="button"
+                  className="slot-add"
+                  aria-label="Add shared slot"
+                  disabled={!editable}
+                  onClick={() => addSlot(null)}
+                >
+                  Add shared slot
+                </button>
+              </div>
             </div>
             <div className="grid-scroll" onScroll={handleGridScroll}>
               <div
@@ -544,55 +649,91 @@ export function App() {
                   ))}
                 </div>
                 <div className="tracks-area" onContextMenu={handleGridContextMenu}>
-                  {tracks.map((track) => (
-                    <div
-                      key={track.id}
-                      className="track-row"
-                      onPointerDown={(event) => handleRowPointerDown(event, track.id)}
-                      onPointerMove={handleRowPointerMove}
-                      onPointerUp={finishCreation}
-                      onPointerCancel={cancelCreation}
-                    />
-                  ))}
-                  <div className="block-layer">
-                    {blocks.map((block) => (
-                      <BlockView
-                        key={block.id}
-                        block={block}
-                        tracks={tracks}
-                        columnCount={columnCount}
-                        selected={block.id === selectedId}
-                        editable={editable}
-                        state={runStateByPlacementId.get(block.id)}
-                        blocking={blockingPlacementIds.has(block.id)}
-                        onContextMenu={(event) => openBlockContextMenu(event, block)}
-                      />
-                    ))}
-                    {creation ? (
+                  <div
+                    className="rows-area"
+                    style={{
+                      height: rowTop(
+                        rows,
+                        rows.length,
+                        TRACK_HEIGHT,
+                        SLOT_HEIGHT,
+                      ),
+                    }}
+                  >
+                    {rows.map((row, rowIndex) =>
+                      row.kind === "track" ? (
+                        <div
+                          key={`track-${row.trackId}`}
+                          className={`track-row${rowGroupStarts[rowIndex] ? " is-group-start" : ""}`}
+                          onPointerDown={(event) =>
+                            handleRowPointerDown(event, row.trackId)
+                          }
+                          onPointerMove={handleRowPointerMove}
+                          onPointerUp={finishCreation}
+                          onPointerCancel={cancelCreation}
+                        />
+                      ) : (
+                        <SlotRow
+                          key={`slot-${row.slotId}`}
+                          slot={slotsById[row.slotId]}
+                          name={slotNames.get(row.slotId) ?? row.slotId}
+                          columnCount={columnCount}
+                          editable={editable}
+                          groupStart={rowGroupStarts[rowIndex]}
+                        />
+                      ),
+                    )}
+                    <div className="block-layer">
+                      {blocks.map((block) => (
+                        <BlockView
+                          key={block.id}
+                          block={block}
+                          rows={rows}
+                          columnCount={columnCount}
+                          selected={block.id === selectedId}
+                          editable={editable}
+                          state={runStateByPlacementId.get(block.id)}
+                          blocking={blockingPlacementIds.has(block.id)}
+                          onContextMenu={(event) => openBlockContextMenu(event, block)}
+                        />
+                      ))}
+                      {creation ? (
+                        <div
+                          className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
+                          style={{
+                            left: previewStart * CELL_WIDTH + 3,
+                            top:
+                              rowTop(
+                                rows,
+                                previewRowIndex,
+                                TRACK_HEIGHT,
+                                SLOT_HEIGHT,
+                              ) + 3,
+                            width: previewLength * CELL_WIDTH - 6,
+                            height: TRACK_HEIGHT - 6,
+                          }}
+                        >
+                          <span className="block-label">{BLOCK_LABELS[creation.kind]}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                    {barrierSpan ? (
                       <div
-                        className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
+                        className="time-cursor"
                         style={{
-                          left: previewStart * CELL_WIDTH + 3,
-                          top: previewTrackIndex * TRACK_HEIGHT + 3,
-                          width: previewLength * CELL_WIDTH - 6,
-                          height: TRACK_HEIGHT - 6,
+                          left: barrierSpan.start * CELL_WIDTH,
+                          width:
+                            (barrierSpan.end - barrierSpan.start) * CELL_WIDTH,
                         }}
-                      >
-                        <span className="block-label">{BLOCK_LABELS[creation.kind]}</span>
-                      </div>
+                        aria-hidden="true"
+                      />
                     ) : null}
                   </div>
-                  {barrierSpan ? (
-                    <div
-                      className="time-cursor"
-                      style={{
-                        left: barrierSpan.start * CELL_WIDTH,
-                        width:
-                          (barrierSpan.end - barrierSpan.start) * CELL_WIDTH,
-                      }}
-                      aria-hidden="true"
-                    />
-                  ) : null}
+                  <div
+                    className="shared-slot-add-spacer"
+                    style={{ height: SLOT_CONTROL_HEIGHT }}
+                    aria-hidden="true"
+                  />
                 </div>
               </div>
             </div>
@@ -703,66 +844,70 @@ export function App() {
                     {selectedRect ? (
                       <>
                         <div className="rect-fields">
-                          <label className="inspector-field">
-                            <span>X</span>
-                            <PropertyNumber
-                              key={`rect-x-${selectedRect.id}-${selectedRect.rectUnit}`}
-                              value={roundTo(selectedRect.x, 3)}
-                              min={0}
-                              max={rectMax}
-                              step={rectStep}
-                              ariaLabel="Rectangle x"
-                              disabled={!editable}
-                              onCommit={(value) =>
-                                setRectValue(selectedRect.id, "x", value)
-                              }
-                            />
-                          </label>
-                          <label className="inspector-field">
-                            <span>Y</span>
-                            <PropertyNumber
-                              key={`rect-y-${selectedRect.id}-${selectedRect.rectUnit}`}
-                              value={roundTo(selectedRect.y, 3)}
-                              min={0}
-                              max={rectMax}
-                              step={rectStep}
-                              ariaLabel="Rectangle y"
-                              disabled={!editable}
-                              onCommit={(value) =>
-                                setRectValue(selectedRect.id, "y", value)
-                              }
-                            />
-                          </label>
-                          <label className="inspector-field">
-                            <span>Width</span>
-                            <PropertyNumber
-                              key={`rect-w-${selectedRect.id}-${selectedRect.rectUnit}`}
-                              value={roundTo(selectedRect.w, 3)}
-                              min={rectMinSize}
-                              max={rectMax}
-                              step={rectStep}
-                              ariaLabel="Rectangle width"
-                              disabled={!editable}
-                              onCommit={(value) =>
-                                setRectValue(selectedRect.id, "w", value)
-                              }
-                            />
-                          </label>
-                          <label className="inspector-field">
-                            <span>Height</span>
-                            <PropertyNumber
-                              key={`rect-h-${selectedRect.id}-${selectedRect.rectUnit}`}
-                              value={roundTo(selectedRect.h, 3)}
-                              min={rectMinSize}
-                              max={rectMax}
-                              step={rectStep}
-                              ariaLabel="Rectangle height"
-                              disabled={!editable}
-                              onCommit={(value) =>
-                                setRectValue(selectedRect.id, "h", value)
-                              }
-                            />
-                          </label>
+                          <RectangleProperty
+                            placementId={selectedRect.id}
+                            field="x"
+                            label="X"
+                            value={selectedRect.x}
+                            min={0}
+                            max={rectMax}
+                            step={rectStep}
+                            rectUnit={selectedRect.rectUnit}
+                            boundSlotId={selectedRect.slotBindings?.x}
+                            trackId={selectedRect.trackId}
+                            slots={slots}
+                            tracks={tracks}
+                            editable={editable}
+                            ariaLabel="Rectangle x"
+                          />
+                          <RectangleProperty
+                            placementId={selectedRect.id}
+                            field="y"
+                            label="Y"
+                            value={selectedRect.y}
+                            min={0}
+                            max={rectMax}
+                            step={rectStep}
+                            rectUnit={selectedRect.rectUnit}
+                            boundSlotId={selectedRect.slotBindings?.y}
+                            trackId={selectedRect.trackId}
+                            slots={slots}
+                            tracks={tracks}
+                            editable={editable}
+                            ariaLabel="Rectangle y"
+                          />
+                          <RectangleProperty
+                            placementId={selectedRect.id}
+                            field="w"
+                            label="Width"
+                            value={selectedRect.w}
+                            min={rectMinSize}
+                            max={rectMax}
+                            step={rectStep}
+                            rectUnit={selectedRect.rectUnit}
+                            boundSlotId={selectedRect.slotBindings?.w}
+                            trackId={selectedRect.trackId}
+                            slots={slots}
+                            tracks={tracks}
+                            editable={editable}
+                            ariaLabel="Rectangle width"
+                          />
+                          <RectangleProperty
+                            placementId={selectedRect.id}
+                            field="h"
+                            label="Height"
+                            value={selectedRect.h}
+                            min={rectMinSize}
+                            max={rectMax}
+                            step={rectStep}
+                            rectUnit={selectedRect.rectUnit}
+                            boundSlotId={selectedRect.slotBindings?.h}
+                            trackId={selectedRect.trackId}
+                            slots={slots}
+                            tracks={tracks}
+                            editable={editable}
+                            ariaLabel="Rectangle height"
+                          />
                         </div>
                         <div className="inspector-field">
                           <span>Units</span>
@@ -938,9 +1083,364 @@ export function App() {
   );
 }
 
+function SlotLabel({
+  slot,
+  name,
+  editable,
+  groupStart,
+}: {
+  slot: NumericSlot;
+  name: string;
+  editable: boolean;
+  groupStart: boolean;
+}) {
+  const renameSlot = useExperimentStore((state) => state.renameSlot);
+  const removeSlot = useExperimentStore((state) => state.removeSlot);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    if (!editable) {
+      setEditing(false);
+    }
+  }, [editable]);
+
+  const startRenaming = () => {
+    if (!editable) {
+      return;
+    }
+    setDraft(slot.name ?? "");
+    setEditing(true);
+  };
+
+  const commitName = () => {
+    renameSlot(slot.id, draft.trim());
+    setEditing(false);
+  };
+
+  return (
+    <div
+      className={`slot-label${groupStart ? " is-group-start" : ""}`}
+      id={`slot-label-${slot.id}`}
+    >
+      {editing ? (
+        <form
+          className="slot-label-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            commitName();
+          }}
+        >
+          <input
+            className="slot-label-input"
+            autoFocus
+            aria-label={`Name for ${name}`}
+            placeholder={name}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setEditing(false);
+              } else if (
+                event.key === "Backspace" ||
+                event.key === "Delete"
+              ) {
+                event.stopPropagation();
+              }
+            }}
+          />
+          <button type="submit" className="slot-action">
+            Save
+          </button>
+          <button
+            type="button"
+            className="slot-action"
+            onClick={() => setEditing(false)}
+          >
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <>
+          <span className="slot-label-name" title={name}>
+            {name}
+          </span>
+          <button
+            type="button"
+            className="slot-action"
+            aria-label={`Rename ${name}`}
+            disabled={!editable}
+            onClick={startRenaming}
+          >
+            Rename
+          </button>
+          <button
+            type="button"
+            className="slot-action is-danger"
+            aria-label={`Remove ${name}`}
+            disabled={!editable}
+            onClick={() => removeSlot(slot.id)}
+          >
+            Remove
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SlotRow({
+  slot,
+  name,
+  columnCount,
+  editable,
+  groupStart,
+}: {
+  slot: NumericSlot;
+  name: string;
+  columnCount: number;
+  editable: boolean;
+  groupStart: boolean;
+}) {
+  const initializeSlot = useExperimentStore((state) => state.initializeSlot);
+  const clearSlotInitialization = useExperimentStore(
+    (state) => state.clearSlotInitialization,
+  );
+  const [editing, setEditing] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    if (!editable) {
+      setEditing(null);
+    }
+  }, [editable]);
+
+  const initialization = slot.initialization;
+
+  const startEditing = (time: number) => {
+    if (!editable) {
+      return;
+    }
+    if (initialization !== null && initialization.time !== time) {
+      return;
+    }
+    setDraft(initialization === null ? "0" : String(initialization.value));
+    setEditing(time);
+  };
+
+  const commit = () => {
+    if (editing === null) {
+      return;
+    }
+    const value = Number.parseFloat(draft);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    initializeSlot(slot.id, editing, value);
+    setEditing(null);
+  };
+
+  return (
+    <div
+      className={`slot-row${groupStart ? " is-group-start" : ""}`}
+      data-slot-id={slot.id}
+      role="group"
+      aria-label={`${name} slot row`}
+    >
+      {Array.from({ length: columnCount }, (_, time) => {
+        const initialized =
+          initialization !== null && initialization.time === time;
+        const disabled =
+          !editable ||
+          (initialization !== null && !initialized);
+        const description = initialized
+          ? `${name} at time ${time}, initialized to ${initialization.value}. Open to edit or delete the initialization.`
+          : initialization !== null
+            ? `${name} at time ${time}, disabled because the slot is initialized at time ${initialization.time}`
+            : `${name} at time ${time}, unset`;
+        return (
+          <button
+            key={time}
+            type="button"
+            className={`slot-cell${initialized ? " is-initialized" : ""}`}
+            aria-label={description}
+            title={initialized ? "Edit or delete initialization" : undefined}
+            disabled={disabled}
+            onClick={() => startEditing(time)}
+          >
+            {initialized ? (
+              <span className="slot-cell-value">{initialization.value}</span>
+            ) : null}
+          </button>
+        );
+      })}
+      {editing !== null && editable ? (
+        <form
+          className="slot-editor"
+          style={{
+            left: Math.max(
+              2,
+              Math.min(
+                editing * CELL_WIDTH + 2,
+                columnCount * CELL_WIDTH - SLOT_EDITOR_WIDTH - 2,
+              ),
+            ),
+            width: SLOT_EDITOR_WIDTH,
+          }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            commit();
+          }}
+        >
+          <input
+            className="slot-editor-input"
+            type="number"
+            step="any"
+            inputMode="decimal"
+            autoFocus
+            aria-label={`${name} value at time ${editing}`}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setEditing(null);
+              } else if (
+                event.key === "Backspace" ||
+                event.key === "Delete"
+              ) {
+                event.stopPropagation();
+              }
+            }}
+          />
+          <button type="submit" aria-label={`Set ${name} at time ${editing}`}>
+            Set
+          </button>
+          <button
+            type="button"
+            aria-label={`Cancel editing ${name} at time ${editing}`}
+            onClick={() => setEditing(null)}
+          >
+            Cancel
+          </button>
+          {initialization !== null ? (
+            <button
+              type="button"
+              className="slot-editor-delete"
+              aria-label={`Delete initialization for ${name} at time ${initialization.time}`}
+              onClick={() => {
+                clearSlotInitialization(slot.id);
+                setEditing(null);
+              }}
+            >
+              Delete
+            </button>
+          ) : null}
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+function RectangleProperty({
+  placementId,
+  field,
+  label,
+  value,
+  min,
+  max,
+  step,
+  rectUnit,
+  boundSlotId,
+  trackId,
+  slots,
+  tracks,
+  editable,
+  ariaLabel,
+}: {
+  placementId: string;
+  field: RectField;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  rectUnit: "span" | "pixels";
+  boundSlotId: string | undefined;
+  trackId: string;
+  slots: readonly NumericSlot[];
+  tracks: readonly Track[];
+  editable: boolean;
+  ariaLabel: string;
+}) {
+  const setRectValue = useExperimentStore((state) => state.setRectValue);
+  const setRectSlot = useExperimentStore((state) => state.setRectSlot);
+  const available = slots
+    .map((slot, index) => ({ slot, name: slotDisplayName(slot, index, tracks) }))
+    .filter(
+      ({ slot }) => slot.trackId === null || slot.trackId === trackId,
+    );
+  const local = available.filter(({ slot }) => slot.trackId !== null);
+  const shared = available.filter(({ slot }) => slot.trackId === null);
+  const missingBound =
+    boundSlotId !== undefined &&
+    !available.some(({ slot }) => slot.id === boundSlotId);
+
+  return (
+    <div className="inspector-field">
+      <label htmlFor={`rect-${placementId}-${field}-source`}>{label}</label>
+      <select
+        id={`rect-${placementId}-${field}-source`}
+        className="rect-source"
+        aria-label={`${ariaLabel} source`}
+        value={boundSlotId ?? ""}
+        disabled={!editable}
+        onChange={(event) => {
+          const next = event.target.value;
+          setRectSlot(placementId, field, next === "" ? null : next);
+        }}
+      >
+        <option value="">Number</option>
+        {local.length > 0 ? (
+          <optgroup label="Track slots">
+            {local.map(({ slot, name }) => (
+              <option key={slot.id} value={slot.id}>
+                {name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {shared.length > 0 ? (
+          <optgroup label="Shared slots">
+            {shared.map(({ slot, name }) => (
+              <option key={slot.id} value={slot.id}>
+                {name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {missingBound ? (
+          <option value={boundSlotId}>{`${boundSlotId} (unavailable)`}</option>
+        ) : null}
+      </select>
+      <PropertyNumber
+        key={`rect-${field}-${placementId}-${rectUnit}`}
+        value={roundTo(value, 3)}
+        min={min}
+        max={max}
+        step={step}
+        ariaLabel={ariaLabel}
+        disabled={!editable || boundSlotId !== undefined}
+        onCommit={(next) => setRectValue(placementId, field, next)}
+      />
+    </div>
+  );
+}
+
 function BlockView({
   block,
-  tracks,
+  rows,
   columnCount,
   selected,
   editable,
@@ -949,7 +1449,7 @@ function BlockView({
   onContextMenu,
 }: {
   block: Placement;
-  tracks: readonly Track[];
+  rows: readonly TimelineRow[];
   columnCount: number;
   selected: boolean;
   editable: boolean;
@@ -965,7 +1465,7 @@ function BlockView({
   const suppressEdgeMenu = useRef(false);
   const [dragging, setDragging] = useState(false);
 
-  const trackIndex = tracks.findIndex((track) => track.id === block.trackId);
+  const trackIndex = trackRowIndex(rows, block.trackId);
   const isMedia = isMediaPlacement(block);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1090,17 +1590,22 @@ function BlockView({
     }
     if (current.mode === "move") {
       const deltaColumns = Math.round((event.clientX - current.originX) / CELL_WIDTH);
-      const deltaTracks = Math.round((event.clientY - current.originY) / TRACK_HEIGHT);
       const start = clamp(
         current.start + deltaColumns,
         0,
         columnCount - current.length,
       );
-      const currentIndex = tracks.findIndex(
-        (track) => track.id === current.trackId,
-      );
-      const nextIndex = clamp(currentIndex + deltaTracks, 0, tracks.length - 1);
-      move(block.id, tracks[nextIndex].id, start);
+      const rowsArea = event.currentTarget.closest(".rows-area");
+      const trackId =
+        rowsArea === null
+          ? current.trackId
+          : trackAtY(
+              rows,
+              event.clientY - rowsArea.getBoundingClientRect().top,
+              TRACK_HEIGHT,
+              SLOT_HEIGHT,
+            );
+      move(block.id, trackId, start);
       return;
     }
     const deltaColumns = Math.round((event.clientX - current.originX) / CELL_WIDTH);
@@ -1160,7 +1665,7 @@ function BlockView({
       className={className}
       style={{
         left: block.start * CELL_WIDTH + 3,
-        top: trackIndex * TRACK_HEIGHT + 3,
+        top: rowTop(rows, trackIndex, TRACK_HEIGHT, SLOT_HEIGHT) + 3,
         width: block.length * CELL_WIDTH - 6,
         height: TRACK_HEIGHT - 6,
       }}
@@ -1292,6 +1797,71 @@ function PropertyNumber({
       }}
     />
   );
+}
+
+function slotDisplayName(
+  slot: NumericSlot,
+  index: number,
+  tracks: readonly Track[],
+): string {
+  const configured = slot.name?.trim();
+  if (configured !== undefined && configured !== "") {
+    return configured;
+  }
+  if (slot.trackId === null) {
+    return `Shared slot ${index + 1}`;
+  }
+  const track = tracks.find((candidate) => candidate.id === slot.trackId);
+  return track === undefined
+    ? `Slot ${index + 1}`
+    : `Slot ${index + 1} on ${track.label}`;
+}
+
+function formatSlotValidation(
+  reads: readonly NumericSlotRead[],
+  slots: readonly NumericSlot[],
+  tracks: readonly Track[],
+): string | null {
+  if (reads.length === 0) {
+    return null;
+  }
+  const slotsById = new Map(
+    slots.map((slot, index) => [
+      slot.id,
+      { slot, name: slotDisplayName(slot, index, tracks) },
+    ]),
+  );
+  const trackLabel = (trackId: string): string =>
+    tracks.find((track) => track.id === trackId)?.label ?? trackId;
+  const messages = new Set<string>();
+  for (const read of reads) {
+    const entry = slotsById.get(read.slotId);
+    const name = entry?.name ?? `Slot ${read.slotId}`;
+    const readAt = `time ${read.time} on ${trackLabel(read.trackId)}`;
+    if (entry === undefined) {
+      messages.add(`${name} is unavailable but is read at ${readAt}.`);
+      continue;
+    }
+    const initialization = entry.slot.initialization;
+    if (initialization === null) {
+      messages.add(`${name} is empty; initialize it at or before ${readAt}.`);
+      continue;
+    }
+    if (entry.slot.trackId !== null && entry.slot.trackId !== read.trackId) {
+      messages.add(
+        `${name} belongs to ${trackLabel(entry.slot.trackId)} and cannot be read on ${trackLabel(read.trackId)} at time ${read.time}.`,
+      );
+      continue;
+    }
+    if (read.time < initialization.time) {
+      messages.add(
+        `${name} initializes at time ${initialization.time}, after it is read at ${readAt}.`,
+      );
+    }
+  }
+  return messages.size > 0
+    ? `Cannot run: ${Array.from(messages).join(" ")}`
+    : null;
 }
 
 function cellFromPointer(

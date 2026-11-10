@@ -41,3 +41,46 @@
   dispatch selects a subtype rather than performing effects. Sound stays timer-only
   without an output adapter; this does not introduce an audio feature.
 - Status: unblocked. Phase waits and block-owned UI state remain governing contracts.
+
+## Initial slot scope
+
+- User request: "commit; let's add slots; read TDD skill; adhere to Lead document".
+- `design.md` §§2.2–2.6 describes typed track and shared slots and their execution
+  semantics; `steps.md` proposes visual slot and wire representation without types
+  before introducing types and ownership verification.
+- The requested increment's intended user-visible scope is not specified: visual
+  editing versus engine-backed storage and block reads and writes. Counsel identified
+  this as a scope question rather than a contradiction between the documents.
+- User answer: "support both; I am thinking of number fields in block property be
+  assignable to slot instead of immediate value". This establishes visual and
+  engine-backed scope and identifies numeric property inputs as a use case.
+- User direction: "let's slot clickable and be able to input number and initialize
+  the slot that timing (slot should be appended at the bottom of track/timeline
+  as a new row)". Initialization is therefore authored on the timeline rather
+  than only as an untimed initial value.
+- User decisions: "1: use a rectangle's X, Y, W, H for now\n2: yes". The
+  second answer confirms that a block starting at the same logical time as a slot
+  initialization reads the newly initialized value.
+- Independent checkpoint: `design.md` §4.4 requires discarding before overwriting;
+  it does not settle whether discard and reuse belong in this increment. An empty
+  slot read's handling is also unspecified by the examined execution rules.
+- User decisions: "1. editor rejects empty slot reading and runner refuses to
+  start timeline\n2. start with one initialization". Slot reads must be checked
+  before playback; discard and reinitialization are deferred.
+- Status: initial scope unblocked. Track and shared slot rows follow `design.md`
+  §§2.2–2.3; initialization times are existing logical-time boundaries.
+
+## Slot-bound rectangle units
+
+- Affected work: rectangle properties can now reference a numeric slot, while the
+  rectangle's existing span/pixel toggle converts its immediate geometry.
+- The same slot can supply several properties or blocks. Converting the slot's
+  stored value when one rectangle changes units would also alter those other reads;
+  retaining the number instead changes the rectangle's rendered size or position.
+- User correction: "slot is a expression, evaluated to literal number, and it is
+  used as a input of the property of the block. internally converting the value
+  to XXX is irrelevant". Slot values are numbers supplied to the property; the
+  property's unit interprets the input. A rectangle's unit change does not mutate
+  a slot or establish a slot-specific unit contract.
+- Status: resolved; the earlier framing incorrectly attributed property-unit
+  semantics to slots.

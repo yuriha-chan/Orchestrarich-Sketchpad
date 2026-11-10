@@ -25,10 +25,12 @@ import {
 } from "./model";
 import type { WorkspaceId } from "./workspaces";
 import { convertRectUnit } from "./stage-geometry";
+import type { NumericSlot } from "../core/slots/numeric-slots";
 
 interface ExperimentState {
   blocks: Placement[];
   tracks: Track[];
+  slots: NumericSlot[];
   bpm: number;
   gridColumns: number;
   gridRows: number;
@@ -58,6 +60,16 @@ interface ExperimentState {
   setSyncBeatsToCellSpan: (id: string, value: boolean) => void;
   setRectValue: (id: string, field: "x" | "y" | "w" | "h", value: number) => void;
   setRectUnit: (id: string, unit: RectUnit, span: number) => void;
+  addSlot: (trackId: string | null) => void;
+  renameSlot: (id: string, name: string) => void;
+  removeSlot: (id: string) => void;
+  clearSlotInitialization: (id: string) => void;
+  initializeSlot: (id: string, time: number, value: number) => void;
+  setRectSlot: (
+    id: string,
+    field: "x" | "y" | "w" | "h",
+    slotId: string | null,
+  ) => void;
   setBpm: (value: number) => void;
   setGridColumns: (value: number) => void;
   setGridRows: (value: number) => void;
@@ -119,11 +131,13 @@ function clampGridSize(value: number): number {
 
 let nextId = 1;
 let nextTrackId = 1;
+let nextSlotId = 1;
 
 export const useExperimentStore = create<ExperimentState>()(
   immer((set) => ({
     blocks: [],
     tracks: DEFAULT_TRACKS.map((track) => ({ ...track })),
+    slots: [],
     bpm: DEFAULT_BPM,
     gridColumns: DEFAULT_GRID_COLUMNS,
     gridRows: DEFAULT_GRID_ROWS,
@@ -334,6 +348,76 @@ export const useExperimentStore = create<ExperimentState>()(
           block.w = converted.w;
           block.h = converted.h;
           block.rectUnit = unit;
+        });
+      }),
+    addSlot: (trackId) =>
+      set((state) => {
+        if (trackId !== null && !state.tracks.some((track) => track.id === trackId)) {
+          return;
+        }
+        state.slots.push({
+          id: `slot-${nextSlotId}`,
+          trackId,
+          initialization: null,
+        });
+        nextSlotId += 1;
+      }),
+    renameSlot: (id, name) =>
+      set((state) => {
+        const slot = state.slots.find((candidate) => candidate.id === id);
+        if (slot !== undefined) {
+          slot.name = name;
+        }
+      }),
+    removeSlot: (id) =>
+      set((state) => {
+        state.slots = state.slots.filter((slot) => slot.id !== id);
+      }),
+    clearSlotInitialization: (id) =>
+      set((state) => {
+        const slot = state.slots.find((candidate) => candidate.id === id);
+        if (slot !== undefined) {
+          slot.initialization = null;
+        }
+      }),
+    initializeSlot: (id, time, value) =>
+      set((state) => {
+        if (!Number.isInteger(time) || time < 0 || !Number.isFinite(value)) {
+          return;
+        }
+        const slot = state.slots.find((candidate) => candidate.id === id);
+        if (slot === undefined) {
+          return;
+        }
+        if (slot.initialization !== null && slot.initialization.time !== time) {
+          return;
+        }
+        slot.initialization = { time, value };
+      }),
+    setRectSlot: (id, field, slotId) =>
+      set((state) => {
+        editBlock(state, id, (block) => {
+          if (!isRectanglePlacement(block)) {
+            return;
+          }
+          if (slotId === null) {
+            if (block.slotBindings !== undefined) {
+              delete block.slotBindings[field];
+              if (Object.keys(block.slotBindings).length === 0) {
+                delete block.slotBindings;
+              }
+            }
+            return;
+          }
+          const slot = state.slots.find((candidate) => candidate.id === slotId);
+          if (
+            slot === undefined ||
+            (slot.trackId !== null && slot.trackId !== block.trackId)
+          ) {
+            return;
+          }
+          block.slotBindings ??= {};
+          block.slotBindings[field] = slotId;
         });
       }),
     setBpm: (value) =>
