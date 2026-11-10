@@ -89,9 +89,9 @@ function placement(overrides: PlacementOverrides = {}): Placement {
 function numericSlot(
   id: string,
   trackId: string | null,
-  initialization: { time: number; value: number } | null,
+  initializations: { time: number; value: number }[] = [],
 ): NumericSlot {
-  return { id, trackId, initialization };
+  return { id, trackId, initializations };
 }
 
 function setup(
@@ -723,7 +723,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("same-time", DEFAULT_TRACKS[1].id, { time: 0, value: 4 })],
+      [numericSlot("same-time", DEFAULT_TRACKS[1].id, [{ time: 0, value: 4 }])],
     );
 
     run.session.start();
@@ -750,7 +750,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("earlier", DEFAULT_TRACKS[1].id, { time: 1, value: 7 })],
+      [numericSlot("earlier", DEFAULT_TRACKS[1].id, [{ time: 1, value: 7 }])],
     );
 
     run.session.start();
@@ -763,6 +763,34 @@ describe("TimelineSession", () => {
       h: 7,
       unit: "span",
     });
+  });
+
+  it("reads the latest initialization at or before the rectangle start", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 2,
+          slotBindings: { w: "size" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        numericSlot("size", DEFAULT_TRACKS[1].id, [
+          { time: 0, value: 1 },
+          { time: 1, value: 5 },
+          { time: 3, value: 9 },
+        ]),
+      ],
+    );
+
+    run.session.start();
+
+    expect(run.snapshot()?.time).toBe(2);
+    expect(rectangleItem(run, "rect")).toMatchObject({ w: 5 });
   });
 
   it("uses immediate numbers for fields without a slot binding", () => {
@@ -781,7 +809,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("x-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 1 })],
+      [numericSlot("x-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 1 }])],
     );
 
     run.session.start();
@@ -808,10 +836,10 @@ describe("TimelineSession", () => {
       120,
       createStageStore(),
       [
-        numericSlot("x-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 1 }),
-        numericSlot("y-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 2 }),
-        numericSlot("w-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 3 }),
-        numericSlot("h-slot", DEFAULT_TRACKS[1].id, { time: 0, value: 4 }),
+        numericSlot("x-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 1 }]),
+        numericSlot("y-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 2 }]),
+        numericSlot("w-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 3 }]),
+        numericSlot("h-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 4 }]),
       ],
     );
 
@@ -840,7 +868,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("size", DEFAULT_TRACKS[1].id, { time: 0, value: 6 })],
+      [numericSlot("size", DEFAULT_TRACKS[1].id, [{ time: 0, value: 6 }])],
     );
 
     run.session.start();
@@ -874,7 +902,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("shared", null, { time: 0, value: 8 })],
+      [numericSlot("shared", null, [{ time: 0, value: 8 }])],
     );
 
     run.session.start();
@@ -912,7 +940,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("empty", DEFAULT_TRACKS[1].id, null)],
+      [numericSlot("empty", DEFAULT_TRACKS[1].id)],
     );
 
     expect(() => run.session.start()).toThrow();
@@ -933,7 +961,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("late", DEFAULT_TRACKS[1].id, { time: 2, value: 5 })],
+      [numericSlot("late", DEFAULT_TRACKS[1].id, [{ time: 2, value: 5 }])],
     );
 
     expect(() => run.session.start()).toThrow();
@@ -953,7 +981,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("other-track", DEFAULT_TRACKS[2].id, { time: 0, value: 3 })],
+      [numericSlot("other-track", DEFAULT_TRACKS[2].id, [{ time: 0, value: 3 }])],
     );
 
     expect(() => run.session.start()).toThrow();

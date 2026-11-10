@@ -20,12 +20,11 @@ const tracks: readonly Track[] = [
 function slot(
   id: string,
   trackId: string | null,
-  initialization: { time: number; value: number } | null = {
-    time: 0,
-    value: 0,
-  },
+  initializations: { time: number; value: number }[] = [
+    { time: 0, value: 0 },
+  ],
 ): NumericSlot {
-  return { id, trackId, initialization };
+  return { id, trackId, initializations };
 }
 
 describe("timelineRows", () => {
@@ -76,7 +75,7 @@ describe("timelineRows", () => {
   });
 
   it("includes empty slots as rows", () => {
-    const slots = [slot("empty", "sound", null)];
+    const slots = [slot("empty", "sound", [])];
 
     expect(timelineRows(tracks, slots)).toEqual([
       { kind: "track", trackId: "dialogue" },

@@ -1293,16 +1293,18 @@ function SlotRow({
     }
   }, [editable]);
 
-  const initialization = slot.initialization;
+  const initializationAt = (time: number) =>
+    slot.initializations.find((candidate) => candidate.time === time);
+
+  const editedInitialization =
+    editing === null ? undefined : initializationAt(editing);
 
   const startEditing = (time: number) => {
     if (!editable) {
       return;
     }
-    if (initialization !== null && initialization.time !== time) {
-      return;
-    }
-    setDraft(initialization === null ? "0" : String(initialization.value));
+    const initialization = initializationAt(time);
+    setDraft(initialization === undefined ? "0" : String(initialization.value));
     setEditing(time);
   };
 
@@ -1326,27 +1328,22 @@ function SlotRow({
       aria-label={`${name} slot row`}
     >
       {Array.from({ length: columnCount }, (_, time) => {
-        const initialized =
-          initialization !== null && initialization.time === time;
-        const disabled =
-          !editable ||
-          (initialization !== null && !initialized);
+        const initialization = initializationAt(time);
+        const initialized = initialization !== undefined;
         const description = initialized
           ? `${name} at time ${time}, initialized to ${initialization.value}. Open to edit or delete the initialization.`
-          : initialization !== null
-            ? `${name} at time ${time}, disabled because the slot is initialized at time ${initialization.time}`
-            : `${name} at time ${time}, unset`;
+          : `${name} at time ${time}, unset. Open to initialize it.`;
         return (
           <button
             key={time}
             type="button"
             className={`slot-cell${initialized ? " is-initialized" : ""}`}
             aria-label={description}
-            title={initialized ? "Edit or delete initialization" : undefined}
-            disabled={disabled}
+            title={initialized ? "Edit or delete initialization" : "Initialize slot"}
+            disabled={!editable}
             onClick={() => startEditing(time)}
           >
-            {initialized ? (
+            {initialization !== undefined ? (
               <span className="slot-cell-value">{initialization.value}</span>
             ) : null}
           </button>
@@ -1406,14 +1403,14 @@ function SlotRow({
           >
             <X size={12} aria-hidden="true" />
           </button>
-          {initialization !== null ? (
+          {editedInitialization !== undefined ? (
             <button
               type="button"
               className="slot-editor-delete"
-              aria-label={`Delete initialization for ${name} at time ${initialization.time}`}
+              aria-label={`Delete initialization for ${name} at time ${editing}`}
               title="Delete initialization"
               onClick={() => {
-                clearSlotInitialization(slot.id);
+                clearSlotInitialization(slot.id, editing);
                 setEditing(null);
               }}
             >
@@ -1928,8 +1925,8 @@ function formatSlotValidation(
       messages.add(`${name} is unavailable but is read at ${readAt}.`);
       continue;
     }
-    const initialization = entry.slot.initialization;
-    if (initialization === null) {
+    const initializations = entry.slot.initializations;
+    if (initializations.length === 0) {
       messages.add(`${name} is empty; initialize it at or before ${readAt}.`);
       continue;
     }
@@ -1939,9 +1936,12 @@ function formatSlotValidation(
       );
       continue;
     }
-    if (read.time < initialization.time) {
+    const firstInitializationTime = Math.min(
+      ...initializations.map((initialization) => initialization.time),
+    );
+    if (read.time < firstInitializationTime) {
       messages.add(
-        `${name} initializes at time ${initialization.time}, after it is read at ${readAt}.`,
+        `${name} initializes at time ${firstInitializationTime}, after it is read at ${readAt}.`,
       );
     }
   }

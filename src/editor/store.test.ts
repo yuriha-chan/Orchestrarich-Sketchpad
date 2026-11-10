@@ -57,7 +57,7 @@ describe("slot creation", () => {
 
     const slots = useExperimentStore.getState().slots;
     expect(slots).toHaveLength(1);
-    expect(slots[0]).toMatchObject({ trackId: null, initialization: null });
+    expect(slots[0]).toMatchObject({ trackId: null, initializations: [] });
   });
 
   it("appends an empty slot to an existing track", () => {
@@ -67,7 +67,7 @@ describe("slot creation", () => {
     expect(slots).toHaveLength(1);
     expect(slots[0]).toMatchObject({
       trackId: DEFAULT_TRACKS[0].id,
-      initialization: null,
+      initializations: [],
     });
   });
 
@@ -79,7 +79,7 @@ describe("slot creation", () => {
     const slots = useExperimentStore.getState().slots;
     expect(slots).toHaveLength(3);
     expect(new Set(slots.map((slot) => slot.id)).size).toBe(3);
-    expect(slots.map((slot) => slot.initialization)).toEqual([null, null, null]);
+    expect(slots.map((slot) => slot.initializations)).toEqual([[], [], []]);
   });
 });
 
@@ -89,7 +89,7 @@ describe("slot initialization", () => {
 
     useExperimentStore.getState().initializeSlot(slotId, 3, 10);
 
-    expect(slotById(slotId).initialization).toEqual({ time: 3, value: 10 });
+    expect(slotById(slotId).initializations).toEqual([{ time: 3, value: 10 }]);
   });
 
   it("accepts initialization at logical time zero", () => {
@@ -97,7 +97,7 @@ describe("slot initialization", () => {
 
     useExperimentStore.getState().initializeSlot(slotId, 0, 5);
 
-    expect(slotById(slotId).initialization).toEqual({ time: 0, value: 5 });
+    expect(slotById(slotId).initializations).toEqual([{ time: 0, value: 5 }]);
   });
 
   it("accepts an initialization value of zero", () => {
@@ -105,7 +105,7 @@ describe("slot initialization", () => {
 
     useExperimentStore.getState().initializeSlot(slotId, 2, 0);
 
-    expect(slotById(slotId).initialization).toEqual({ time: 2, value: 0 });
+    expect(slotById(slotId).initializations).toEqual([{ time: 2, value: 0 }]);
   });
 
   it("permits editing the value at the same initialization time", () => {
@@ -114,16 +114,32 @@ describe("slot initialization", () => {
     useExperimentStore.getState().initializeSlot(slotId, 2, 5);
     useExperimentStore.getState().initializeSlot(slotId, 2, 9);
 
-    expect(slotById(slotId).initialization).toEqual({ time: 2, value: 9 });
+    expect(slotById(slotId).initializations).toEqual([{ time: 2, value: 9 }]);
   });
 
-  it("rejects a second initialization at a different time", () => {
+  it("stores initializations at multiple times in time order", () => {
     const slotId = addSlot(null);
 
-    useExperimentStore.getState().initializeSlot(slotId, 1, 5);
     useExperimentStore.getState().initializeSlot(slotId, 2, 9);
+    useExperimentStore.getState().initializeSlot(slotId, 1, 5);
 
-    expect(slotById(slotId).initialization).toEqual({ time: 1, value: 5 });
+    expect(slotById(slotId).initializations).toEqual([
+      { time: 1, value: 5 },
+      { time: 2, value: 9 },
+    ]);
+  });
+
+  it("replaces one time without disturbing the other times", () => {
+    const slotId = addSlot(null);
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, 1);
+    useExperimentStore.getState().initializeSlot(slotId, 5, 9);
+    useExperimentStore.getState().initializeSlot(slotId, 0, 3);
+
+    expect(slotById(slotId).initializations).toEqual([
+      { time: 0, value: 3 },
+      { time: 5, value: 9 },
+    ]);
   });
 
   it("rejects initialization at a negative time", () => {
@@ -131,7 +147,7 @@ describe("slot initialization", () => {
 
     useExperimentStore.getState().initializeSlot(slotId, -1, 5);
 
-    expect(slotById(slotId).initialization).toBeNull();
+    expect(slotById(slotId).initializations).toEqual([]);
   });
 
   it("rejects initialization at a fractional time", () => {
@@ -139,7 +155,7 @@ describe("slot initialization", () => {
 
     useExperimentStore.getState().initializeSlot(slotId, 1.5, 5);
 
-    expect(slotById(slotId).initialization).toBeNull();
+    expect(slotById(slotId).initializations).toEqual([]);
   });
 
   it("initializes only the requested slot", () => {
@@ -148,8 +164,8 @@ describe("slot initialization", () => {
 
     useExperimentStore.getState().initializeSlot(first, 0, 7);
 
-    expect(slotById(first).initialization).toEqual({ time: 0, value: 7 });
-    expect(slotById(second).initialization).toBeNull();
+    expect(slotById(first).initializations).toEqual([{ time: 0, value: 7 }]);
+    expect(slotById(second).initializations).toEqual([]);
   });
 });
 
@@ -228,7 +244,7 @@ describe("rectangle slot selection", () => {
 
     useExperimentStore.getState().setRectUnit(rectangleId, "pixels", 20);
 
-    expect(slotById(slotId).initialization).toEqual({ time: 0, value: 3 });
+    expect(slotById(slotId).initializations).toEqual([{ time: 0, value: 3 }]);
     expect(rectangle(rectangleId).slotBindings?.x).toBe(slotId);
     expect(rectangle(rectangleId).rectUnit).toBe("pixels");
   });
@@ -243,7 +259,7 @@ describe("slot renaming", () => {
     expect(slotById(slotId).name).toBe("Speed");
   });
 
-  it("keeps the slot identity and initialization when renaming", () => {
+  it("keeps the slot identity and initializations when renaming", () => {
     const slotId = addSlot(DEFAULT_TRACKS[0].id);
     useExperimentStore.getState().initializeSlot(slotId, 2, 4);
 
@@ -252,7 +268,7 @@ describe("slot renaming", () => {
     expect(slotById(slotId)).toMatchObject({
       id: slotId,
       trackId: DEFAULT_TRACKS[0].id,
-      initialization: { time: 2, value: 4 },
+      initializations: [{ time: 2, value: 4 }],
       name: "Health",
     });
   });
@@ -281,7 +297,7 @@ describe("slot removal", () => {
     expect(slots.map((slot) => slot.id)).toEqual([kept]);
     expect(slots[0]).toMatchObject({
       name: "Kept",
-      initialization: { time: 1, value: 6 },
+      initializations: [{ time: 1, value: 6 }],
     });
   });
 
@@ -313,13 +329,23 @@ describe("slot removal", () => {
 });
 
 describe("slot initialization clearing", () => {
-  it("clears the requested slot initialization", () => {
+  it("clears the requested initialization time", () => {
     const slotId = addSlot(null);
     useExperimentStore.getState().initializeSlot(slotId, 3, 10);
 
-    useExperimentStore.getState().clearSlotInitialization(slotId);
+    useExperimentStore.getState().clearSlotInitialization(slotId, 3);
 
-    expect(slotById(slotId).initialization).toBeNull();
+    expect(slotById(slotId).initializations).toEqual([]);
+  });
+
+  it("leaves the other initialization times intact", () => {
+    const slotId = addSlot(null);
+    useExperimentStore.getState().initializeSlot(slotId, 1, 5);
+    useExperimentStore.getState().initializeSlot(slotId, 4, 9);
+
+    useExperimentStore.getState().clearSlotInitialization(slotId, 1);
+
+    expect(slotById(slotId).initializations).toEqual([{ time: 4, value: 9 }]);
   });
 
   it("leaves other slots unchanged", () => {
@@ -328,13 +354,13 @@ describe("slot initialization clearing", () => {
     useExperimentStore.getState().initializeSlot(cleared, 1, 2);
     useExperimentStore.getState().initializeSlot(kept, 4, 8);
 
-    useExperimentStore.getState().clearSlotInitialization(cleared);
+    useExperimentStore.getState().clearSlotInitialization(cleared, 1);
 
-    expect(slotById(cleared).initialization).toBeNull();
-    expect(slotById(kept).initialization).toEqual({ time: 4, value: 8 });
+    expect(slotById(cleared).initializations).toEqual([]);
+    expect(slotById(kept).initializations).toEqual([{ time: 4, value: 8 }]);
   });
 
-  it("makes an existing rectangle read invalid", () => {
+  it("makes an existing rectangle read invalid when no earlier value remains", () => {
     const rectangleId = createRectangle();
     const slotId = addSlot(null);
     useExperimentStore.getState().initializeSlot(slotId, 0, 3);
@@ -344,7 +370,7 @@ describe("slot initialization clearing", () => {
       validateNumericSlotReads(before.slots, rectangleSlotReads(before.blocks)),
     ).toEqual([]);
 
-    useExperimentStore.getState().clearSlotInitialization(slotId);
+    useExperimentStore.getState().clearSlotInitialization(slotId, 0);
 
     const after = useExperimentStore.getState();
     expect(
@@ -356,9 +382,9 @@ describe("slot initialization clearing", () => {
     const slotId = addSlot(null);
     useExperimentStore.getState().initializeSlot(slotId, 1, 5);
 
-    useExperimentStore.getState().clearSlotInitialization(slotId);
+    useExperimentStore.getState().clearSlotInitialization(slotId, 1);
     useExperimentStore.getState().initializeSlot(slotId, 4, 9);
 
-    expect(slotById(slotId).initialization).toEqual({ time: 4, value: 9 });
+    expect(slotById(slotId).initializations).toEqual([{ time: 4, value: 9 }]);
   });
 });

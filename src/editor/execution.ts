@@ -151,8 +151,10 @@ export class TimelineSession {
 
   private applyTimeStart(time: number): void {
     for (const slot of this.options.slots ?? []) {
-      const initialization = slot.initialization;
-      if (initialization !== null && initialization.time === time) {
+      const initialization = slot.initializations.find(
+        (candidate) => candidate.time === time,
+      );
+      if (initialization !== undefined) {
         this.runtimeSlots.set(slot.id, initialization.value);
       }
     }

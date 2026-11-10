@@ -1,8 +1,13 @@
+export interface NumericSlotInitialization {
+  readonly time: number;
+  readonly value: number;
+}
+
 export interface NumericSlot {
   readonly id: string;
   readonly trackId: string | null;
   readonly name?: string;
-  readonly initialization: { readonly time: number; readonly value: number } | null;
+  readonly initializations: readonly NumericSlotInitialization[];
 }
 
 export interface NumericSlotRead {
@@ -20,11 +25,14 @@ export function validateNumericSlotReads(
   return reads.filter((read) => {
     const slot = slotsById.get(read.slotId);
 
-    return (
-      slot === undefined ||
-      slot.initialization === null ||
-      (slot.trackId !== null && slot.trackId !== read.trackId) ||
-      read.time < slot.initialization.time
+    if (slot === undefined) {
+      return true;
+    }
+    if (slot.trackId !== null && slot.trackId !== read.trackId) {
+      return true;
+    }
+    return !slot.initializations.some(
+      (initialization) => initialization.time <= read.time,
     );
   });
 }

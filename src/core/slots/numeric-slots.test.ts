@@ -9,9 +9,9 @@ import {
 function slot(
   id: string,
   trackId: string | null,
-  initialization: { time: number; value: number } | null,
+  initializations: { time: number; value: number }[] = [],
 ): NumericSlot {
-  return { id, trackId, initialization };
+  return { id, trackId, initializations };
 }
 
 function read(slotId: string, trackId: string, time: number): NumericSlotRead {
@@ -24,7 +24,7 @@ describe("validateNumericSlotReads", () => {
   });
 
   it("accepts a read at the exact initialization time", () => {
-    const slots = [slot("speed", "alice", { time: 3, value: 10 })];
+    const slots = [slot("speed", "alice", [{ time: 3, value: 10 }])];
 
     expect(
       validateNumericSlotReads(slots, [read("speed", "alice", 3)]),
@@ -32,7 +32,7 @@ describe("validateNumericSlotReads", () => {
   });
 
   it("accepts multiple reads at and after the initialization boundary", () => {
-    const slots = [slot("speed", "alice", { time: 3, value: 10 })];
+    const slots = [slot("speed", "alice", [{ time: 3, value: 10 }])];
     const reads = [
       read("speed", "alice", 3),
       read("speed", "alice", 4),
@@ -42,15 +42,46 @@ describe("validateNumericSlotReads", () => {
     expect(validateNumericSlotReads(slots, reads)).toEqual([]);
   });
 
-  it("rejects a read earlier than the initialization time", () => {
-    const slots = [slot("speed", "alice", { time: 3, value: 10 })];
+  it("rejects a read earlier than the first initialization", () => {
+    const slots = [
+      slot("speed", "alice", [
+        { time: 3, value: 10 },
+        { time: 7, value: 20 },
+      ]),
+    ];
     const earlier = read("speed", "alice", 2);
 
     expect(validateNumericSlotReads(slots, [earlier])).toEqual([earlier]);
   });
 
+  it("accepts a read between two initializations", () => {
+    const slots = [
+      slot("speed", "alice", [
+        { time: 3, value: 10 },
+        { time: 7, value: 20 },
+      ]),
+    ];
+
+    expect(
+      validateNumericSlotReads(slots, [read("speed", "alice", 5)]),
+    ).toEqual([]);
+  });
+
+  it("accepts a read at a later initialization boundary", () => {
+    const slots = [
+      slot("speed", "alice", [
+        { time: 3, value: 10 },
+        { time: 7, value: 20 },
+      ]),
+    ];
+
+    expect(
+      validateNumericSlotReads(slots, [read("speed", "alice", 7)]),
+    ).toEqual([]);
+  });
+
   it("rejects a read of a slot without an initialization", () => {
-    const slots = [slot("speed", "alice", null)];
+    const slots = [slot("speed", "alice")];
     const missing = read("speed", "alice", 10);
 
     expect(validateNumericSlotReads(slots, [missing])).toEqual([missing]);
@@ -63,7 +94,7 @@ describe("validateNumericSlotReads", () => {
   });
 
   it("rejects a read of a track slot from another track", () => {
-    const slots = [slot("speed", "bob", { time: 0, value: 5 })];
+    const slots = [slot("speed", "bob", [{ time: 0, value: 5 }])];
     const inaccessible = read("speed", "alice", 5);
 
     expect(validateNumericSlotReads(slots, [inaccessible])).toEqual([
@@ -73,8 +104,8 @@ describe("validateNumericSlotReads", () => {
 
   it("accepts reads of track slots from the same track", () => {
     const slots = [
-      slot("speed", "alice", { time: 0, value: 5 }),
-      slot("health", "alice", { time: 0, value: 6 }),
+      slot("speed", "alice", [{ time: 0, value: 5 }]),
+      slot("health", "alice", [{ time: 0, value: 6 }]),
     ];
 
     expect(
@@ -86,7 +117,7 @@ describe("validateNumericSlotReads", () => {
   });
 
   it("accepts shared slot reads from any track", () => {
-    const slots = [slot("shared", null, { time: 1, value: 3 })];
+    const slots = [slot("shared", null, [{ time: 1, value: 3 }])];
 
     expect(
       validateNumericSlotReads(slots, [
@@ -99,9 +130,9 @@ describe("validateNumericSlotReads", () => {
 
   it("returns only invalid reads in input order", () => {
     const slots = [
-      slot("valid", "alice", { time: 0, value: 1 }),
-      slot("late", "alice", { time: 5, value: 2 }),
-      slot("other", "bob", { time: 0, value: 3 }),
+      slot("valid", "alice", [{ time: 0, value: 1 }]),
+      slot("late", "alice", [{ time: 5, value: 2 }]),
+      slot("other", "bob", [{ time: 0, value: 3 }]),
     ];
     const reads = [
       read("valid", "alice", 1),
