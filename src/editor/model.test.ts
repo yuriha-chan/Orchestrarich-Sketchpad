@@ -17,6 +17,7 @@ import {
   DEFAULT_TRACKS,
   intervalsOverlap,
   mediaPhases,
+  nextFreeStart,
   phaseBlockId,
   secondsToBeats,
 } from "./model";
@@ -423,5 +424,55 @@ describe("addition kind conversion", () => {
 
     expect(converted.kind).toBe("addition");
     expect("slotBindings" in converted).toBe(false);
+  });
+});
+
+describe("nextFreeStart", () => {
+  const trackId = DEFAULT_TRACKS[0].id;
+  const otherTrack = DEFAULT_TRACKS[1].id;
+
+  it("uses the requested start when the space is free", () => {
+    expect(nextFreeStart([], trackId, 3, 2)).toBe(3);
+  });
+
+  it("places a duplicate directly after an adjacent block", () => {
+    const block = timed({ id: "placement-1", trackId, start: 0, length: 2 });
+
+    expect(nextFreeStart([block], trackId, 2, 2)).toBe(2);
+  });
+
+  it("skips a following block and uses the space behind it", () => {
+    const source = timed({ id: "placement-1", trackId, start: 0, length: 2 });
+    const occupant = timed({ id: "placement-2", trackId, start: 2, length: 3 });
+
+    expect(nextFreeStart([source, occupant], trackId, 2, 2)).toBe(5);
+  });
+
+  it("takes an earlier gap that fits when it is the first one", () => {
+    const source = timed({ id: "placement-1", trackId, start: 0, length: 2 });
+    const occupant = timed({ id: "placement-2", trackId, start: 4, length: 1 });
+
+    expect(nextFreeStart([source, occupant], trackId, 2, 2)).toBe(2);
+  });
+
+  it("ignores blocks on other tracks", () => {
+    const source = timed({ id: "placement-1", trackId, start: 0, length: 2 });
+    const occupant = timed({
+      id: "placement-2",
+      trackId: otherTrack,
+      start: 2,
+      length: 3,
+    });
+
+    expect(nextFreeStart([source, occupant], trackId, 2, 2)).toBe(2);
+  });
+
+  it("pushes past a block that overlaps the requested start", () => {
+    const source = timed({ id: "placement-1", trackId, start: 0, length: 1 });
+    const occupant = timed({ id: "placement-2", trackId, start: 3, length: 2 });
+    const later = timed({ id: "placement-3", trackId, start: 3, length: 4 });
+
+    expect(nextFreeStart([source, occupant], trackId, 3, 3)).toBe(5);
+    expect(nextFreeStart([source, later], trackId, 3, 3)).toBe(7);
   });
 });

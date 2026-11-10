@@ -117,8 +117,8 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 254 tests pass (55 core + 19 numeric slots + 34 placement model
-  + 52 store + 16 timeline rows + 39 integration + 8 stage geometry + 10 slot
+- `pnpm test`: 266 tests pass (55 core + 19 numeric slots + 40 placement model
+  + 58 store + 16 timeline rows + 39 integration + 8 stage geometry + 10 slot
   value rail + 15 slot wires + 6 fade editing and dot-pattern tests).
 - `pnpm build`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
@@ -152,9 +152,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 8. Selection is single-block. Pressing a block selects it, including the start
    of a move or stretch; Escape or a right-click on empty grid clears it. The
    selected block's properties are shown in the inspector.
-9. Right-clicking a block opens a context menu with Delete. The menu is only
-   available while editing; during a run a right-click selects the block but
-   does not open editing actions.
+9. Right-clicking a block opens a context menu with Duplicate and Delete. The
+   menu is only available while editing; during a run a right-click selects the
+   block but does not open editing actions.
 10. Workspaces are view-layer layout presets over the same store and session,
     selected at the top tab bar. The active workspace is UI state, not document
     state: switching does not change placements, selection, logical time, or the
@@ -362,6 +362,11 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     rather than the value continuing. Wires paint above slot value dots and the
     horizontal rails; blocks paint above wires, and endpoint dots paint above
     blocks, so a crossing rail or dot never covers the vertical wire.
+
+35. Duplicating a block keeps its kind, duration, geometry, and slot bindings.
+    The copy is placed on the same track at the next free space at or after the
+    source's end, scanning forward past occupied spans, and becomes the selected
+    block. There is no separate "paste at pointer" placement for duplicates yet.
 
 ## Carry-Over
 

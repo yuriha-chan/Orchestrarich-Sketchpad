@@ -226,6 +226,7 @@ export function App() {
   const create = useExperimentStore((state) => state.create);
   const move = useExperimentStore((state) => state.move);
   const resize = useExperimentStore((state) => state.resize);
+  const duplicateBlock = useExperimentStore((state) => state.duplicateBlock);
   const remove = useExperimentStore((state) => state.remove);
   const clear = useExperimentStore((state) => state.clear);
   const select = useExperimentStore((state) => state.select);
@@ -273,6 +274,16 @@ export function App() {
     runningRun === null
       ? null
       : runningRun.session.barrierSpan(runningRun.snapshot.time);
+
+  useEffect(() => {
+    const block = blocks.find((candidate) => candidate.id === selectedId);
+    if (block === undefined) {
+      return;
+    }
+    setColumnCount((count) =>
+      Math.max(count, block.start + block.length),
+    );
+  }, [blocks, selectedId]);
 
   useEffect(() => {
     return () => {
@@ -1481,7 +1492,7 @@ export function App() {
           aria-label={`Actions for ${BLOCK_LABELS[menuBlock.kind]} at ${menuBlock.start}`}
           style={{
             left: clamp(contextMenu.x, 8, window.innerWidth - 228),
-            top: clamp(contextMenu.y, 8, window.innerHeight - 110),
+            top: clamp(contextMenu.y, 8, window.innerHeight - 144),
           }}
           onPointerDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
@@ -1492,6 +1503,18 @@ export function App() {
             {menuBlock.start + menuBlock.length}
           </div>
           <div className="context-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              duplicateBlock(menuBlock.id);
+              setContextMenu(null);
+            }}
+          >
+            <Copy size={14} aria-hidden="true" />
+            Duplicate
+          </button>
           <button
             type="button"
             role="menuitem"

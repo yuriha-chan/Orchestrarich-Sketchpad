@@ -23,6 +23,7 @@ import {
   isDurationPlacement,
   isRectanglePlacement,
   MAX_GRID_SIZE,
+  nextFreeStart,
   MIN_GRID_SIZE,
   SLOT_CAPABLE_PROPERTIES,
   TRACK_COLORS,
@@ -56,6 +57,7 @@ interface ExperimentState {
     length: number,
     fades?: { fadeIn?: number; fadeOut?: number },
   ) => void;
+  duplicateBlock: (id: string) => void;
   remove: (id: string) => void;
   clear: () => void;
   select: (id: string | null) => void;
@@ -335,6 +337,31 @@ export const useExperimentStore = create<ExperimentState>()(
         editBlock(state, id, (block) =>
           applySpan(state, block, start, length, fades),
         );
+      }),
+    duplicateBlock: (id) =>
+      set((state) => {
+        const source = state.blocks.find((block) => block.id === id);
+        if (source === undefined) {
+          return;
+        }
+        const copyId = `placement-${nextId}`;
+        const start = nextFreeStart(
+          state.blocks,
+          source.trackId,
+          source.start + source.length,
+          source.length,
+        );
+        state.blocks.push({
+          ...source,
+          id: copyId,
+          start,
+          slotBindings:
+            source.slotBindings === undefined
+              ? undefined
+              : { ...source.slotBindings },
+        });
+        nextId += 1;
+        state.selectedId = copyId;
       }),
     remove: (id) =>
       set((state) => {

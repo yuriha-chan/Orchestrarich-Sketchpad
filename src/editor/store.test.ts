@@ -674,3 +674,89 @@ describe("addition blocks", () => {
     expect(block.slotBindings).toBeUndefined();
   });
 });
+
+describe("block duplication", () => {
+  const trackId = DEFAULT_TRACKS[1].id;
+
+  function blockAt(index: number) {
+    return useExperimentStore.getState().blocks[index];
+  }
+
+  it("places the copy right after the source block", () => {
+    const sourceId = createRectangle(trackId, 2);
+
+    useExperimentStore.getState().duplicateBlock(sourceId);
+
+    const state = useExperimentStore.getState();
+    expect(state.blocks).toHaveLength(2);
+    const copy = state.blocks.find((block) => block.id !== sourceId)!;
+    expect(copy.start).toBe(3);
+    expect(copy.length).toBe(1);
+    expect(copy.trackId).toBe(trackId);
+  });
+
+  it("copies the block properties and selects the copy", () => {
+    const sourceId = createRectangle(trackId, 0);
+    useExperimentStore.getState().setDuration(sourceId, 3);
+    useExperimentStore.getState().setRectValue(sourceId, "w", 5);
+
+    useExperimentStore.getState().duplicateBlock(sourceId);
+
+    const state = useExperimentStore.getState();
+    const copy = state.blocks.find((block) => block.id !== sourceId)!;
+    expect(copy.kind).toBe("rectangle");
+    expect(copy).toMatchObject({ duration: 3, w: 5 });
+    expect(state.selectedId).toBe(copy.id);
+  });
+
+  it("uses the next free space when the position after the source is taken", () => {
+    const sourceId = createRectangle(trackId, 0);
+    createAddition(trackId, 1);
+
+    useExperimentStore.getState().duplicateBlock(sourceId);
+
+    const copy = useExperimentStore
+      .getState()
+      .blocks.find((block) => block.id !== sourceId && block.kind === "rectangle")!;
+    expect(copy.start).toBe(2);
+  });
+
+  it("keeps slot bindings on the same track", () => {
+    const slotId = addSlot(trackId);
+    const rectangleId = createRectangle(trackId, 0);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
+
+    useExperimentStore.getState().duplicateBlock(rectangleId);
+
+    const copy = useExperimentStore
+      .getState()
+      .blocks.find((block) => block.id !== rectangleId)!;
+    expect(copy.slotBindings).toEqual({ x: slotId });
+  });
+
+  it("does nothing for an unknown block", () => {
+    createRectangle(trackId, 0);
+
+    useExperimentStore.getState().duplicateBlock("missing");
+
+    expect(useExperimentStore.getState().blocks).toHaveLength(1);
+    expect(useExperimentStore.getState().selectedId).not.toBe("missing");
+  });
+
+  it("lets the copy be selected independently of the source", () => {
+    const sourceId = createRectangle(trackId, 0);
+    useExperimentStore.getState().duplicateBlock(sourceId);
+    const copyId = useExperimentStore.getState().selectedId!;
+
+    useExperimentStore.getState().setDuration(copyId, 4);
+
+    const blocks = useExperimentStore.getState().blocks;
+    expect(blocks.find((block) => block.id === copyId)).toMatchObject({
+      duration: 4,
+    });
+    expect(blocks.find((block) => block.id === sourceId)).toMatchObject({
+      duration: 1,
+    });
+    expect(blockAt(0).id).toBe(sourceId);
+  });
+});

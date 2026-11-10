@@ -384,3 +384,28 @@ export function canPlace(
       !intervalsOverlap(shape.start, shape.length, placement.start, placement.length),
   );
 }
+
+export function nextFreeStart(
+  placements: readonly Placement[],
+  trackId: string,
+  after: number,
+  length: number,
+): number {
+  const occupied = placements
+    .filter((placement) => placement.trackId === trackId)
+    .map((placement) => ({
+      start: placement.start,
+      end: placement.start + placement.length,
+    }))
+    .sort((a, b) => a.start - b.start);
+  let start = Math.max(after, 0);
+  for (const span of occupied) {
+    if (start + length <= span.start) {
+      break;
+    }
+    if (start < span.end) {
+      start = span.end;
+    }
+  }
+  return start;
+}
