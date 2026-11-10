@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { validateNumericSlotReads } from "../core/slots/numeric-slots";
 import { slotReads } from "./execution";
-import { DEFAULT_TRACKS, type RectanglePlacement } from "./model";
+import { DEFAULT_TRACKS, TRACK_COLORS, type RectanglePlacement } from "./model";
 import { useExperimentStore } from "./store";
 
 function resetStore(): void {
@@ -419,5 +419,176 @@ describe("slot initialization clearing", () => {
     useExperimentStore.getState().initializeSlot(slotId, 4, 9);
 
     expect(slotById(slotId).initializations).toEqual([{ time: 4, value: 9 }]);
+  });
+});
+
+describe("track editing", () => {
+  it("assigns a color to a newly appended track", () => {
+    useExperimentStore.getState().addTrack();
+
+    const tracks = useExperimentStore.getState().tracks;
+    expect(TRACK_COLORS).toContain(tracks[tracks.length - 1].color);
+  });
+
+  it("inserts a new track directly after the requested track", () => {
+    const [first, second] = useExperimentStore.getState().tracks;
+
+    useExperimentStore.getState().addTrackAfter(first.id);
+
+    const tracks = useExperimentStore.getState().tracks;
+    expect(tracks).toHaveLength(4);
+    expect(tracks[0].id).toBe(first.id);
+    expect(tracks[2].id).toBe(second.id);
+    expect(tracks[1].id).not.toBe(first.id);
+    expect(tracks[1].id).not.toBe(second.id);
+  });
+
+  it("renames only the requested track", () => {
+    const [first, second] = useExperimentStore.getState().tracks;
+
+    useExperimentStore.getState().renameTrack(first.id, "  Intro  ");
+
+    const tracks = useExperimentStore.getState().tracks;
+    expect(tracks[0].label).toBe("Intro");
+    expect(tracks[1].label).toBe(second.label);
+  });
+
+  it("keeps the existing label when the new name is blank", () => {
+    const [first] = useExperimentStore.getState().tracks;
+
+    useExperimentStore.getState().renameTrack(first.id, "   ");
+
+    expect(useExperimentStore.getState().tracks[0].label).toBe(first.label);
+  });
+
+  it("changes only the requested track color", () => {
+    const [first, second] = useExperimentStore.getState().tracks;
+
+    useExperimentStore.getState().setTrackColor(first.id, "#db2777");
+
+    const tracks = useExperimentStore.getState().tracks;
+    expect(tracks[0].color).toBe("#db2777");
+    expect(tracks[1].color).toBe(second.color);
+  });
+
+  it("inserts a duplicate directly after the source track", () => {
+    const [first, second] = useExperimentStore.getState().tracks;
+
+    useExperimentStore.getState().duplicateTrack(first.id);
+
+    const tracks = useExperimentStore.getState().tracks;
+    expect(tracks).toHaveLength(4);
+    expect(tracks[0].id).toBe(first.id);
+    expect(tracks[2].id).toBe(second.id);
+    expect(tracks[1].id).not.toBe(first.id);
+    expect(tracks[1].label).toBe(`${first.label} copy`);
+    expect(tracks[1].color).toBe(first.color);
+  });
+
+  it("duplicates the track's blocks with new identities", () => {
+    const trackId = DEFAULT_TRACKS[1].id;
+    const sourceId = createRectangle(trackId, 2);
+
+    useExperimentStore.getState().duplicateTrack(trackId);
+
+    const state = useExperimentStore.getState();
+    const copyTrack = state.tracks[state.tracks.findIndex((t) => t.id === trackId) + 1];
+    expect(state.blocks).toHaveLength(2);
+    const copy = state.blocks.find((block) => block.id !== sourceId)!;
+    expect(copy.id).not.toBe(sourceId);
+    expect(copy.trackId).toBe(copyTrack.id);
+    expect(copy.start).toBe(2);
+    expect(copy.kind).toBe("rectangle");
+  });
+
+  it("duplicates track-local slots and re-points duplicated bindings", () => {
+    const trackId = DEFAULT_TRACKS[1].id;
+    const slotId = addSlot(trackId);
+    useExperimentStore.getState().initializeSlot(slotId, 0, 7);
+    const rectangleId = createRectangle(trackId, 0);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
+
+    useExperimentStore.getState().duplicateTrack(trackId);
+
+    const state = useExperimentStore.getState();
+    const copyTrack = state.tracks[state.tracks.findIndex((t) => t.id === trackId) + 1];
+    const copySlot = state.slots.find((slot) => slot.trackId === copyTrack.id)!;
+    expect(copySlot).toBeDefined();
+    expect(copySlot.id).not.toBe(slotId);
+    expect(copySlot.initializations).toEqual([{ time: 0, value: 7 }]);
+    const copyBlock = state.blocks.find((block) => block.trackId === copyTrack.id)!;
+    expect(copyBlock.slotBindings).toEqual({ x: copySlot.id });
+    const sourceBlock = state.blocks.find((block) => block.id === rectangleId)!;
+    expect(sourceBlock.slotBindings).toEqual({ x: slotId });
+  });
+
+  it("keeps shared-slot bindings pointing at the shared slot when duplicating", () => {
+    const trackId = DEFAULT_TRACKS[1].id;
+    const sharedId = addSlot(null);
+    useExperimentStore.getState().initializeSlot(sharedId, 0, 4);
+    const rectangleId = createRectangle(trackId, 0);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "y", sharedId);
+
+    useExperimentStore.getState().duplicateTrack(trackId);
+
+    const state = useExperimentStore.getState();
+    const copyTrack = state.tracks[state.tracks.findIndex((t) => t.id === trackId) + 1];
+    const copyBlock = state.blocks.find((block) => block.trackId === copyTrack.id)!;
+    expect(copyBlock.slotBindings).toEqual({ y: sharedId });
+    expect(state.slots).toHaveLength(1);
+  });
+
+  it("does not copy blocks from other tracks", () => {
+    createRectangle(DEFAULT_TRACKS[0].id, 0);
+
+    useExperimentStore.getState().duplicateTrack(DEFAULT_TRACKS[1].id);
+
+    expect(useExperimentStore.getState().blocks).toHaveLength(1);
+  });
+});
+
+describe("track removal", () => {
+  it("removes the requested track and keeps the others", () => {
+    const [first, second] = useExperimentStore.getState().tracks;
+
+    useExperimentStore.getState().removeTrack(first.id);
+
+    const tracks = useExperimentStore.getState().tracks;
+    expect(tracks.map((track) => track.id)).toEqual(
+      DEFAULT_TRACKS.slice(1).map((track) => track.id),
+    );
+    expect(tracks[0].id).toBe(second.id);
+  });
+
+  it("removes the track's blocks and track-local slots", () => {
+    const trackId = DEFAULT_TRACKS[1].id;
+    createRectangle(trackId, 0);
+    addSlot(trackId);
+    const sharedId = addSlot(null);
+
+    useExperimentStore.getState().removeTrack(trackId);
+
+    const state = useExperimentStore.getState();
+    expect(state.blocks).toEqual([]);
+    expect(state.slots.map((slot) => slot.id)).toEqual([sharedId]);
+  });
+
+  it("clears the selection when the selected block was on the removed track", () => {
+    const trackId = DEFAULT_TRACKS[1].id;
+    const rectangleId = createRectangle(trackId, 0);
+    useExperimentStore.getState().select(rectangleId);
+
+    useExperimentStore.getState().removeTrack(trackId);
+
+    expect(useExperimentStore.getState().selectedId).toBeNull();
+  });
+
+  it("keeps the selection when the selected block is on another track", () => {
+    const rectangleId = createRectangle(DEFAULT_TRACKS[0].id, 0);
+    useExperimentStore.getState().select(rectangleId);
+
+    useExperimentStore.getState().removeTrack(DEFAULT_TRACKS[1].id);
+
+    expect(useExperimentStore.getState().selectedId).toBe(rectangleId);
   });
 });

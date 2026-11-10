@@ -12,9 +12,9 @@ import {
 } from "./timeline-rows";
 
 const tracks: readonly Track[] = [
-  { id: "dialogue", label: "Dialogue" },
-  { id: "camera", label: "Camera" },
-  { id: "sound", label: "Sound" },
+  { id: "dialogue", label: "Dialogue", color: "#2563eb" },
+  { id: "camera", label: "Camera", color: "#7c3aed" },
+  { id: "sound", label: "Sound", color: "#059669" },
 ];
 
 function slot(
@@ -137,8 +137,8 @@ describe("nearestTrackRow", () => {
   it("crosses tracks while moving through slot rows", () => {
     const layout = timelineRows(
       [
-        { id: "first", label: "First" },
-        { id: "second", label: "Second" },
+        { id: "first", label: "First", color: "#2563eb" },
+        { id: "second", label: "Second", color: "#7c3aed" },
       ],
       [
         slot("first-a", "first"),
@@ -169,8 +169,8 @@ describe("rowTop", () => {
   it("includes shared slot rows in the cumulative offsets", () => {
     const layout = timelineRows(
       [
-        { id: "first", label: "First" },
-        { id: "second", label: "Second" },
+        { id: "first", label: "First", color: "#2563eb" },
+        { id: "second", label: "Second", color: "#7c3aed" },
       ],
       [
         slot("first-a", "first"),

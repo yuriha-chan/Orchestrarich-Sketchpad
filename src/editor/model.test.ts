@@ -4,6 +4,7 @@ import type {
   MediaPlacement,
   RectanglePlacement,
   TimedPlacement,
+  Track,
 } from "./model";
 import {
   beatsToSeconds,
@@ -148,7 +149,10 @@ describe("canPlace", () => {
   });
 
   it("accepts a track supplied by the timeline", () => {
-    const tracks = [...DEFAULT_TRACKS, { id: "extra", label: "Extra" }];
+    const tracks: readonly Track[] = [
+      ...DEFAULT_TRACKS,
+      { id: "extra", label: "Extra", color: "#d97706" },
+    ];
     expect(canPlace(tracks, [], dialogue({ trackId: "extra" }))).toBe(true);
   });
 });

@@ -117,9 +117,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 204 tests pass (53 core + 12 numeric slots + 29 placement model
-  + 33 store + 16 timeline rows + 33 integration + 8 stage geometry + 7 slot
-  value rail + 7 slot wires + 6 fade editing and dot-pattern tests).
+- `pnpm test`: 216 tests pass (53 core + 12 numeric slots + 29 placement model
+  + 43 store + 16 timeline rows + 33 integration + 8 stage geometry + 7 slot
+  value rail + 9 slot wires + 6 fade editing and dot-pattern tests).
 - `pnpm build`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
@@ -327,6 +327,17 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     edge. A binding whose slot no longer exists has no row and therefore no
     wire; the read is still reported as invalid.
 
+32. A track label carries a color accent and a right-click menu. The menu adds
+    a track below the clicked one, renames it inline, duplicates it, picks one
+    of the preset track colors, or removes it. Removal deletes the track, its
+    blocks, and its track-local slots; shared slots stay, and the selection is
+    cleared only when the selected block was on the removed track. Duplication inserts the copy directly below
+    the source, copies the source track's blocks and track-local slots with new
+    ids, and re-points duplicated bindings to the duplicated slots; bindings to
+    shared slots keep pointing at the shared slot. The track color is document
+    data and appears as an inset accent on the label. The Add track button sits
+    at the foot of the label column; Add slot stays on each track label.
+
 ## Carry-Over
 
 - How a failed block should be surfaced; the current UI has no way to make one
@@ -334,8 +345,8 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 - Whether editing should remain possible while a run is paused or rewound.
 - Per-workspace view state (scroll position, zoom, panel widths) and whether the
   active workspace should persist across reloads.
-- Whether tracks should be renamed, reordered, or removed, and whether the
-  positional "Track N" label is sufficient once a timeline has many tracks.
+- Whether tracks should be reorderable; renaming, duplication, insertion
+  below, removal, and color are now available.
 - Whether the extending column list needs virtualization for very long
   timelines.
 - Which additional workspaces are justified once more views exist (PixiJS

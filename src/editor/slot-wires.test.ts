@@ -12,8 +12,8 @@ import { slotWires, type SlotWireLayout } from "./slot-wires";
 import { timelineRows } from "./timeline-rows";
 
 const tracks: readonly Track[] = [
-  { id: "first", label: "First" },
-  { id: "second", label: "Second" },
+  { id: "first", label: "First", color: "#2563eb" },
+  { id: "second", label: "Second", color: "#7c3aed" },
 ];
 
 const slots: readonly NumericSlot[] = [

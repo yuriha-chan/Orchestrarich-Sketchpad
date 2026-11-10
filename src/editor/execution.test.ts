@@ -9,6 +9,7 @@ import type {
   DurationUnit,
   Placement,
   RectUnit,
+  Track,
 } from "./model";
 import { DEFAULT_TRACKS } from "./model";
 import { createStageStore, type DialogueView } from "./stage-state";
@@ -195,7 +196,10 @@ describe("toTimelineDefinition", () => {
   });
 
   it("includes a track added to the document", () => {
-    const tracks = [...DEFAULT_TRACKS, { id: "extra", label: "Track 4" }];
+    const tracks: readonly Track[] = [
+      ...DEFAULT_TRACKS,
+      { id: "extra", label: "Track 4", color: "#d97706" },
+    ];
     const definition = toTimelineDefinition(tracks, [
       placement({ id: "extra-block", trackId: "extra" }),
     ]);

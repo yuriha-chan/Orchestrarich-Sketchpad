@@ -13,7 +13,19 @@ export type DurationUnit = "beats" | "seconds";
 export interface Track {
   readonly id: string;
   readonly label: string;
+  readonly color: TrackColor;
 }
+
+export const TRACK_COLORS = [
+  "#2563eb",
+  "#7c3aed",
+  "#059669",
+  "#d97706",
+  "#db2777",
+  "#0891b2",
+] as const;
+
+export type TrackColor = (typeof TRACK_COLORS)[number];
 
 export interface SlotProperty {
   readonly key: string;
@@ -255,9 +267,9 @@ export interface PlacementShape {
 }
 
 export const DEFAULT_TRACKS: readonly Track[] = [
-  { id: "dialogue", label: "Dialogue" },
-  { id: "camera", label: "Camera" },
-  { id: "sound", label: "Sound" },
+  { id: "dialogue", label: "Dialogue", color: "#2563eb" },
+  { id: "camera", label: "Camera", color: "#7c3aed" },
+  { id: "sound", label: "Sound", color: "#059669" },
 ];
 
 export const BLOCK_KINDS: readonly BlockKind[] = [

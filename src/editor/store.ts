@@ -6,6 +6,7 @@ import type {
   Placement,
   RectUnit,
   Track,
+  TrackColor,
 } from "./model";
 import {
   canPlace,
@@ -23,6 +24,7 @@ import {
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
   SLOT_CAPABLE_PROPERTIES,
+  TRACK_COLORS,
 } from "./model";
 import type { WorkspaceId } from "./workspaces";
 import { convertRectUnit } from "./stage-geometry";
@@ -39,6 +41,11 @@ interface ExperimentState {
   selectedId: string | null;
   workspace: WorkspaceId;
   addTrack: () => void;
+  addTrackAfter: (trackId: string) => void;
+  renameTrack: (id: string, label: string) => void;
+  duplicateTrack: (id: string) => void;
+  removeTrack: (id: string) => void;
+  setTrackColor: (id: string, color: TrackColor) => void;
   create: (trackId: string, kind: BlockKind, start: number, length: number) => void;
   move: (id: string, trackId: string, start: number) => void;
   resize: (id: string, length: number) => void;
@@ -150,8 +157,106 @@ export const useExperimentStore = create<ExperimentState>()(
         state.tracks.push({
           id: `track-${nextTrackId}`,
           label: `Track ${state.tracks.length + 1}`,
+          color: TRACK_COLORS[state.tracks.length % TRACK_COLORS.length],
         });
         nextTrackId += 1;
+      }),
+    addTrackAfter: (trackId) =>
+      set((state) => {
+        const index = state.tracks.findIndex((track) => track.id === trackId);
+        if (index === -1) {
+          return;
+        }
+        state.tracks.splice(index + 1, 0, {
+          id: `track-${nextTrackId}`,
+          label: `Track ${state.tracks.length + 1}`,
+          color: TRACK_COLORS[state.tracks.length % TRACK_COLORS.length],
+        });
+        nextTrackId += 1;
+      }),
+    renameTrack: (id, label) =>
+      set((state) => {
+        const track = state.tracks.find((candidate) => candidate.id === id);
+        const trimmed = label.trim();
+        if (track !== undefined && trimmed !== "") {
+          track.label = trimmed;
+        }
+      }),
+    duplicateTrack: (trackId) =>
+      set((state) => {
+        const index = state.tracks.findIndex((track) => track.id === trackId);
+        if (index === -1) {
+          return;
+        }
+        const source = state.tracks[index];
+        const id = `track-${nextTrackId}`;
+        const slotIds = new Map<string, string>();
+        const sourceSlots = state.slots.filter(
+          (slot) => slot.trackId === trackId,
+        );
+        const sourceBlocks = state.blocks.filter(
+          (block) => block.trackId === trackId,
+        );
+        state.tracks.splice(index + 1, 0, {
+          ...source,
+          id,
+          label: `${source.label} copy`,
+        });
+        for (const slot of sourceSlots) {
+          const copyId = `slot-${nextSlotId}`;
+          nextSlotId += 1;
+          slotIds.set(slot.id, copyId);
+          state.slots.push({
+            ...slot,
+            id: copyId,
+            trackId: id,
+            initializations: slot.initializations.map((entry) => ({ ...entry })),
+          });
+        }
+        for (const block of sourceBlocks) {
+          const bindings = block.slotBindings;
+          state.blocks.push({
+            ...block,
+            id: `placement-${nextId}`,
+            trackId: id,
+            slotBindings:
+              bindings === undefined
+                ? undefined
+                : Object.fromEntries(
+                    Object.entries(bindings).flatMap(([key, slotId]) =>
+                      slotId === undefined
+                        ? []
+                        : [[key, slotIds.get(slotId) ?? slotId]],
+                    ),
+                  ),
+          });
+          nextId += 1;
+        }
+        nextTrackId += 1;
+      }),
+    removeTrack: (id) =>
+      set((state) => {
+        const removedBlockIds = new Set(
+          state.blocks
+            .filter((block) => block.trackId === id)
+            .map((block) => block.id),
+        );
+        state.tracks = state.tracks.filter((track) => track.id !== id);
+        state.blocks = state.blocks.filter((block) => block.trackId !== id);
+        state.slots = state.slots.filter((slot) => slot.trackId !== id);
+        if (
+          state.selectedId !== null &&
+          removedBlockIds.has(state.selectedId)
+        ) {
+          state.selectedId = null;
+        }
+      }),
+    setTrackColor: (id, color) =>
+      set((state) => {
+        const track = state.tracks.find((candidate) => candidate.id === id);
+        if (track !== undefined) {
+          track.color = color;
+        }
       }),
     create: (trackId, kind, start, length) =>
       set((state) => {

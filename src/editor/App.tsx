@@ -17,6 +17,7 @@ import {
   Check,
   Clapperboard,
   Clock,
+  Copy,
   Eraser,
   Grid2x2,
   Grid3x3,
@@ -25,6 +26,7 @@ import {
   MessageSquare,
   Monitor,
   MonitorPlay,
+  Palette,
   Pencil,
   Play,
   Plus,
@@ -52,6 +54,7 @@ import {
   MIN_BPM,
   MIN_GRID_SIZE,
   SLOT_CAPABLE_PROPERTIES,
+  TRACK_COLORS,
   canPlace,
   isMediaPlacement,
 } from "./model";
@@ -166,6 +169,12 @@ interface ContextMenuState {
   readonly y: number;
 }
 
+interface TrackMenuState {
+  readonly trackId: string;
+  readonly x: number;
+  readonly y: number;
+}
+
 interface SlotDragState {
   readonly slotId: string;
   readonly slotName: string;
@@ -199,6 +208,10 @@ export function App() {
   const tracks = useExperimentStore((state) => state.tracks);
   const slots = useExperimentStore((state) => state.slots);
   const addTrack = useExperimentStore((state) => state.addTrack);
+  const addTrackAfter = useExperimentStore((state) => state.addTrackAfter);
+  const duplicateTrack = useExperimentStore((state) => state.duplicateTrack);
+  const removeTrack = useExperimentStore((state) => state.removeTrack);
+  const setTrackColor = useExperimentStore((state) => state.setTrackColor);
   const addSlot = useExperimentStore((state) => state.addSlot);
   const selectedKind = useExperimentStore((state) => state.selectedKind);
   const selectedId = useExperimentStore((state) => state.selectedId);
@@ -231,6 +244,8 @@ export function App() {
   const setWorkspace = useExperimentStore((state) => state.setWorkspace);
   const [creation, setCreation] = useState<CreationState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [trackMenu, setTrackMenu] = useState<TrackMenuState | null>(null);
+  const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
   const [slotDrag, setSlotDrag] = useState<SlotDragState | null>(null);
   const [columnCount, setColumnCount] = useState(INITIAL_COLUMNS);
   const [run, setRun] = useState<RunState | null>(null);
@@ -288,6 +303,8 @@ export function App() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setContextMenu(null);
+        setTrackMenu(null);
+        setRenamingTrackId(null);
         useExperimentStore.getState().select(null);
       }
     };
@@ -296,10 +313,22 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!contextMenu) {
+    if (editable) {
       return;
     }
-    const close = () => setContextMenu(null);
+    setContextMenu(null);
+    setTrackMenu(null);
+    setRenamingTrackId(null);
+  }, [editable]);
+
+  useEffect(() => {
+    if (!contextMenu && !trackMenu) {
+      return;
+    }
+    const close = () => {
+      setContextMenu(null);
+      setTrackMenu(null);
+    };
     window.addEventListener("pointerdown", close);
     window.addEventListener("resize", close);
     window.addEventListener("blur", close);
@@ -308,7 +337,7 @@ export function App() {
       window.removeEventListener("resize", close);
       window.removeEventListener("blur", close);
     };
-  }, [contextMenu]);
+  }, [contextMenu, trackMenu]);
 
   const blocksById = useMemo(() => {
     const map: Record<string, Placement> = {};
@@ -344,6 +373,9 @@ export function App() {
   const selected = blocks.find((block) => block.id === selectedId) ?? null;
   const menuBlock = contextMenu
     ? (blocks.find((block) => block.id === contextMenu.blockId) ?? null)
+    : null;
+  const menuTrack = trackMenu
+    ? (tracks.find((track) => track.id === trackMenu.trackId) ?? null)
     : null;
   const selectedDuration =
     selected && selected.kind !== "dialogue"
@@ -603,12 +635,28 @@ export function App() {
       setContextMenu(null);
       return;
     }
+    setTrackMenu(null);
     setContextMenu({ blockId: block.id, x: event.clientX, y: event.clientY });
+  };
+
+  const openTrackContextMenu = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    track: Track,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu(null);
+    if (!editable) {
+      setTrackMenu(null);
+      return;
+    }
+    setTrackMenu({ trackId: track.id, x: event.clientX, y: event.clientY });
   };
 
   const handleGridContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     setContextMenu(null);
+    setTrackMenu(null);
     select(null);
   };
 
@@ -746,10 +794,6 @@ export function App() {
         </div>
         {isStaging ? (
           <div className="toolbar-actions">
-            <button type="button" onClick={addTrack} disabled={!editable}>
-              <Plus size={14} aria-hidden="true" />
-              Add track
-            </button>
             <button
               type="button"
               onClick={deleteSelected}
@@ -804,23 +848,17 @@ export function App() {
                     (candidate) => candidate.id === row.trackId,
                   )!;
                   return (
-                    <div
+                    <TrackLabel
                       key={`track-${row.trackId}`}
-                      className={`track-label${rowGroupStarts[rowIndex] ? " is-group-start" : ""}`}
-                      title={track.label}
-                    >
-                      <span className="track-label-text">{track.label}</span>
-                      <button
-                        type="button"
-                        className="slot-add"
-                        aria-label={`Add slot to ${track.label}`}
-                        disabled={!editable}
-                        onClick={() => addSlot(track.id)}
-                      >
-                        <Plus size={11} aria-hidden="true" />
-                        Add slot
-                      </button>
-                    </div>
+                      track={track}
+                      editable={editable}
+                      groupStart={rowGroupStarts[rowIndex]}
+                      renaming={renamingTrackId === track.id}
+                      onEndRename={() => setRenamingTrackId(null)}
+                      onContextMenu={(event) =>
+                        openTrackContextMenu(event, track)
+                      }
+                    />
                   );
                 }
                 const slot = slotsById[row.slotId];
@@ -834,6 +872,18 @@ export function App() {
                   />
                 );
               })}
+              <div className="track-add" style={{ height: SLOT_CONTROL_HEIGHT }}>
+                <button
+                  type="button"
+                  className="slot-add"
+                  aria-label="Add track"
+                  disabled={!editable}
+                  onClick={addTrack}
+                >
+                  <Plus size={11} aria-hidden="true" />
+                  Add track
+                </button>
+              </div>
               <div
                 className="shared-slot-add"
                 style={{ height: SLOT_CONTROL_HEIGHT }}
@@ -987,7 +1037,7 @@ export function App() {
                   </div>
                   <div
                     className="shared-slot-add-spacer"
-                    style={{ height: SLOT_CONTROL_HEIGHT }}
+                    style={{ height: SLOT_CONTROL_HEIGHT * 2 }}
                     aria-hidden="true"
                   />
                 </div>
@@ -1329,6 +1379,91 @@ export function App() {
           </button>
         </div>
       ) : null}
+      {trackMenu && menuTrack ? (
+        <div
+          className="context-menu"
+          role="menu"
+          aria-label={`Actions for track ${menuTrack.label}`}
+          style={{
+            left: clamp(trackMenu.x, 8, window.innerWidth - 228),
+            top: clamp(trackMenu.y, 8, window.innerHeight - 250),
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="context-menu-title">
+            <Palette size={12} aria-hidden="true" />
+            {menuTrack.label}
+          </div>
+          <div className="context-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              addTrackAfter(menuTrack.id);
+              setTrackMenu(null);
+            }}
+          >
+            <Plus size={14} aria-hidden="true" />
+            Add track below
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              setRenamingTrackId(menuTrack.id);
+              setTrackMenu(null);
+            }}
+          >
+            <Pencil size={14} aria-hidden="true" />
+            Rename track
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              duplicateTrack(menuTrack.id);
+              setTrackMenu(null);
+            }}
+          >
+            <Copy size={14} aria-hidden="true" />
+            Duplicate track
+          </button>
+          <div className="context-menu-separator" role="separator" />
+          <div className="context-menu-caption">Track color</div>
+          <div className="track-color-choices">
+            {TRACK_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                className={`track-color-choice${menuTrack.color === color ? " is-active" : ""}`}
+                style={{ background: color }}
+                aria-label={`Set track color ${color}`}
+                onClick={() => {
+                  setTrackColor(menuTrack.id, color);
+                  setTrackMenu(null);
+                }}
+              />
+            ))}
+          </div>
+          <div className="context-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item is-danger"
+            onClick={() => {
+              removeTrack(menuTrack.id);
+              setTrackMenu(null);
+            }}
+          >
+            <Trash size={14} aria-hidden="true" />
+            Remove track
+          </button>
+        </div>
+      ) : null}
       {slotDrag !== null ? (
         <>
           <div
@@ -1443,6 +1578,102 @@ function SlotParameterPopup({
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+function TrackLabel({
+  track,
+  editable,
+  groupStart,
+  renaming,
+  onEndRename,
+  onContextMenu,
+}: {
+  track: Track;
+  editable: boolean;
+  groupStart: boolean;
+  renaming: boolean;
+  onEndRename: () => void;
+  onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => void;
+}) {
+  const addSlot = useExperimentStore((state) => state.addSlot);
+  const renameTrack = useExperimentStore((state) => state.renameTrack);
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    if (renaming) {
+      setDraft(track.label);
+    }
+  }, [renaming, track.label]);
+
+  const commitName = () => {
+    renameTrack(track.id, draft.trim());
+    onEndRename();
+  };
+
+  return (
+    <div
+      className={`track-label${groupStart ? " is-group-start" : ""}`}
+      title={track.label}
+      style={{ boxShadow: `inset 4px 0 0 ${track.color}` }}
+      onContextMenu={onContextMenu}
+    >
+      {renaming ? (
+        <form
+          className="slot-label-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            commitName();
+          }}
+        >
+          <input
+            className="slot-label-input"
+            autoFocus
+            aria-label={`Name for ${track.label}`}
+            placeholder={track.label}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                onEndRename();
+              }
+            }}
+          />
+          <button
+            type="submit"
+            className="slot-action is-icon"
+            aria-label="Save track name"
+            title="Save name"
+          >
+            <Check size={12} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="slot-action is-icon"
+            aria-label="Cancel renaming"
+            title="Cancel"
+            onClick={onEndRename}
+          >
+            <X size={12} aria-hidden="true" />
+          </button>
+        </form>
+      ) : (
+        <>
+          <span className="track-label-text">{track.label}</span>
+          <button
+            type="button"
+            className="slot-add"
+            aria-label={`Add slot to ${track.label}`}
+            disabled={!editable}
+            onClick={() => addSlot(track.id)}
+          >
+            <Plus size={11} aria-hidden="true" />
+            Add slot
+          </button>
+        </>
       )}
     </div>
   );
