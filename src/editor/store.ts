@@ -63,7 +63,7 @@ interface ExperimentState {
   addSlot: (trackId: string | null) => void;
   renameSlot: (id: string, name: string) => void;
   removeSlot: (id: string) => void;
-  clearSlotInitialization: (id: string) => void;
+  clearSlotInitialization: (id: string, time: number) => void;
   initializeSlot: (id: string, time: number, value: number) => void;
   setRectSlot: (
     id: string,
@@ -358,7 +358,7 @@ export const useExperimentStore = create<ExperimentState>()(
         state.slots.push({
           id: `slot-${nextSlotId}`,
           trackId,
-          initialization: null,
+          initializations: [],
         });
         nextSlotId += 1;
       }),
@@ -373,11 +373,13 @@ export const useExperimentStore = create<ExperimentState>()(
       set((state) => {
         state.slots = state.slots.filter((slot) => slot.id !== id);
       }),
-    clearSlotInitialization: (id) =>
+    clearSlotInitialization: (id, time) =>
       set((state) => {
         const slot = state.slots.find((candidate) => candidate.id === id);
         if (slot !== undefined) {
-          slot.initialization = null;
+          slot.initializations = slot.initializations.filter(
+            (initialization) => initialization.time !== time,
+          );
         }
       }),
     initializeSlot: (id, time, value) =>
@@ -389,10 +391,15 @@ export const useExperimentStore = create<ExperimentState>()(
         if (slot === undefined) {
           return;
         }
-        if (slot.initialization !== null && slot.initialization.time !== time) {
+        const existing = slot.initializations.find(
+          (initialization) => initialization.time === time,
+        );
+        if (existing !== undefined) {
+          existing.value = value;
           return;
         }
-        slot.initialization = { time, value };
+        slot.initializations.push({ time, value });
+        slot.initializations.sort((left, right) => left.time - right.time);
       }),
     setRectSlot: (id, field, slotId) =>
       set((state) => {
