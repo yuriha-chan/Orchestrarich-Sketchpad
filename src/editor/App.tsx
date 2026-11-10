@@ -51,6 +51,7 @@ import {
   MAX_GRID_SIZE,
   MIN_BPM,
   MIN_GRID_SIZE,
+  SLOT_CAPABLE_PROPERTIES,
   canPlace,
   isMediaPlacement,
 } from "./model";
@@ -58,7 +59,7 @@ import { generateDotGradientSVG } from "./dot-gradient";
 import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
 import type { FadeBoundary } from "./fade-editing";
 import { useExperimentStore } from "./store";
-import { TimelineSession, rectangleSlotReads } from "./execution";
+import { TimelineSession, slotReads } from "./execution";
 import { Stage } from "./Stage";
 import { createStageStore } from "./stage-state";
 import { compilePlacement, definitionBlocks } from "./execution-definition";
@@ -90,7 +91,6 @@ const INITIAL_COLUMNS = 16;
 const COLUMN_CHUNK = 16;
 const SLOT_EDITOR_WIDTH = 210;
 const SLOT_CONTROL_HEIGHT = 32;
-const SLOT_VALUE_DOT_RADIUS = 8; // half the 16px slot value label height in styles.css
 
 const PHASE_LABELS: Record<TimelinePhase, string> = {
   idle: "Not running",
@@ -155,6 +155,18 @@ interface ContextMenuState {
   readonly y: number;
 }
 
+interface SlotDragState {
+  readonly slotId: string;
+  readonly slotName: string;
+  readonly slotTrackId: string | null;
+  readonly pointerId: number;
+  readonly x: number;
+  readonly y: number;
+  readonly hoveredBlock: Placement | null;
+  readonly hoveredRect: DOMRect | null;
+  readonly hoveredX: number | null;
+}
+
 interface RunState {
   readonly session: TimelineSession;
   readonly snapshot: TimelineSnapshot;
@@ -208,6 +220,7 @@ export function App() {
   const setWorkspace = useExperimentStore((state) => state.setWorkspace);
   const [creation, setCreation] = useState<CreationState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [slotDrag, setSlotDrag] = useState<SlotDragState | null>(null);
   const [columnCount, setColumnCount] = useState(INITIAL_COLUMNS);
   const [run, setRun] = useState<RunState | null>(null);
   const [activity, setActivity] = useState<string | null>(null);
@@ -347,13 +360,127 @@ export function App() {
     return names;
   }, [slots, tracks]);
   const invalidSlotReads = useMemo(
-    () => validateNumericSlotReads(slots, rectangleSlotReads(blocks)),
+    () => validateNumericSlotReads(slots, slotReads(blocks)),
     [slots, blocks],
   );
   const slotValidationMessage = useMemo(
     () => formatSlotValidation(invalidSlotReads, slots, tracks),
     [invalidSlotReads, slots, tracks],
   );
+
+  const beginSlotDrag = useCallback(
+    (
+      slotId: string,
+      slotName: string,
+      slotTrackId: string | null,
+      pointerId: number,
+      x: number,
+      y: number,
+    ) => {
+      setSlotDrag({
+        slotId,
+        slotName,
+        slotTrackId,
+        pointerId,
+        x,
+        y,
+        hoveredBlock: null,
+        hoveredRect: null,
+        hoveredX: null,
+      });
+    },
+    [],
+  );
+
+  const dragPointerId = slotDrag?.pointerId;
+  const dragSlotId = slotDrag?.slotId;
+
+  useEffect(() => {
+    if (dragPointerId === undefined || dragSlotId === undefined) {
+      return;
+    }
+    const handleMove = (event: PointerEvent) => {
+      if (event.pointerId !== dragPointerId) {
+        return;
+      }
+      const element = document.elementFromPoint(event.clientX, event.clientY);
+      const overPopup =
+        element !== null && element.closest("[data-parameter-popup]") !== null;
+      setSlotDrag((current) => {
+        if (current === null) {
+          return null;
+        }
+        const moved = { ...current, x: event.clientX, y: event.clientY };
+        if (overPopup) {
+          return moved;
+        }
+        const blockElement =
+          element === null
+            ? null
+            : element.closest<HTMLElement>("[data-block-id]");
+        const blockId = blockElement?.dataset.blockId;
+        if (blockElement === null || blockId === undefined) {
+          return {
+            ...moved,
+            hoveredBlock: null,
+            hoveredRect: null,
+            hoveredX: null,
+          };
+        }
+        if (blockId === current.hoveredBlock?.id) {
+          return moved;
+        }
+        const hovered = blocks.find((block) => block.id === blockId);
+        if (hovered === undefined) {
+          return {
+            ...moved,
+            hoveredBlock: null,
+            hoveredRect: null,
+            hoveredX: null,
+          };
+        }
+        return {
+          ...moved,
+          hoveredBlock: hovered,
+          hoveredRect: blockElement.getBoundingClientRect(),
+          hoveredX: event.clientX,
+        };
+      });
+    };
+    const handleUp = (event: PointerEvent) => {
+      if (event.pointerId !== dragPointerId) {
+        return;
+      }
+      const element = document.elementFromPoint(event.clientX, event.clientY);
+      const row =
+        element === null
+          ? null
+          : element.closest<HTMLElement>("[data-drop-parameter]");
+      const popup = row?.closest<HTMLElement>("[data-parameter-popup]");
+      const key = row?.dataset.dropParameter;
+      const blockId = popup?.dataset.blockId;
+      if (key !== undefined && blockId !== undefined) {
+        useExperimentStore.getState().setSlotBinding(blockId, key, dragSlotId);
+        useExperimentStore.getState().select(blockId);
+      }
+      setSlotDrag(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSlotDrag(null);
+      }
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [dragPointerId, dragSlotId, blocks]);
 
   const startRun = () => {
     const next = new TimelineSession(tracks, blocks, bpm, useStageStore.getState(), {
@@ -749,6 +876,7 @@ export function App() {
                           columnCount={columnCount}
                           editable={editable}
                           groupStart={rowGroupStarts[rowIndex]}
+                          onValueDragStart={beginSlotDrag}
                         />
                       ),
                     )}
@@ -1148,8 +1276,122 @@ export function App() {
           </button>
         </div>
       ) : null}
+      {slotDrag !== null ? (
+        <>
+          <div
+            className="slot-drag-ghost"
+            style={{ left: slotDrag.x + 16, top: slotDrag.y + 16 }}
+            aria-hidden="true"
+          >
+            {slotDrag.slotName}
+          </div>
+          {slotDrag.hoveredBlock !== null &&
+          slotDrag.hoveredRect !== null &&
+          slotDrag.hoveredX !== null ? (
+            <SlotParameterPopup
+              block={slotDrag.hoveredBlock}
+              blockRect={slotDrag.hoveredRect}
+              anchorX={slotDrag.hoveredX}
+              slotName={slotDrag.slotName}
+              slotTrackId={slotDrag.slotTrackId}
+              slotNames={slotNames}
+            />
+          ) : null}
+        </>
+      ) : null}
       {activity ? <p className="activity">{activity}</p> : null}
     </main>
+  );
+}
+
+function SlotParameterPopup({
+  block,
+  blockRect,
+  anchorX,
+  slotName,
+  slotTrackId,
+  slotNames,
+}: {
+  block: Placement;
+  blockRect: DOMRect;
+  anchorX: number;
+  slotName: string;
+  slotTrackId: string | null;
+  slotNames: ReadonlyMap<string, string>;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({
+    left: blockRect.left,
+    top: blockRect.top,
+  });
+
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (node === null) {
+      return;
+    }
+    const { width, height } = node.getBoundingClientRect();
+    const left = Math.min(
+      Math.max(anchorX - width / 2, 0),
+      Math.max(0, window.innerWidth - width),
+    );
+    const above = blockRect.top - height;
+    setPosition({
+      left,
+      top: above >= 8 ? above : blockRect.bottom,
+    });
+  }, [blockRect, anchorX]);
+
+  const properties = SLOT_CAPABLE_PROPERTIES[block.kind];
+  const sameTrack = slotTrackId === null || slotTrackId === block.trackId;
+
+  return (
+    <div
+      ref={ref}
+      className="parameter-popup"
+      data-parameter-popup=""
+      data-block-id={block.id}
+      role="group"
+      aria-label={`Bind ${slotName} to ${BLOCK_LABELS[block.kind]}`}
+      style={{ left: position.left, top: position.top }}
+    >
+      <div className="parameter-popup-caption">
+        <span className="parameter-popup-slot">{slotName}</span>
+        <span>Drop to bind</span>
+      </div>
+      {!sameTrack ? (
+        <p className="parameter-popup-note">
+          This slot belongs to another track.
+        </p>
+      ) : properties.length === 0 ? (
+        <p className="parameter-popup-note">No slot-capable parameters.</p>
+      ) : (
+        <div className="parameter-popup-list">
+          {properties.map(({ key, label }) => {
+            const bound = block.slotBindings?.[key];
+            return (
+              <div
+                key={key}
+                className={
+                  bound === undefined
+                    ? "parameter-popup-row"
+                    : "parameter-popup-row is-bound"
+                }
+                data-drop-parameter={key}
+                title={`Drop to bind ${label}`}
+              >
+                <span className="parameter-popup-key">{label}</span>
+                <span className="parameter-popup-source">
+                  {bound === undefined
+                    ? "Number"
+                    : (slotNames.get(bound) ?? bound)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1275,12 +1517,21 @@ function SlotRow({
   columnCount,
   editable,
   groupStart,
+  onValueDragStart,
 }: {
   slot: NumericSlot;
   name: string;
   columnCount: number;
   editable: boolean;
   groupStart: boolean;
+  onValueDragStart: (
+    slotId: string,
+    slotName: string,
+    slotTrackId: string | null,
+    pointerId: number,
+    x: number,
+    y: number,
+  ) => void;
 }) {
   const initializeSlot = useExperimentStore((state) => state.initializeSlot);
   const clearSlotInitialization = useExperimentStore(
@@ -1288,12 +1539,61 @@ function SlotRow({
   );
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
+  const [pendingDrag, setPendingDrag] = useState<{
+    pointerId: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const suppressClickUntil = useRef(0);
 
   useEffect(() => {
     if (!editable) {
       setEditing(null);
+      setPendingDrag(null);
     }
   }, [editable]);
+
+  useEffect(() => {
+    if (pendingDrag === null) {
+      return;
+    }
+    const handleMove = (event: PointerEvent) => {
+      if (event.pointerId !== pendingDrag.pointerId) {
+        return;
+      }
+      if (
+        Math.hypot(
+          event.clientX - pendingDrag.x,
+          event.clientY - pendingDrag.y,
+        ) < 4
+      ) {
+        return;
+      }
+      suppressClickUntil.current = performance.now() + 400;
+      setPendingDrag(null);
+      onValueDragStart(
+        slot.id,
+        name,
+        slot.trackId,
+        event.pointerId,
+        event.clientX,
+        event.clientY,
+      );
+    };
+    const handleUp = (event: PointerEvent) => {
+      if (event.pointerId === pendingDrag.pointerId) {
+        setPendingDrag(null);
+      }
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+  }, [pendingDrag, onValueDragStart, slot.id, slot.trackId, name]);
 
   const initializationAt = (time: number) =>
     slot.initializations.find((candidate) => candidate.time === time);
@@ -1348,14 +1648,6 @@ function SlotRow({
             y2={SLOT_HEIGHT / 2}
           />
         ))}
-        {rail.dots.map((time) => (
-          <circle
-            key={`dot-${time}`}
-            cx={gapCenter(time)}
-            cy={SLOT_HEIGHT / 2}
-            r={SLOT_VALUE_DOT_RADIUS}
-          />
-        ))}
       </svg>
       {Array.from({ length: columnCount }, (_, time) => {
         const initialization = initializationAt(time);
@@ -1371,14 +1663,61 @@ function SlotRow({
             aria-label={description}
             title={initialized ? "Edit or delete initialization" : "Initialize slot"}
             disabled={!editable}
-            onClick={() => startEditing(time)}
+            onClick={() => {
+              if (performance.now() < suppressClickUntil.current) {
+                return;
+              }
+              startEditing(time);
+            }}
           >
             {initialization !== undefined ? (
-              <span className="slot-cell-value">{initialization.value}</span>
+              <span
+                className="slot-cell-value"
+                title="Drag to bind a parameter"
+                onPointerDown={(event) => {
+                  if (!editable || event.button !== 0) {
+                    return;
+                  }
+                  event.stopPropagation();
+                  setPendingDrag({
+                    pointerId: event.pointerId,
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                }}
+              >
+                {initialization.value}
+              </span>
             ) : null}
           </button>
         );
       })}
+      {rail.dots.map((time) => (
+        <button
+          key={`dot-${time}`}
+          type="button"
+          className="slot-value-dot"
+          style={{ left: gapCenter(time) }}
+          aria-label={`${name} value at time ${time}; drag to bind a parameter`}
+          title="Drag to bind a parameter"
+          disabled={!editable}
+          onPointerDown={(event) => {
+            if (!editable || event.button !== 0) {
+              return;
+            }
+            event.stopPropagation();
+            event.preventDefault();
+            onValueDragStart(
+              slot.id,
+              name,
+              slot.trackId,
+              event.pointerId,
+              event.clientX,
+              event.clientY,
+            );
+          }}
+        />
+      ))}
       {editing !== null && editable ? (
         <form
           className="slot-editor"
@@ -1485,7 +1824,7 @@ function RectangleProperty({
   ariaLabel: string;
 }) {
   const setRectValue = useExperimentStore((state) => state.setRectValue);
-  const setRectSlot = useExperimentStore((state) => state.setRectSlot);
+  const setSlotBinding = useExperimentStore((state) => state.setSlotBinding);
   const available = slots
     .map((slot, index) => ({ slot, name: slotDisplayName(slot, index, tracks) }))
     .filter(
@@ -1508,7 +1847,7 @@ function RectangleProperty({
         disabled={!editable}
         onChange={(event) => {
           const next = event.target.value;
-          setRectSlot(placementId, field, next === "" ? null : next);
+          setSlotBinding(placementId, field, next === "" ? null : next);
         }}
       >
         <option value="">Number</option>
@@ -1773,6 +2112,7 @@ function BlockView({
   return (
     <div
       className={className}
+      data-block-id={block.id}
       style={{
         left: block.start * CELL_WIDTH + CELL_GAP + 3,
         top: rowTop(rows, trackIndex, TRACK_HEIGHT, SLOT_HEIGHT) + 3,

@@ -294,6 +294,13 @@ describe("convertPlacementKind", () => {
     expect("x" in converted).toBe(false);
     expect("rectUnit" in converted).toBe(false);
   });
+  it("drops slot bindings the new kind does not expose", () => {
+    const converted = convertPlacementKind(
+      rectangle({ slotBindings: { x: "x-slot", h: "h-slot" } }),
+      "camera",
+    );
+    expect("slotBindings" in converted).toBe(false);
+  });
 });
 
 describe("fades", () => {

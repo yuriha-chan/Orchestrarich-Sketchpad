@@ -21,6 +21,12 @@ the property's span or pixel unit. A read uses the latest initialization at or
 before the read time, so an initialization at the rectangle's start time is
 applied before the rectangle reads its inputs.
 
+Slot values can be dragged. Dragging a value pill or a rail dot onto a block
+shows that block's slot-capable parameters; dropping on one binds the property
+to the slot, like the inspector's source selector. The capable parameters are
+per-kind data in `SLOT_CAPABLE_PROPERTIES`; only rectangle geometry is capable
+in the current slice. A track-local slot can bind only within its track.
+
 The editor reports invalid reads and disables Run. The execution session also
 refuses to start if a referenced slot is missing, inaccessible, empty, or only
 initialized after the read. Numeric slots and read validation are independent of

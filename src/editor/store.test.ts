@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { validateNumericSlotReads } from "../core/slots/numeric-slots";
-import { rectangleSlotReads } from "./execution";
+import { slotReads } from "./execution";
 import { DEFAULT_TRACKS, type RectanglePlacement } from "./model";
 import { useExperimentStore } from "./store";
 
@@ -175,7 +175,7 @@ describe("rectangle slot selection", () => {
     const slotId = addSlot(null);
 
     for (const field of ["x", "y", "w", "h"] as const) {
-      useExperimentStore.getState().setRectSlot(rectangleId, field, slotId);
+      useExperimentStore.getState().setSlotBinding(rectangleId, field, slotId);
     }
 
     expect(rectangle(rectangleId).slotBindings).toEqual({
@@ -190,7 +190,7 @@ describe("rectangle slot selection", () => {
     const rectangleId = createRectangle(DEFAULT_TRACKS[1].id);
     const slotId = addSlot(DEFAULT_TRACKS[1].id);
 
-    useExperimentStore.getState().setRectSlot(rectangleId, "x", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
 
     expect(rectangle(rectangleId).slotBindings?.x).toBe(slotId);
   });
@@ -199,7 +199,7 @@ describe("rectangle slot selection", () => {
     const rectangleId = createRectangle(DEFAULT_TRACKS[2].id);
     const slotId = addSlot(null);
 
-    useExperimentStore.getState().setRectSlot(rectangleId, "h", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "h", slotId);
 
     expect(rectangle(rectangleId).slotBindings?.h).toBe(slotId);
   });
@@ -208,7 +208,7 @@ describe("rectangle slot selection", () => {
     const rectangleId = createRectangle(DEFAULT_TRACKS[1].id);
     const slotId = addSlot(DEFAULT_TRACKS[2].id);
 
-    useExperimentStore.getState().setRectSlot(rectangleId, "x", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
 
     expect(rectangle(rectangleId).slotBindings?.x).toBeUndefined();
   });
@@ -216,9 +216,42 @@ describe("rectangle slot selection", () => {
   it("rejects a nonexistent slot", () => {
     const rectangleId = createRectangle();
 
-    useExperimentStore.getState().setRectSlot(rectangleId, "y", "missing");
+    useExperimentStore.getState().setSlotBinding(rectangleId, "y", "missing");
 
     expect(rectangle(rectangleId).slotBindings?.y).toBeUndefined();
+  });
+  it("rejects a property key the block kind does not expose", () => {
+    const rectangleId = createRectangle();
+    const slotId = addSlot(null);
+
+    useExperimentStore.getState().setSlotBinding(rectangleId, "z", slotId);
+
+    expect(rectangle(rectangleId).slotBindings).toBeUndefined();
+  });
+
+  it("rejects a slot binding on a kind without slot-capable properties", () => {
+    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "camera", 0, 1);
+    const cameraId = useExperimentStore.getState().blocks[0].id;
+    const slotId = addSlot(null);
+
+    useExperimentStore.getState().setSlotBinding(cameraId, "x", slotId);
+
+    const camera = useExperimentStore
+      .getState()
+      .blocks.find((block) => block.id === cameraId);
+    expect(camera?.slotBindings).toBeUndefined();
+  });
+
+  it("unbinds only the requested property", () => {
+    const rectangleId = createRectangle();
+    const first = addSlot(null);
+    const second = addSlot(null);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", first);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "y", second);
+
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", null);
+
+    expect(rectangle(rectangleId).slotBindings).toEqual({ y: second });
   });
 
   it("switches a field back to its previous immediate number", () => {
@@ -226,11 +259,11 @@ describe("rectangle slot selection", () => {
     useExperimentStore.getState().setRectValue(rectangleId, "x", 4);
     const slotId = addSlot(null);
 
-    useExperimentStore.getState().setRectSlot(rectangleId, "x", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
     expect(rectangle(rectangleId).x).toBe(4);
     expect(rectangle(rectangleId).slotBindings?.x).toBe(slotId);
 
-    useExperimentStore.getState().setRectSlot(rectangleId, "x", null);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", null);
 
     expect(rectangle(rectangleId).x).toBe(4);
     expect(rectangle(rectangleId).slotBindings?.x).toBeUndefined();
@@ -240,7 +273,7 @@ describe("rectangle slot selection", () => {
     const rectangleId = createRectangle();
     const slotId = addSlot(null);
     useExperimentStore.getState().initializeSlot(slotId, 0, 3);
-    useExperimentStore.getState().setRectSlot(rectangleId, "x", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
 
     useExperimentStore.getState().setRectUnit(rectangleId, "pixels", 20);
 
@@ -305,7 +338,7 @@ describe("slot removal", () => {
     const rectangleId = createRectangle(DEFAULT_TRACKS[1].id);
     const slotId = addSlot(DEFAULT_TRACKS[1].id);
     useExperimentStore.getState().initializeSlot(slotId, 0, 3);
-    useExperimentStore.getState().setRectSlot(rectangleId, "x", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
 
     useExperimentStore.getState().removeSlot(slotId);
 
@@ -317,12 +350,12 @@ describe("slot removal", () => {
     const rectangleId = createRectangle(DEFAULT_TRACKS[1].id);
     const slotId = addSlot(DEFAULT_TRACKS[1].id);
     useExperimentStore.getState().initializeSlot(slotId, 0, 3);
-    useExperimentStore.getState().setRectSlot(rectangleId, "x", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
 
     useExperimentStore.getState().removeSlot(slotId);
 
     const { slots, blocks } = useExperimentStore.getState();
-    expect(validateNumericSlotReads(slots, rectangleSlotReads(blocks))).toEqual([
+    expect(validateNumericSlotReads(slots, slotReads(blocks))).toEqual([
       { slotId, trackId: DEFAULT_TRACKS[1].id, time: 0 },
     ]);
   });
@@ -364,17 +397,17 @@ describe("slot initialization clearing", () => {
     const rectangleId = createRectangle();
     const slotId = addSlot(null);
     useExperimentStore.getState().initializeSlot(slotId, 0, 3);
-    useExperimentStore.getState().setRectSlot(rectangleId, "x", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
     const before = useExperimentStore.getState();
     expect(
-      validateNumericSlotReads(before.slots, rectangleSlotReads(before.blocks)),
+      validateNumericSlotReads(before.slots, slotReads(before.blocks)),
     ).toEqual([]);
 
     useExperimentStore.getState().clearSlotInitialization(slotId, 0);
 
     const after = useExperimentStore.getState();
     expect(
-      validateNumericSlotReads(after.slots, rectangleSlotReads(after.blocks)),
+      validateNumericSlotReads(after.slots, slotReads(after.blocks)),
     ).toEqual([{ slotId, trackId: DEFAULT_TRACKS[1].id, time: 0 }]);
   });
 

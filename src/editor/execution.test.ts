@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimelineSnapshot } from "../core/execution/timeline-runner.ts";
 import type { NumericSlot } from "../core/slots/numeric-slots.ts";
-import { TimelineSession, SKIP_FADE_MS, toTimelineDefinition, type ExecutionInstance } from "./execution";
+import { TimelineSession, SKIP_FADE_MS, slotReads, toTimelineDefinition, type ExecutionInstance } from "./execution";
 import { compilePlacement, definitionBlocks, isMultiPhase, type ExecutionDefinition } from "./execution-definition";
 import type {
   BlockKind,
@@ -26,7 +26,7 @@ type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
   w?: number;
   h?: number;
   rectUnit?: RectUnit;
-  slotBindings?: Partial<Record<"x" | "y" | "w" | "h", string>>;
+  slotBindings?: Partial<Record<string, string>>;
 };
 
 function placement(overrides: PlacementOverrides = {}): Placement {
@@ -51,6 +51,7 @@ function placement(overrides: PlacementOverrides = {}): Placement {
     start: 0,
     length: 1,
     cooperativeSkip: false,
+    ...(slotBindings === undefined ? {} : { slotBindings }),
     ...rest,
   };
   if (kind === "dialogue") {
@@ -80,7 +81,6 @@ function placement(overrides: PlacementOverrides = {}): Placement {
       w: w ?? 1,
       h: h ?? 1,
       rectUnit: rectUnit ?? "span",
-      ...(slotBindings === undefined ? {} : { slotBindings }),
     };
   }
   return { ...base, kind, ...durationFields };
@@ -229,6 +229,37 @@ describe("execution structure", () => {
       { id: "placement-1~0", start: 0, length: 1, cooperativeSkip: false },
       { id: "placement-1~1", start: 1, length: 2, cooperativeSkip: false },
     ]);
+  });
+});
+
+describe("slotReads", () => {
+  it("derives reads for each slot-capable property in capability order", () => {
+    const reads = slotReads([
+      placement({
+        id: "rect",
+        trackId: DEFAULT_TRACKS[1].id,
+        kind: "rectangle",
+        start: 3,
+        slotBindings: { h: "height-slot", x: "x-slot" },
+      }),
+    ]);
+
+    expect(reads).toEqual([
+      { slotId: "x-slot", trackId: DEFAULT_TRACKS[1].id, time: 3 },
+      { slotId: "height-slot", trackId: DEFAULT_TRACKS[1].id, time: 3 },
+    ]);
+  });
+
+  it("ignores bindings on block kinds without slot-capable properties", () => {
+    const reads = slotReads([
+      placement({
+        id: "camera",
+        kind: "camera",
+        slotBindings: { x: "x-slot" },
+      }),
+    ]);
+
+    expect(reads).toEqual([]);
   });
 });
 

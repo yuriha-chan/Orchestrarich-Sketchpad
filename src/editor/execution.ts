@@ -12,7 +12,7 @@ import {
   type NumericSlot,
   type NumericSlotRead,
 } from "../core/slots/numeric-slots.ts";
-import type { Placement, Track } from "./model";
+import { SLOT_CAPABLE_PROPERTIES, type Placement, type Track } from "./model";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";
 
@@ -41,14 +41,18 @@ export function toTimelineDefinition(
   };
 }
 
-export function rectangleSlotReads(placements: readonly Placement[]): NumericSlotRead[] {
+export function slotReads(placements: readonly Placement[]): NumericSlotRead[] {
   const reads: NumericSlotRead[] = [];
   for (const placement of placements) {
-    if (placement.kind !== "rectangle") continue;
     const bindings = placement.slotBindings;
-    if (bindings === undefined) continue;
-    for (const slotId of [bindings.x, bindings.y, bindings.w, bindings.h]) {
-      if (slotId === undefined) continue;
+    if (bindings === undefined) {
+      continue;
+    }
+    for (const { key } of SLOT_CAPABLE_PROPERTIES[placement.kind]) {
+      const slotId = bindings[key];
+      if (slotId === undefined) {
+        continue;
+      }
       reads.push({
         slotId,
         trackId: placement.trackId,
@@ -126,7 +130,7 @@ export class TimelineSession {
   start(): void {
     const invalidReads = validateNumericSlotReads(
       this.options.slots ?? [],
-      rectangleSlotReads(this.placements),
+      slotReads(this.placements),
     );
     if (invalidReads.length > 0) {
       const details = invalidReads

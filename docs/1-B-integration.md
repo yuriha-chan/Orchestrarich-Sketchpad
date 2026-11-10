@@ -295,6 +295,18 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     Geometry is edited numerically in the inspector for now; a stage drag
     gesture is not introduced.
 
+30. Slot-capable properties are declared as per-kind data in
+    `SLOT_CAPABLE_PROPERTIES`; consumers look up that table instead of
+    branching on block kind. Dragging a slot value pill or a rail dot onto a
+    block opens a drop-area popup directly above the block with no gap, so the
+    pointer can move from the block into the popup without losing it. Each
+    capable property is a large drop target in a grid; a property already
+    bound to a slot is marked distinctly. Dropping on one binds the property
+    to the slot. The binding is a reference, not an assignment of the current
+    literal value. A track-local slot can bind only to blocks on its track; a
+    shared slot can bind on any track. The inspector's source selector remains
+    the non-pointer path.
+
 ## Carry-Over
 
 - How a failed block should be surfaced; the current UI has no way to make one

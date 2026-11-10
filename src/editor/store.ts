@@ -22,6 +22,7 @@ import {
   isRectanglePlacement,
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
+  SLOT_CAPABLE_PROPERTIES,
 } from "./model";
 import type { WorkspaceId } from "./workspaces";
 import { convertRectUnit } from "./stage-geometry";
@@ -65,9 +66,9 @@ interface ExperimentState {
   removeSlot: (id: string) => void;
   clearSlotInitialization: (id: string, time: number) => void;
   initializeSlot: (id: string, time: number, value: number) => void;
-  setRectSlot: (
+  setSlotBinding: (
     id: string,
-    field: "x" | "y" | "w" | "h",
+    key: string,
     slotId: string | null,
   ) => void;
   setBpm: (value: number) => void;
@@ -401,15 +402,15 @@ export const useExperimentStore = create<ExperimentState>()(
         slot.initializations.push({ time, value });
         slot.initializations.sort((left, right) => left.time - right.time);
       }),
-    setRectSlot: (id, field, slotId) =>
+    setSlotBinding: (id, key, slotId) =>
       set((state) => {
         editBlock(state, id, (block) => {
-          if (!isRectanglePlacement(block)) {
+          if (!SLOT_CAPABLE_PROPERTIES[block.kind].some((property) => property.key === key)) {
             return;
           }
           if (slotId === null) {
             if (block.slotBindings !== undefined) {
-              delete block.slotBindings[field];
+              delete block.slotBindings[key];
               if (Object.keys(block.slotBindings).length === 0) {
                 delete block.slotBindings;
               }
@@ -424,7 +425,7 @@ export const useExperimentStore = create<ExperimentState>()(
             return;
           }
           block.slotBindings ??= {};
-          block.slotBindings[field] = slotId;
+          block.slotBindings[key] = slotId;
         });
       }),
     setBpm: (value) =>

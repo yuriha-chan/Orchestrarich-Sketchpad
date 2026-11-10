@@ -15,12 +15,18 @@ export interface Track {
   readonly label: string;
 }
 
+export interface SlotProperty {
+  readonly key: string;
+  readonly label: string;
+}
+
 interface PlacementBase {
   id: string;
   trackId: string;
   start: number;
   length: number;
   cooperativeSkip: boolean;
+  slotBindings?: Partial<Record<string, string>>;
 }
 
 export interface DialoguePlacement extends PlacementBase {
@@ -63,7 +69,6 @@ export const DEFAULT_RECT_GEOMETRY: RectGeometry = {
 
 export interface RectanglePlacement extends DurationPlacementBase, RectGeometry {
   kind: "rectangle";
-  slotBindings?: Partial<Record<"x" | "y" | "w" | "h", string>>;
 }
 
 export type DurationPlacement = TimedPlacement | MediaPlacement | RectanglePlacement;
@@ -81,6 +86,20 @@ export function isRectanglePlacement(
 ): placement is RectanglePlacement {
   return placement.kind === "rectangle";
 }
+
+export const SLOT_CAPABLE_PROPERTIES: Record<BlockKind, readonly SlotProperty[]> = {
+  dialogue: [],
+  camera: [],
+  sound: [],
+  animation: [],
+  wait: [],
+  rectangle: [
+    { key: "x", label: "X" },
+    { key: "y", label: "Y" },
+    { key: "w", label: "Width" },
+    { key: "h", label: "Height" },
+  ],
+};
 
 export const DEFAULT_BPM = 120;
 export const MIN_BPM = 20;
@@ -178,12 +197,22 @@ export function convertPlacementKind(
   if (placement.kind === kind) {
     return placement;
   }
+  const retainedBindings: Partial<Record<string, string>> = {};
+  for (const { key } of SLOT_CAPABLE_PROPERTIES[kind]) {
+    const slotId = placement.slotBindings?.[key];
+    if (slotId !== undefined) {
+      retainedBindings[key] = slotId;
+    }
+  }
   const base = {
     id: placement.id,
     trackId: placement.trackId,
     start: placement.start,
     length: placement.length,
     cooperativeSkip: placement.cooperativeSkip,
+    ...(Object.keys(retainedBindings).length === 0
+      ? {}
+      : { slotBindings: retainedBindings }),
   };
   if (kind === "dialogue") {
     return { ...base, kind };
