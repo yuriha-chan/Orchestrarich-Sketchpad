@@ -1,3 +1,4 @@
+import { current } from "immer";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type {
@@ -30,6 +31,15 @@ import {
   SLOT_CAPABLE_PROPERTIES,
   TRACK_COLORS,
 } from "./model";
+import {
+  allLoops,
+  blocksRespectLoops,
+  insertLoop,
+  removeLoopNode,
+  setLoopSpan,
+  wrappableSpan,
+  type LoopNode,
+} from "./loops";
 import type { WorkspaceId } from "./workspaces";
 import { convertRectUnit } from "./stage-geometry";
 import type { NumericSlot } from "../core/slots/numeric-slots";
@@ -39,6 +49,7 @@ interface ExperimentState {
   tracks: Track[];
   slots: NumericSlot[];
   bpm: number;
+  loops: LoopNode[];
   gridColumns: number;
   gridRows: number;
   selectedKind: BlockKind;
@@ -86,6 +97,14 @@ interface ExperimentState {
     slotId: string | null,
   ) => void;
   setBpm: (value: number) => void;
+  addLoopForBlock: (id: string) => void;
+  addLoopAtCell: (time: number) => void;
+  removeLoop: (id: string) => void;
+  setLoopBoundary: (
+    id: string,
+    edge: "start" | "end",
+    value: number,
+  ) => void;
   setGridColumns: (value: number) => void;
   setGridRows: (value: number) => void;
   setWorkspace: (id: WorkspaceId) => void;
@@ -94,6 +113,7 @@ interface ExperimentState {
 interface SpanState {
   blocks: Placement[];
   tracks: Track[];
+  loops: readonly LoopNode[];
 }
 
 function editBlock(
@@ -119,6 +139,7 @@ function applySpan(
       state.tracks,
       state.blocks,
       { trackId: block.trackId, start, length },
+      allLoops(state.loops),
       block.id,
     )
   ) {
@@ -151,6 +172,7 @@ function clampColorChannel(value: number): number {
 let nextId = 1;
 let nextTrackId = 1;
 let nextSlotId = 1;
+let nextLoopId = 1;
 
 export const useExperimentStore = create<ExperimentState>()(
   immer((set) => ({
@@ -158,6 +180,7 @@ export const useExperimentStore = create<ExperimentState>()(
     tracks: DEFAULT_TRACKS.map((track) => ({ ...track })),
     slots: [],
     bpm: DEFAULT_BPM,
+    loops: [],
     gridColumns: DEFAULT_GRID_COLUMNS,
     gridRows: DEFAULT_GRID_ROWS,
     selectedKind: "dialogue",
@@ -310,7 +333,9 @@ export const useExperimentStore = create<ExperimentState>()(
                     durationUnit: "beats",
                     syncBeatsToCellSpan: false,
                   };
-        if (!canPlace(state.tracks, state.blocks, candidate)) {
+        if (
+          !canPlace(state.tracks, state.blocks, candidate, allLoops(state.loops))
+        ) {
           return;
         }
         nextId += 1;
@@ -325,6 +350,7 @@ export const useExperimentStore = create<ExperimentState>()(
               state.tracks,
               state.blocks,
               { trackId, start, length: block.length },
+              allLoops(state.loops),
               id,
             )
           ) {
@@ -358,6 +384,7 @@ export const useExperimentStore = create<ExperimentState>()(
           source.trackId,
           source.start + source.length,
           source.length,
+          allLoops(state.loops),
         );
         state.blocks.push({
           ...source,
@@ -610,6 +637,67 @@ export const useExperimentStore = create<ExperimentState>()(
         if (Number.isFinite(value) && value > 0) {
           state.bpm = value;
         }
+      }),
+    addLoopForBlock: (id) =>
+      set((state) => {
+        const block = state.blocks.find((candidate) => candidate.id === id);
+        if (block === undefined) {
+          return;
+        }
+        const span = wrappableSpan(state.blocks, block.start, block.length);
+        const loops = insertLoop(
+          current(state.loops),
+          `loop-${nextLoopId}`,
+          span.start,
+          span.end,
+        );
+        if (loops !== null) {
+          state.loops = loops;
+          nextLoopId += 1;
+        }
+      }),
+    addLoopAtCell: (time) =>
+      set((state) => {
+        if (!Number.isInteger(time) || time < 0) {
+          return;
+        }
+        const span = wrappableSpan(state.blocks, time, 1);
+        const loops = insertLoop(
+          current(state.loops),
+          `loop-${nextLoopId}`,
+          span.start,
+          span.end,
+        );
+        if (loops !== null) {
+          state.loops = loops;
+          nextLoopId += 1;
+        }
+      }),
+    removeLoop: (id) =>
+      set((state) => {
+        state.loops = removeLoopNode(current(state.loops), id);
+      }),
+    setLoopBoundary: (id, edge, value) =>
+      set((state) => {
+        const node = allLoops(state.loops).find(
+          (candidate) => candidate.id === id,
+        );
+        if (node === undefined || !Number.isInteger(value) || value < 0) {
+          return;
+        }
+        const start = edge === "start" ? value : node.start;
+        const end = edge === "end" ? value : node.end;
+        if (end <= start) {
+          return;
+        }
+        const loops = setLoopSpan(current(state.loops), id, start, end);
+        if (loops === null) {
+          return;
+        }
+        if (!blocksRespectLoops(state.blocks, allLoops(loops))) {
+          return;
+        }
+        state.loops = loops;
       }),
     setGridColumns: (value) =>
       set((state) => {

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -31,6 +32,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Repeat,
   RotateCcw,
   SkipForward,
   SlidersHorizontal,
@@ -66,6 +68,8 @@ import { generateDotGradientSVG } from "./dot-gradient";
 import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
 import type { FadeBoundary } from "./fade-editing";
 import { useExperimentStore } from "./store";
+import { allLoops, maxLoopDepth, type LoopNode } from "./loops";
+import { loopLevelColor } from "./loop-colors";
 import { TimelineSession, slotReads, slotWrites } from "./execution";
 import { Stage } from "./Stage";
 import { createStageStore } from "./stage-state";
@@ -103,6 +107,7 @@ const COLUMN_CHUNK = 16;
 const SLOT_EDITOR_WIDTH = 210;
 const SLOT_CONTROL_HEIGHT = 32;
 const SLOT_WIRE_CASING_INSET = 4;
+const LOOP_LANE_HEIGHT = 24;
 
 const SLOT_WIRE_LAYOUT = {
   cellWidth: CELL_WIDTH,
@@ -170,17 +175,31 @@ interface CreationState {
   readonly current: number;
 }
 
-interface ContextMenuState {
-  readonly blockId: string;
-  readonly x: number;
-  readonly y: number;
-}
-
-interface TrackMenuState {
-  readonly trackId: string;
-  readonly x: number;
-  readonly y: number;
-}
+type MenuState =
+  | {
+      readonly kind: "block";
+      readonly blockId: string;
+      readonly x: number;
+      readonly y: number;
+    }
+  | {
+      readonly kind: "track";
+      readonly trackId: string;
+      readonly x: number;
+      readonly y: number;
+    }
+  | {
+      readonly kind: "grid";
+      readonly time: number;
+      readonly x: number;
+      readonly y: number;
+    }
+  | {
+      readonly kind: "loop";
+      readonly loopId: string;
+      readonly x: number;
+      readonly y: number;
+    };
 
 interface SlotDragState {
   readonly slotId: string;
@@ -192,6 +211,12 @@ interface SlotDragState {
   readonly hoveredBlock: Placement | null;
   readonly hoveredRect: DOMRect | null;
   readonly hoveredX: number | null;
+}
+
+interface LoopDragState {
+  readonly loopId: string;
+  readonly edge: "start" | "end";
+  readonly pointerId: number;
 }
 
 interface RunState {
@@ -206,6 +231,8 @@ const gridVariables = {
   "--cell-gap": `${CELL_GAP}px`,
   "--track-height": `${TRACK_HEIGHT}px`,
   "--slot-height": `${SLOT_HEIGHT}px`,
+  "--loop-height": "24px",
+  "--loop-lane-height": `${LOOP_LANE_HEIGHT}px`,
 } as CSSProperties;
 
 export function App() {
@@ -214,6 +241,7 @@ export function App() {
   const blocks = useExperimentStore((state) => state.blocks);
   const tracks = useExperimentStore((state) => state.tracks);
   const slots = useExperimentStore((state) => state.slots);
+  const loops = useExperimentStore((state) => state.loops);
   const addTrack = useExperimentStore((state) => state.addTrack);
   const addTrackAfter = useExperimentStore((state) => state.addTrackAfter);
   const duplicateTrack = useExperimentStore((state) => state.duplicateTrack);
@@ -238,6 +266,10 @@ export function App() {
   const setFadeOut = useExperimentStore((state) => state.setFadeOut);
   const bpm = useExperimentStore((state) => state.bpm);
   const setBpm = useExperimentStore((state) => state.setBpm);
+  const addLoopForBlock = useExperimentStore((state) => state.addLoopForBlock);
+  const addLoopAtCell = useExperimentStore((state) => state.addLoopAtCell);
+  const removeLoop = useExperimentStore((state) => state.removeLoop);
+  const setLoopBoundary = useExperimentStore((state) => state.setLoopBoundary);
   const gridColumns = useExperimentStore((state) => state.gridColumns);
   const gridRows = useExperimentStore((state) => state.gridRows);
   const setGridColumns = useExperimentStore((state) => state.setGridColumns);
@@ -256,16 +288,21 @@ export function App() {
   const workspace = useExperimentStore((state) => state.workspace);
   const setWorkspace = useExperimentStore((state) => state.setWorkspace);
   const [creation, setCreation] = useState<CreationState | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [trackMenu, setTrackMenu] = useState<TrackMenuState | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
   const [slotDrag, setSlotDrag] = useState<SlotDragState | null>(null);
   const [columnCount, setColumnCount] = useState(INITIAL_COLUMNS);
+  const [loopDrag, setLoopDrag] = useState<LoopDragState | null>(null);
   const [run, setRun] = useState<RunState | null>(null);
   const [activity, setActivity] = useState<string | null>(null);
   const [stageSpan, setStageSpan] = useState(0);
   const sessionRef = useRef<TimelineSession | null>(null);
+  const loopBarRef = useRef<HTMLDivElement | null>(null);
 
+  const loopEntries = useMemo(() => flattenLoops(loops), [loops]);
+  const loopBarHeight =
+    Math.max(1, maxLoopDepth(loops)) * LOOP_LANE_HEIGHT;
+  const loopRegions = useMemo(() => allLoops(loops), [loops]);
   const editable = run === null;
   const phase: TimelinePhase = run?.snapshot.phase ?? "idle";
   const runningRun =
@@ -286,6 +323,16 @@ export function App() {
       Math.max(count, block.start + block.length),
     );
   }, [blocks, selectedId]);
+
+  useEffect(() => {
+    const end = loopRegions.reduce(
+      (maximum, region) => Math.max(maximum, region.end),
+      0,
+    );
+    if (end > 0) {
+      setColumnCount((count) => Math.max(count, end));
+    }
+  }, [loopRegions]);
 
   useEffect(() => {
     return () => {
@@ -325,8 +372,7 @@ export function App() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setContextMenu(null);
-        setTrackMenu(null);
+        setMenu(null);
         setRenamingTrackId(null);
         useExperimentStore.getState().select(null);
       }
@@ -339,19 +385,15 @@ export function App() {
     if (editable) {
       return;
     }
-    setContextMenu(null);
-    setTrackMenu(null);
+    setMenu(null);
     setRenamingTrackId(null);
   }, [editable]);
 
   useEffect(() => {
-    if (!contextMenu && !trackMenu) {
+    if (menu === null) {
       return;
     }
-    const close = () => {
-      setContextMenu(null);
-      setTrackMenu(null);
-    };
+    const close = () => setMenu(null);
     window.addEventListener("pointerdown", close);
     window.addEventListener("resize", close);
     window.addEventListener("blur", close);
@@ -360,7 +402,7 @@ export function App() {
       window.removeEventListener("resize", close);
       window.removeEventListener("blur", close);
     };
-  }, [contextMenu, trackMenu]);
+  }, [menu]);
 
   const blocksById = useMemo(() => {
     const map: Record<string, Placement> = {};
@@ -394,12 +436,18 @@ export function App() {
   });
 
   const selected = blocks.find((block) => block.id === selectedId) ?? null;
-  const menuBlock = contextMenu
-    ? (blocks.find((block) => block.id === contextMenu.blockId) ?? null)
-    : null;
-  const menuTrack = trackMenu
-    ? (tracks.find((track) => track.id === trackMenu.trackId) ?? null)
-    : null;
+  const menuBlock =
+    menu?.kind === "block"
+      ? (blocks.find((block) => block.id === menu.blockId) ?? null)
+      : null;
+  const menuTrack =
+    menu?.kind === "track"
+      ? (tracks.find((track) => track.id === menu.trackId) ?? null)
+      : null;
+  const menuLoop =
+    menu?.kind === "loop"
+      ? (loopRegions.find((node) => node.id === menu.loopId) ?? null)
+      : null;
   const selectedDuration =
     selected && isDurationPlacement(selected)
       ? roundTo(
@@ -623,7 +671,7 @@ export function App() {
       return;
     }
     const start = cellFromPointer(event, columnCount);
-    if (!canPlace(tracks, blocks, { trackId, start, length: 1 })) {
+    if (!canPlace(tracks, blocks, { trackId, start, length: 1 }, loopRegions)) {
       return;
     }
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -679,11 +727,15 @@ export function App() {
     event.stopPropagation();
     select(block.id);
     if (!editable) {
-      setContextMenu(null);
+      setMenu(null);
       return;
     }
-    setTrackMenu(null);
-    setContextMenu({ blockId: block.id, x: event.clientX, y: event.clientY });
+    setMenu({
+      kind: "block",
+      blockId: block.id,
+      x: event.clientX,
+      y: event.clientY,
+    });
   };
 
   const openTrackContextMenu = (
@@ -692,19 +744,43 @@ export function App() {
   ) => {
     event.preventDefault();
     event.stopPropagation();
-    setContextMenu(null);
+    setMenu(null);
     if (!editable) {
-      setTrackMenu(null);
       return;
     }
-    setTrackMenu({ trackId: track.id, x: event.clientX, y: event.clientY });
+    setMenu({
+      kind: "track",
+      trackId: track.id,
+      x: event.clientX,
+      y: event.clientY,
+    });
   };
 
   const handleGridContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
-    setContextMenu(null);
-    setTrackMenu(null);
+    setMenu(null);
     select(null);
+    if (!editable) {
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const time = Math.max(
+      0,
+      Math.floor((event.clientX - rect.left + CELL_GAP / 2) / CELL_WIDTH),
+    );
+    setMenu({ kind: "grid", time, x: event.clientX, y: event.clientY });
+  };
+
+  const openLoopContextMenu = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    node: LoopNode,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!editable) {
+      return;
+    }
+    setMenu({ kind: "loop", loopId: node.id, x: event.clientX, y: event.clientY });
   };
 
   const handleGridScroll = (event: ReactUIEvent<HTMLDivElement>) => {
@@ -714,6 +790,51 @@ export function App() {
       element.scrollWidth - CELL_WIDTH * 4
     ) {
       setColumnCount((count) => count + COLUMN_CHUNK);
+    }
+  };
+
+  const beginLoopDrag = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    node: LoopNode,
+    edge: "start" | "end",
+  ) => {
+    if (!editable) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    loopBarRef.current?.setPointerCapture(event.pointerId);
+    setLoopDrag({ loopId: node.id, edge, pointerId: event.pointerId });
+  };
+
+  const handleLoopPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (loopDrag === null || loopDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    const node = loopRegions.find(
+      (candidate) => candidate.id === loopDrag.loopId,
+    );
+    if (node === undefined) {
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const time = Math.round(
+      (event.clientX - rect.left - CELL_GAP / 2) / CELL_WIDTH,
+    );
+    if (loopDrag.edge === "start") {
+      setLoopBoundary(node.id, "start", clamp(time, 0, node.end - 1));
+    } else {
+      setLoopBoundary(node.id, "end", clamp(time, node.start + 1, columnCount));
+    }
+  };
+
+  const finishLoopDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (loopDrag === null || loopDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    setLoopDrag(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
 
@@ -730,7 +851,7 @@ export function App() {
       trackId: creation.trackId,
       start: previewStart,
       length: previewLength,
-    });
+    }, loopRegions);
 
   return (
     <main className="app" style={gridVariables}>
@@ -745,7 +866,7 @@ export function App() {
               aria-selected={workspace === entry.id}
               className={`workspace-tab${workspace === entry.id ? " is-active" : ""}`}
               onClick={() => {
-                setContextMenu(null);
+                setMenu(null);
                 setCreation(null);
                 setWorkspace(entry.id);
               }}
@@ -889,6 +1010,7 @@ export function App() {
         <div className="staging-area">
           <div className="table">
             <div className="track-labels">
+              <div className="loop-spacer" style={{ height: loopBarHeight }} />
               <div className="ruler-spacer" />
               {rows.map((row, rowIndex) => {
                 if (row.kind === "track") {
@@ -953,6 +1075,64 @@ export function App() {
                 className="grid-content"
                 style={{ width: columnCount * CELL_WIDTH }}
               >
+                <div
+                  className="loop-bar"
+                  ref={loopBarRef}
+                  style={{ height: loopBarHeight }}
+                  onPointerMove={handleLoopPointerMove}
+                  onPointerUp={finishLoopDrag}
+                  onPointerCancel={finishLoopDrag}
+                >
+                  {loopEntries.map(({ node, depth }) => {
+                    const colors = loopLevelColor(depth);
+                    return (
+                      <div
+                        key={node.id}
+                        className="loop-region"
+                        style={{
+                          left: loopMarkerX(node.start),
+                          width:
+                            loopMarkerX(node.end) - loopMarkerX(node.start),
+                          top: depth * LOOP_LANE_HEIGHT,
+                          borderColor: colors.line,
+                          background: colors.barFill,
+                        }}
+                        onContextMenu={(event) =>
+                          openLoopContextMenu(event, node)
+                        }
+                      >
+                        <button
+                          type="button"
+                          className="loop-handle is-start"
+                          aria-label={`Loop start at cell ${node.start}`}
+                          title="Drag to move the loop start"
+                          disabled={!editable}
+                          style={{ background: colors.line }}
+                          onPointerDown={(event) =>
+                            beginLoopDrag(event, node, "start")
+                          }
+                        />
+                        <span
+                          className="loop-caption"
+                          style={{ color: colors.text }}
+                        >
+                          Loop {node.start}–{node.end}
+                        </span>
+                        <button
+                          type="button"
+                          className="loop-handle is-end"
+                          aria-label={`Loop end at cell ${node.end}`}
+                          title="Drag to move the loop end"
+                          disabled={!editable}
+                          style={{ background: colors.line }}
+                          onPointerDown={(event) =>
+                            beginLoopDrag(event, node, "end")
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
                 <div className="ruler">
                   {Array.from({ length: columnCount }, (_, column) => (
                     <span
@@ -1000,6 +1180,39 @@ export function App() {
                         />
                       ),
                     )}
+                    {loopEntries.map(({ node, depth }) => {
+                      const colors = loopLevelColor(depth);
+                      return (
+                        <Fragment key={node.id}>
+                          <div
+                            className="loop-band"
+                            aria-hidden="true"
+                            style={{
+                              left: loopMarkerX(node.start),
+                              width:
+                                loopMarkerX(node.end) - loopMarkerX(node.start),
+                              background: colors.fill,
+                            }}
+                          />
+                          <div
+                            className="loop-line"
+                            aria-hidden="true"
+                            style={{
+                              left: loopMarkerX(node.start),
+                              background: colors.line,
+                            }}
+                          />
+                          <div
+                            className="loop-line"
+                            aria-hidden="true"
+                            style={{
+                              left: loopMarkerX(node.end),
+                              background: colors.line,
+                            }}
+                          />
+                        </Fragment>
+                      );
+                    })}
                     <svg className="slot-wire-layer" aria-hidden="true">
                       {wires.map((wire) => (
                         <g key={wire.key}>
@@ -1520,14 +1733,14 @@ export function App() {
         </div>
         <span className="status-count">{blocks.length} blocks</span>
       </footer>
-      {contextMenu && menuBlock ? (
+      {menu?.kind === "block" && menuBlock ? (
         <div
           className="context-menu"
           role="menu"
           aria-label={`Actions for ${BLOCK_LABELS[menuBlock.kind]} at ${menuBlock.start}`}
           style={{
-            left: clamp(contextMenu.x, 8, window.innerWidth - 228),
-            top: clamp(contextMenu.y, 8, window.innerHeight - 144),
+            left: clamp(menu.x, 8, window.innerWidth - 228),
+            top: clamp(menu.y, 8, window.innerHeight - 180),
           }}
           onPointerDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
@@ -1543,8 +1756,20 @@ export function App() {
             role="menuitem"
             className="context-menu-item"
             onClick={() => {
+              addLoopForBlock(menuBlock.id);
+              setMenu(null);
+            }}
+          >
+            <Repeat size={14} aria-hidden="true" />
+            Loop around block
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
               duplicateBlock(menuBlock.id);
-              setContextMenu(null);
+              setMenu(null);
             }}
           >
             <Copy size={14} aria-hidden="true" />
@@ -1556,7 +1781,7 @@ export function App() {
             className="context-menu-item is-danger"
             onClick={() => {
               remove(menuBlock.id);
-              setContextMenu(null);
+              setMenu(null);
             }}
           >
             <Trash size={14} aria-hidden="true" />
@@ -1564,14 +1789,75 @@ export function App() {
           </button>
         </div>
       ) : null}
-      {trackMenu && menuTrack ? (
+      {menu?.kind === "grid" ? (
+        <div
+          className="context-menu"
+          role="menu"
+          aria-label={`Timeline actions at ${menu.time}`}
+          style={{
+            left: clamp(menu.x, 8, window.innerWidth - 228),
+            top: clamp(menu.y, 8, window.innerHeight - 72),
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="context-menu-title">
+            <Repeat size={12} aria-hidden="true" />t={menu.time}
+          </div>
+          <div className="context-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              addLoopAtCell(menu.time);
+              setMenu(null);
+            }}
+          >
+            <Repeat size={14} aria-hidden="true" />
+            Add loop
+          </button>
+        </div>
+      ) : null}
+      {menu?.kind === "loop" && menuLoop ? (
+        <div
+          className="context-menu"
+          role="menu"
+          aria-label={`Actions for loop ${menuLoop.start} to ${menuLoop.end}`}
+          style={{
+            left: clamp(menu.x, 8, window.innerWidth - 228),
+            top: clamp(menu.y, 8, window.innerHeight - 72),
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="context-menu-title">
+            <Repeat size={12} aria-hidden="true" />
+            Loop {menuLoop.start}–{menuLoop.end}
+          </div>
+          <div className="context-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item is-danger"
+            onClick={() => {
+              removeLoop(menuLoop.id);
+              setMenu(null);
+            }}
+          >
+            <Trash size={14} aria-hidden="true" />
+            Remove loop
+          </button>
+        </div>
+      ) : null}
+      {menu?.kind === "track" && menuTrack ? (
         <div
           className="context-menu"
           role="menu"
           aria-label={`Actions for track ${menuTrack.label}`}
           style={{
-            left: clamp(trackMenu.x, 8, window.innerWidth - 228),
-            top: clamp(trackMenu.y, 8, window.innerHeight - 250),
+            left: clamp(menu.x, 8, window.innerWidth - 228),
+            top: clamp(menu.y, 8, window.innerHeight - 250),
           }}
           onPointerDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
@@ -1587,7 +1873,7 @@ export function App() {
             className="context-menu-item"
             onClick={() => {
               addTrackAfter(menuTrack.id);
-              setTrackMenu(null);
+              setMenu(null);
             }}
           >
             <Plus size={14} aria-hidden="true" />
@@ -1599,7 +1885,7 @@ export function App() {
             className="context-menu-item"
             onClick={() => {
               setRenamingTrackId(menuTrack.id);
-              setTrackMenu(null);
+              setMenu(null);
             }}
           >
             <Pencil size={14} aria-hidden="true" />
@@ -1611,7 +1897,7 @@ export function App() {
             className="context-menu-item"
             onClick={() => {
               duplicateTrack(menuTrack.id);
-              setTrackMenu(null);
+              setMenu(null);
             }}
           >
             <Copy size={14} aria-hidden="true" />
@@ -1629,7 +1915,7 @@ export function App() {
                 aria-label={`Set track color ${color}`}
                 onClick={() => {
                   setTrackColor(menuTrack.id, color);
-                  setTrackMenu(null);
+                  setMenu(null);
                 }}
               />
             ))}
@@ -1641,7 +1927,7 @@ export function App() {
             className="context-menu-item is-danger"
             onClick={() => {
               removeTrack(menuTrack.id);
-              setTrackMenu(null);
+              setMenu(null);
             }}
           >
             <Trash size={14} aria-hidden="true" />
@@ -2874,6 +3160,20 @@ function formatSlotValidation(
   return messages.size > 0
     ? `Cannot run: ${Array.from(messages).join(" ")}`
     : null;
+}
+
+function flattenLoops(
+  nodes: readonly LoopNode[],
+  depth = 0,
+): { node: LoopNode; depth: number }[] {
+  return nodes.flatMap((node) => [
+    { node, depth },
+    ...flattenLoops(node.children, depth + 1),
+  ]);
+}
+
+function loopMarkerX(time: number): number {
+  return time * CELL_WIDTH + CELL_GAP / 2;
 }
 
 function cellFromPointer(

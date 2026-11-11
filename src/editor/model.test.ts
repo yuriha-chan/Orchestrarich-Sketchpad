@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AdditionPlacement,
   DialoguePlacement,
+  LoopRegion,
   MediaPlacement,
   RectanglePlacement,
   TimedPlacement,
@@ -19,6 +20,7 @@ import {
   intervalsOverlap,
   mediaPhases,
   nextFreeStart,
+  partiallyOverlapsLoop,
   phaseBlockId,
   secondsToBeats,
 } from "./model";
@@ -120,12 +122,12 @@ describe("intervalsOverlap", () => {
 
 describe("canPlace", () => {
   it("accepts a free cell", () => {
-    expect(canPlace(DEFAULT_TRACKS, [], dialogue())).toBe(true);
+    expect(canPlace(DEFAULT_TRACKS, [], dialogue(), [])).toBe(true);
   });
 
   it("rejects an overlapping placement on the same track", () => {
     expect(
-      canPlace(DEFAULT_TRACKS, [dialogue()], dialogue({ id: "placement-2" })),
+      canPlace(DEFAULT_TRACKS, [dialogue()], dialogue({ id: "placement-2" }), []),
     ).toBe(false);
   });
 
@@ -135,18 +137,19 @@ describe("canPlace", () => {
         DEFAULT_TRACKS,
         [dialogue()],
         dialogue({ id: "placement-2", trackId: DEFAULT_TRACKS[1].id }),
+        [],
       ),
     ).toBe(true);
   });
 
   it("rejects a negative start or an empty length", () => {
-    expect(canPlace(DEFAULT_TRACKS, [], dialogue({ start: -1 }))).toBe(false);
-    expect(canPlace(DEFAULT_TRACKS, [], dialogue({ length: 0 }))).toBe(false);
+    expect(canPlace(DEFAULT_TRACKS, [], dialogue({ start: -1 }), [])).toBe(false);
+    expect(canPlace(DEFAULT_TRACKS, [], dialogue({ length: 0 }), [])).toBe(false);
   });
 
   it("accepts a placement beyond the initially rendered columns", () => {
     expect(
-      canPlace(DEFAULT_TRACKS, [], dialogue({ start: 1000, length: 2 })),
+      canPlace(DEFAULT_TRACKS, [], dialogue({ start: 1000, length: 2 }), []),
     ).toBe(true);
   });
 
@@ -157,6 +160,7 @@ describe("canPlace", () => {
         DEFAULT_TRACKS,
         [existing],
         dialogue({ start: 3, length: 2 }),
+        [],
         existing.id,
       ),
     ).toBe(true);
@@ -164,7 +168,7 @@ describe("canPlace", () => {
 
   it("rejects a track that is not in the timeline", () => {
     expect(
-      canPlace(DEFAULT_TRACKS, [], dialogue({ trackId: "missing" })),
+      canPlace(DEFAULT_TRACKS, [], dialogue({ trackId: "missing" }), []),
     ).toBe(false);
   });
 
@@ -173,7 +177,75 @@ describe("canPlace", () => {
       ...DEFAULT_TRACKS,
       { id: "extra", label: "Extra", color: "#d97706" },
     ];
-    expect(canPlace(tracks, [], dialogue({ trackId: "extra" }))).toBe(true);
+    expect(canPlace(tracks, [], dialogue({ trackId: "extra" }), [])).toBe(true);
+  });
+});
+
+describe("loop regions", () => {
+  const loop: LoopRegion = { start: 2, end: 5 };
+
+  it("does not constrain placements when there is no loop", () => {
+    expect(partiallyOverlapsLoop(3, 3, null)).toBe(false);
+    expect(
+      canPlace(DEFAULT_TRACKS, [], dialogue({ start: 3, length: 3 }), []),
+    ).toBe(true);
+  });
+
+  it("accepts a block entirely before the loop", () => {
+    expect(partiallyOverlapsLoop(0, 2, loop)).toBe(false);
+  });
+
+  it("accepts a block ending exactly at the loop start", () => {
+    expect(partiallyOverlapsLoop(0, 2, loop)).toBe(false);
+  });
+
+  it("accepts a block entirely inside the loop", () => {
+    expect(partiallyOverlapsLoop(2, 3, loop)).toBe(false);
+    expect(partiallyOverlapsLoop(3, 1, loop)).toBe(false);
+  });
+
+  it("accepts a block starting exactly at the loop end", () => {
+    expect(partiallyOverlapsLoop(5, 2, loop)).toBe(false);
+  });
+
+  it("accepts a block that contains the entire loop", () => {
+    expect(partiallyOverlapsLoop(0, 5, loop)).toBe(false);
+    expect(partiallyOverlapsLoop(1, 6, loop)).toBe(false);
+  });
+
+  it("rejects a block that starts inside the loop and ends after it", () => {
+    expect(partiallyOverlapsLoop(4, 2, loop)).toBe(true);
+  });
+
+  it("rejects a block that starts before the loop and ends inside it", () => {
+    expect(partiallyOverlapsLoop(1, 2, loop)).toBe(true);
+  });
+
+  it("rejects a block that crosses only the loop start", () => {
+    expect(partiallyOverlapsLoop(1, 3, loop)).toBe(true);
+  });
+
+  it("rejects a block that crosses only the loop end", () => {
+    expect(partiallyOverlapsLoop(3, 4, loop)).toBe(true);
+  });
+
+  it("applies the loop rule to every track", () => {
+    expect(
+      canPlace(
+        DEFAULT_TRACKS,
+        [],
+        dialogue({ trackId: DEFAULT_TRACKS[2].id, start: 3, length: 3 }),
+        [loop],
+      ),
+    ).toBe(false);
+    expect(
+      canPlace(
+        DEFAULT_TRACKS,
+        [],
+        dialogue({ trackId: DEFAULT_TRACKS[2].id, start: 2, length: 2 }),
+        [loop],
+      ),
+    ).toBe(true);
   });
 });
 
@@ -436,27 +508,27 @@ describe("nextFreeStart", () => {
   const otherTrack = DEFAULT_TRACKS[1].id;
 
   it("uses the requested start when the space is free", () => {
-    expect(nextFreeStart([], trackId, 3, 2)).toBe(3);
+    expect(nextFreeStart([], trackId, 3, 2, [])).toBe(3);
   });
 
   it("places a duplicate directly after an adjacent block", () => {
     const block = timed({ id: "placement-1", trackId, start: 0, length: 2 });
 
-    expect(nextFreeStart([block], trackId, 2, 2)).toBe(2);
+    expect(nextFreeStart([block], trackId, 2, 2, [])).toBe(2);
   });
 
   it("skips a following block and uses the space behind it", () => {
     const source = timed({ id: "placement-1", trackId, start: 0, length: 2 });
     const occupant = timed({ id: "placement-2", trackId, start: 2, length: 3 });
 
-    expect(nextFreeStart([source, occupant], trackId, 2, 2)).toBe(5);
+    expect(nextFreeStart([source, occupant], trackId, 2, 2, [])).toBe(5);
   });
 
   it("takes an earlier gap that fits when it is the first one", () => {
     const source = timed({ id: "placement-1", trackId, start: 0, length: 2 });
     const occupant = timed({ id: "placement-2", trackId, start: 4, length: 1 });
 
-    expect(nextFreeStart([source, occupant], trackId, 2, 2)).toBe(2);
+    expect(nextFreeStart([source, occupant], trackId, 2, 2, [])).toBe(2);
   });
 
   it("ignores blocks on other tracks", () => {
@@ -468,7 +540,7 @@ describe("nextFreeStart", () => {
       length: 3,
     });
 
-    expect(nextFreeStart([source, occupant], trackId, 2, 2)).toBe(2);
+    expect(nextFreeStart([source, occupant], trackId, 2, 2, [])).toBe(2);
   });
 
   it("pushes past a block that overlaps the requested start", () => {
@@ -476,7 +548,20 @@ describe("nextFreeStart", () => {
     const occupant = timed({ id: "placement-2", trackId, start: 3, length: 2 });
     const later = timed({ id: "placement-3", trackId, start: 3, length: 4 });
 
-    expect(nextFreeStart([source, occupant], trackId, 3, 3)).toBe(5);
-    expect(nextFreeStart([source, later], trackId, 3, 3)).toBe(7);
+    expect(nextFreeStart([source, occupant], trackId, 3, 3, [])).toBe(5);
+    expect(nextFreeStart([source, later], trackId, 3, 3, [])).toBe(7);
+  });
+
+  it("skips a span that would cut a loop start", () => {
+    expect(nextFreeStart([], trackId, 1, 2, [{ start: 2, end: 4 }])).toBe(2);
+  });
+
+  it("moves past a loop it would start inside and leave", () => {
+    expect(nextFreeStart([], trackId, 2, 4, [{ start: 0, end: 4 }])).toBe(4);
+  });
+
+  it("allows a span inside or containing a loop", () => {
+    expect(nextFreeStart([], trackId, 5, 2, [{ start: 4, end: 8 }])).toBe(5);
+    expect(nextFreeStart([], trackId, 0, 10, [{ start: 4, end: 6 }])).toBe(0);
   });
 });

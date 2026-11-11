@@ -22,6 +22,7 @@ body {
   --cell-gap: 32px;
   --track-height: 48px;
   --ruler-height: 24px;
+  --loop-height: 24px;
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px;
@@ -1460,4 +1461,86 @@ body {
 
 .block-phase-boundary.is-editable:hover {
   background-color: rgb(255 255 255 / 0.2);
+}
+
+.toolbar-actions button.is-active {
+  border-color: #a78bfa;
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.loop-spacer {
+  height: var(--loop-height);
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.loop-bar {
+  position: relative;
+  height: var(--loop-height);
+  border-bottom: 1px solid #e2e8f0;
+  background: #faf5ff;
+}
+
+.loop-region {
+  position: absolute;
+  bottom: 3px;
+  border-top: 2px solid;
+  border-left: 2px solid;
+  border-right: 2px solid;
+  border-radius: 4px;
+}
+
+.loop-caption {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  height: var(--loop-lane-height);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.loop-handle {
+  position: absolute;
+  top: -1px;
+  width: 10px;
+  height: calc(100% + 2px);
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  cursor: ew-resize;
+}
+
+.loop-handle.is-start {
+  left: -5px;
+}
+
+.loop-handle.is-end {
+  right: -5px;
+}
+
+.loop-handle:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.loop-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.loop-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 2px;
+  transform: translateX(-1px);
+  pointer-events: none;
 }

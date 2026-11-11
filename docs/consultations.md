@@ -84,3 +84,36 @@
   a slot or establish a slot-specific unit contract.
 - Status: resolved; the earlier framing incorrectly attributed property-unit
   semantics to slots.
+
+## Loop markers and playback scope
+
+- User request (verbatim): "add loop start and loop end".
+- `design.md` §3.1: loop start and end markers are placed at unit cell boundaries
+  and span the entire timeline; the end marker can specify a termination condition,
+  and markers can instruct redoing the loop or exiting it. §3.5: a block must include
+  the entire loop section or none of it. `steps.md` Round 3+: "First, put only loops
+  on barrier synchronization."
+- The request does not state whether this increment includes playback repetition or
+  only marker authoring, nor what ends a loop when no condition is specified. A loop
+  with no termination would never finish, which conflicts with one-shot runs.
+- Questions sent to the User: (1) markers only or playback repetition now; (2) if
+  playback, the termination for this increment (condition now, repeat count, or
+  infinite until Reset).
+- User answer: "only authoring markers." Playback repetition is excluded from
+  this increment.
+- Status: resolved. Markers are timeline-level document data with editor UI and
+  design.md 3.5 placement validation; loop conditions, redo/exit markers, and
+  playback remain for a later increment.
+- Follow-up request (verbatim): "we need more than one loop" and "I see this
+  system as a visual programming language, so I took for granted that we have
+  multiple and nested loops. so please think of AST".
+- The flat single-region model was replaced by a forest of properly nested loop
+  nodes. Creating a loop around a block uses the minimum span that does not cut
+  another block; an empty cell creates a one-cell loop. The user chose the
+  context-menu authoring path ("right-click -> context menu -> Loop") and asked
+  for a lane per nesting depth; the implementation renders nested brackets with
+  outer loops taller and bottom-aligned. The gap between the marker and the
+  loop fill (half a cell gap, handles outside the fill) was a Lead proposal, not
+  a separate User decision.
+- Status: resolved for authoring. Playback, conditions, and redo/exit remain
+  later increments.

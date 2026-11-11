@@ -362,6 +362,28 @@ export const BLOCK_LABELS: Record<BlockKind, string> = {
   addition: "Addition",
 };
 
+export interface LoopRegion {
+  readonly start: number;
+  readonly end: number;
+}
+
+export function partiallyOverlapsLoop(
+  start: number,
+  length: number,
+  loop: LoopRegion | null,
+): boolean {
+  if (loop === null) {
+    return false;
+  }
+  const end = start + length;
+  if (!(start < loop.end && loop.start < end)) {
+    return false;
+  }
+  const containsLoop = start <= loop.start && loop.end <= end;
+  const insideLoop = loop.start <= start && end <= loop.end;
+  return !containsLoop && !insideLoop;
+}
+
 export function intervalsOverlap(
   aStart: number,
   aLength: number,
@@ -375,12 +397,20 @@ export function canPlace(
   tracks: readonly Track[],
   placements: readonly Placement[],
   shape: PlacementShape,
+  loopRegions: readonly LoopRegion[],
   ignoreId?: string,
 ): boolean {
   if (shape.start < 0 || shape.length < 1) {
     return false;
   }
   if (!tracks.some((track) => track.id === shape.trackId)) {
+    return false;
+  }
+  if (
+    loopRegions.some((loop) =>
+      partiallyOverlapsLoop(shape.start, shape.length, loop),
+    )
+  ) {
     return false;
   }
   return placements.every(
@@ -396,6 +426,7 @@ export function nextFreeStart(
   trackId: string,
   after: number,
   length: number,
+  loopRegions: readonly LoopRegion[],
 ): number {
   const occupied = placements
     .filter((placement) => placement.trackId === trackId)
@@ -405,13 +436,20 @@ export function nextFreeStart(
     }))
     .sort((a, b) => a.start - b.start);
   let start = Math.max(after, 0);
-  for (const span of occupied) {
-    if (start + length <= span.start) {
-      break;
+  while (true) {
+    const loop = loopRegions.find((region) =>
+      partiallyOverlapsLoop(start, length, region),
+    );
+    if (loop !== undefined) {
+      start = loop.start > start ? loop.start : loop.end;
+      continue;
     }
-    if (start < span.end) {
-      start = span.end;
+    const blocker = occupied.find(
+      (span) => start < span.end && span.start < start + length,
+    );
+    if (blocker === undefined) {
+      return start;
     }
+    start = blocker.end;
   }
-  return start;
 }

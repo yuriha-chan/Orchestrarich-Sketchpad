@@ -11,6 +11,7 @@ function resetStore(): void {
     tracks: DEFAULT_TRACKS.map((track) => ({ ...track })),
     slots: [],
     selectedId: null,
+    loops: [],
   });
 }
 
@@ -802,5 +803,188 @@ describe("block duplication", () => {
       duration: 1,
     });
     expect(blockAt(0).id).toBe(sourceId);
+  });
+});
+
+describe("loop markers", () => {
+  function createBlock(
+    trackId: string = DEFAULT_TRACKS[0].id,
+    start = 0,
+    length = 1,
+  ): string {
+    useExperimentStore.getState().create(trackId, "dialogue", start, length);
+    const blocks = useExperimentStore.getState().blocks;
+    return blocks[blocks.length - 1].id;
+  }
+
+  function loops() {
+    return useExperimentStore.getState().loops;
+  }
+
+  function loopSpans(nodes = loops()): number[][] {
+    return nodes.map((node) => [node.start, node.end]);
+  }
+
+  function firstLoopId(): string {
+    return loops()[0].id;
+  }
+
+  function blockAt(index: number) {
+    return useExperimentStore.getState().blocks[index];
+  }
+
+  it("adds a loop around a block", () => {
+    const id = createBlock(DEFAULT_TRACKS[1].id, 6, 2);
+    useExperimentStore.getState().addLoopForBlock(id);
+    expect(loopSpans()).toEqual([[6, 8]]);
+  });
+
+  it("adds a one-cell loop at an empty cell", () => {
+    useExperimentStore.getState().addLoopAtCell(3);
+    expect(loopSpans()).toEqual([[3, 4]]);
+  });
+
+  it("rejects an invalid cell", () => {
+    useExperimentStore.getState().addLoopAtCell(-1);
+    useExperimentStore.getState().addLoopAtCell(1.5);
+    expect(loops()).toEqual([]);
+  });
+
+  it("expands a loop to include a block that would be cut", () => {
+    const first = createBlock(DEFAULT_TRACKS[0].id, 3, 2);
+    createBlock(DEFAULT_TRACKS[1].id, 4, 2);
+    useExperimentStore.getState().addLoopForBlock(first);
+    expect(loopSpans()).toEqual([[3, 6]]);
+  });
+
+  it("nests a loop created at a cell inside another loop", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 8);
+    useExperimentStore.getState().addLoopAtCell(4);
+    expect(loopSpans()).toEqual([[0, 8]]);
+    expect(loopSpans(loops()[0].children)).toEqual([[4, 5]]);
+  });
+
+  it("keeps disjoint loops as siblings in time order", () => {
+    useExperimentStore.getState().addLoopAtCell(4);
+    useExperimentStore.getState().addLoopAtCell(1);
+    expect(loopSpans()).toEqual([
+      [1, 2],
+      [4, 5],
+    ]);
+  });
+
+  it("removes a loop and promotes its children", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 8);
+    const outerId = firstLoopId();
+    useExperimentStore.getState().addLoopAtCell(3);
+    const innerId = loops()[0].children[0].id;
+    useExperimentStore.getState().removeLoop(outerId);
+    expect(loops().map((node) => node.id)).toEqual([innerId]);
+    expect(loopSpans()).toEqual([[3, 4]]);
+  });
+
+  it("removes nothing for an unknown loop", () => {
+    useExperimentStore.getState().addLoopAtCell(2);
+    useExperimentStore.getState().removeLoop("missing");
+    expect(loopSpans()).toEqual([[2, 3]]);
+  });
+
+  it("moves a loop boundary", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 6);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "start", 2);
+    expect(loopSpans()).toEqual([[2, 6]]);
+  });
+
+  it("absorbs a sibling loop when a boundary expands over it", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().addLoopAtCell(4);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 5);
+    expect(loopSpans()).toEqual([[0, 5]]);
+    expect(loopSpans(loops()[0].children)).toEqual([[4, 5]]);
+  });
+
+  it("keeps touching sibling loops as siblings", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().addLoopAtCell(4);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 4);
+    expect(loopSpans()).toEqual([
+      [0, 4],
+      [4, 5],
+    ]);
+  });
+
+  it("rejects invalid or inverted boundaries", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 4);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "start", 1.5);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "start", -1);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "start", 4);
+    expect(loopSpans()).toEqual([[0, 4]]);
+  });
+
+  it("rejects a boundary move that would cut a block", () => {
+    const id = createBlock(DEFAULT_TRACKS[0].id, 3, 2);
+    useExperimentStore.getState().addLoopForBlock(id);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 8);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "start", 4);
+    expect(loopSpans()).toEqual([[3, 8]]);
+  });
+
+  it("releases a child loop when the boundary shrinks past it", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 10);
+    useExperimentStore.getState().addLoopAtCell(4);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "start", 5);
+    expect(loopSpans()).toEqual([
+      [4, 5],
+      [5, 10],
+    ]);
+  });
+
+  it("rejects creating a block that cuts any loop boundary", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 8);
+    useExperimentStore.getState().addLoopAtCell(2);
+    const innerId = loops()[0].children[0].id;
+    useExperimentStore.getState().setLoopBoundary(innerId, "end", 4);
+    useExperimentStore
+      .getState()
+      .create(DEFAULT_TRACKS[0].id, "dialogue", 1, 2);
+    expect(useExperimentStore.getState().blocks).toHaveLength(0);
+  });
+
+  it("allows creating a block inside or containing a loop", () => {
+    useExperimentStore.getState().addLoopAtCell(2);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 6);
+    createBlock(DEFAULT_TRACKS[1].id, 3, 1);
+    createBlock(DEFAULT_TRACKS[0].id, 0, 10);
+    expect(useExperimentStore.getState().blocks).toHaveLength(2);
+  });
+
+  it("rejects moving a block across a loop boundary", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 4);
+    const id = createBlock(DEFAULT_TRACKS[0].id, 8, 3);
+    useExperimentStore.getState().move(id, DEFAULT_TRACKS[0].id, 2);
+    expect(blockAt(0).start).toBe(8);
+  });
+
+  it("rejects resizing a block across a loop boundary", () => {
+    useExperimentStore.getState().addLoopAtCell(0);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 4);
+    const id = createBlock(DEFAULT_TRACKS[0].id, 3, 1);
+    useExperimentStore.getState().resize(id, 3);
+    expect(blockAt(0).length).toBe(1);
+  });
+
+  it("duplicates a block past a loop boundary it would cut", () => {
+    const id = createBlock(DEFAULT_TRACKS[0].id, 0, 2);
+    useExperimentStore.getState().addLoopAtCell(3);
+    useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 5);
+    useExperimentStore.getState().duplicateBlock(id);
+    expect(blockAt(1).start).toBe(3);
   });
 });

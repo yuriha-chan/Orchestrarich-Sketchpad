@@ -112,6 +112,12 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 - Adding a track gives the grid a new row and the run includes that track.
 - Scrolling to the right edge extends the timeline columns; a block can be
   placed beyond the initially rendered columns.
+- Loop markers can be authored on the timeline as multiple, nested regions at
+  unit cell boundaries spanning every track. Right-clicking a block creates a
+  loop around it; right-clicking an empty cell creates a one-cell loop; loop
+  headers can be dragged or removed from their context menu. One lane per
+  nesting depth is drawn above the ruler, with nested brackets. Playback still
+  runs the timeline once; repeating a region is not implemented.
 - A run that reaches the finished phase performs Reset automatically and
   returns to editing; a failed run stays failed until Reset is pressed.
 - Run, Skip, and Reset work together without duplicating the barrier in the UI.
@@ -119,9 +125,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 266 tests pass (55 core + 19 numeric slots + 40 placement model
-  + 58 store + 16 timeline rows + 39 integration + 8 stage geometry + 10 slot
-  value rail + 15 slot wires + 6 fade editing and dot-pattern tests).
+- `pnpm test`: 349 tests pass (55 core + 19 numeric slots + 54 placement model
+  + 82 store + 16 timeline rows + 40 integration + 8 stage geometry + 10 slot
+  value rail + 15 slot wires + 6 fade editing and dot-pattern tests + 39 loop
+  tree tests + 5 loop color tests).
 - `pnpm build`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
@@ -377,6 +384,35 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     slots currently carry scalar numbers. The stage applies the color when the
     rectangle is drawn; the timeline block keeps its kind color.
 
+37. Loop markers are authored only in this increment, as a forest of loop
+    nodes. Every node has integer `start < end` at cell boundaries, and the
+    forest is laminar: sibling loops are disjoint (touching allowed) and a
+    child lies within its parent. The editor offers two creation paths from the
+    context menu: a loop around a block, whose span grows until it no longer
+    cuts any block, and a one-cell loop at an empty cell. Removing a loop
+    promotes its children. Boundaries are dragged per loop in the loop bar.
+    Growing a boundary over a whole sibling loop absorbs that sibling as a
+    child, using the same absorption routine as loop creation; a loop touching
+    another loop remains a sibling. Shrinking a boundary past one of its
+    children releases that child, with its subtree, back to the parent level
+    once the new span no longer intersects it, so an expansion can be undone.
+    A move that would still cut a sibling or a child, cut a block, escape the
+    parent, or otherwise break the tree is rejected and the boundary stays at
+    its last valid position. Block and loop boundary drags
+    therefore share the same span rule: the span may be disjoint from, contain,
+    or lie inside an obstacle, but never partially overlap it.
+    Per design.md 3.5, a block may not partially overlap any loop boundary: it
+    is rejected when it intersects a loop without being wholly inside it or
+    wholly containing it. This rule is checked when creating, moving, resizing,
+    duplicating, and when moving a loop boundary. The bar draws one lane per
+    nesting depth with nested brackets; the rows show every loop's markers and
+    a tinted band. Depth selects the color from a fixed colormap: the
+    top-level loop keeps the violet hue and each deeper level shifts the hue by
+    one stop (violet, blue, cyan, green, then yellow-green), so nesting is
+    readable at a glance and a loop keeps its color when other loops are added.
+    A run (1-A engine) does not repeat a region; loop conditions, redo/exit
+    markers, and loop playback remain for a later increment.
+
 ## Carry-Over
 
 - Multiple blocks may write the same slot; ordering is by completion time and
@@ -401,3 +437,6 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   drag gesture; numeric geometry and an RGB fill color are exposed now.
 - Whether the stage grid should offer presets or separate the screen resolution
   from the grid cell count.
+- Loop playback: repeat count or termination condition, redo/exit markers, and
+  how repeated iterations allocate execution instances and preserve slot
+  values. The current increment only authors nested regions.
