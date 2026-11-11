@@ -20,8 +20,8 @@ const tracks: readonly Track[] = [
 function slot(
   id: string,
   trackId: string | null,
-  initializations: { time: number; value: number }[] = [
-    { time: 0, value: 0 },
+  initializations: { boundary: number; path: string[]; value: number }[] = [
+    { boundary: 0, path: [], value: 0 },
   ],
 ): NumericSlot {
   return { id, trackId, initializations };

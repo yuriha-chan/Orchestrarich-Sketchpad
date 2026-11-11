@@ -16,8 +16,16 @@ export interface TrackDefinition {
   readonly blocks: readonly BlockDefinition[];
 }
 
+export interface LoopDefinition {
+  readonly start: number;
+  readonly end: number;
+  readonly iterations: number;
+  readonly loops?: readonly LoopDefinition[];
+}
+
 export interface TimelineDefinition {
   readonly tracks: readonly TrackDefinition[];
+  readonly loops?: readonly LoopDefinition[];
 }
 
 export interface BarrierSpan {
@@ -54,6 +62,11 @@ export interface BlockStartResult {
 
 export interface TimelineRunnerOptions {
   readonly onTimeStart?: (time: number) => void;
+  readonly onLoopRepeat?: (
+    loop: LoopDefinition,
+    endTime: number,
+    startTime: number,
+  ) => void;
   readonly onBlockStart?: (
     block: BlockSnapshot,
   ) => BlockStartResult | undefined;
@@ -73,6 +86,43 @@ interface BlockExecution {
   autoSkipFired: boolean;
   skipHandler?: SkipHandler;
   outputs: BlockOutputs;
+  generation: number;
+}
+
+interface LoopFrame {
+  readonly loop: LoopDefinition;
+  iteration: number;
+}
+
+function flattenLoops(
+  loops: readonly LoopDefinition[],
+  parent: LoopDefinition | null,
+  flattened: LoopDefinition[],
+): void {
+  const ordered = [...loops].sort((a, b) => a.start - b.start || b.end - a.end);
+  let previousEnd: number | undefined;
+
+  for (const loop of ordered) {
+    if (!Number.isInteger(loop.start) || loop.start < 0) {
+      throw new Error(`Loop has an invalid start: ${loop.start}`);
+    }
+    if (!Number.isInteger(loop.end) || loop.end <= loop.start) {
+      throw new Error(`Loop has an invalid end: ${loop.end}`);
+    }
+    if (!Number.isInteger(loop.iterations) || loop.iterations < 1) {
+      throw new Error(`Loop has invalid iterations: ${loop.iterations}`);
+    }
+    if (parent !== null && (loop.start < parent.start || loop.end > parent.end)) {
+      throw new Error(`Loop ${loop.start}-${loop.end} is outside its parent`);
+    }
+    if (previousEnd !== undefined && loop.start < previousEnd) {
+      throw new Error(`Loops cross or overlap at cell ${loop.start}`);
+    }
+
+    previousEnd = loop.end;
+    flattened.push(loop);
+    flattenLoops(loop.loops ?? [], loop, flattened);
+  }
 }
 
 function flattenAndValidate(definition: TimelineDefinition): BlockExecution[] {
@@ -118,6 +168,7 @@ function flattenAndValidate(definition: TimelineDefinition): BlockExecution[] {
         state: "pending",
         autoSkipFired: false,
         outputs: {},
+        generation: 0,
       });
     }
   }
@@ -131,6 +182,8 @@ export class TimelineRunner {
   private readonly listeners = new Set<(snapshot: TimelineSnapshot) => void>();
   private readonly horizon: number;
   private readonly barrierCheckTimes: readonly number[];
+  private readonly loops: readonly LoopDefinition[];
+  private readonly loopStack: LoopFrame[] = [];
 
   private currentTime = 0;
   private currentPhase: TimelinePhase = "idle";
@@ -143,12 +196,20 @@ export class TimelineRunner {
   ) {
     this.options = options;
     this.placements = flattenAndValidate(definition);
-    this.horizon = this.placements.reduce(
-      (max, placement) => Math.max(max, placement.end),
+    const loops: LoopDefinition[] = [];
+    flattenLoops(definition.loops ?? [], null, loops);
+    this.loops = loops;
+    this.validateBlocksAgainstLoops();
+    this.horizon = Math.max(
+      ...this.placements.map((placement) => placement.end),
+      ...this.loops.map((loop) => loop.end),
       0,
     );
     this.barrierCheckTimes = [
-      ...new Set(this.placements.map((placement) => placement.end)),
+      ...new Set([
+        ...this.placements.map((placement) => placement.end),
+        ...this.loops.map((loop) => loop.end),
+      ]),
     ].sort((a, b) => a - b);
   }
 
@@ -242,12 +303,83 @@ export class TimelineRunner {
     );
   }
 
+  private validateBlocksAgainstLoops(): void {
+    for (const placement of this.placements) {
+      for (const loop of this.loops) {
+        const intersects =
+          placement.start < loop.end && placement.end > loop.start;
+        if (!intersects) {
+          continue;
+        }
+        if (placement.start >= loop.start && placement.end <= loop.end) {
+          continue;
+        }
+        if (placement.start <= loop.start && placement.end >= loop.end) {
+          throw new Error(
+            `Block ${placement.id} contains loop ${loop.start}-${loop.end}`,
+          );
+        }
+        throw new Error(
+          `Block ${placement.id} overlaps loop ${loop.start}-${loop.end}`,
+        );
+      }
+    }
+  }
+
+  private enterLoopsAtCurrentTime(): void {
+    for (const loop of this.loops) {
+      if (loop.start !== this.currentTime) {
+        continue;
+      }
+      if (this.loopStack.some((frame) => frame.loop === loop)) {
+        continue;
+      }
+      this.loopStack.push({ loop, iteration: 0 });
+    }
+  }
+
+  private resetBlocksInside(loop: LoopDefinition): void {
+    for (const placement of this.placements) {
+      if (
+        placement.start < loop.start ||
+        placement.end > loop.end
+      ) {
+        continue;
+      }
+      placement.state = "pending";
+      placement.autoSkipFired = false;
+      placement.skipHandler = undefined;
+      placement.outputs = {};
+      placement.generation += 1;
+    }
+  }
+
+  private advanceFrom(endTime: number): void {
+    while (this.loopStack.length > 0) {
+      const frame = this.loopStack[this.loopStack.length - 1]!;
+      if (frame.loop.end !== endTime) {
+        break;
+      }
+      if (frame.iteration + 1 < frame.loop.iterations) {
+        frame.iteration += 1;
+        this.resetBlocksInside(frame.loop);
+        this.options.onLoopRepeat?.(frame.loop, frame.loop.end, frame.loop.start);
+        this.currentTime = frame.loop.start;
+        this.lastTimeStart = undefined;
+        return;
+      }
+      this.loopStack.pop();
+    }
+    this.currentTime = endTime;
+  }
+
   private invokeBlockStart(placement: BlockExecution): void {
+    const generation = placement.generation;
     let result: BlockStartResult | undefined;
     try {
       result = this.options.onBlockStart?.(this.toBlockSnapshot(placement));
     } catch {
-      this.failBlock(placement);
+      this.failBlock(placement, generation);
       return;
     }
     if (result === undefined) {
@@ -255,12 +387,13 @@ export class TimelineRunner {
     }
     placement.skipHandler = result.skip;
     result.execution.then(
-      (outputs) => this.completeBlock(placement, outputs ?? {}),
-      () => this.failBlock(placement),
+      (outputs) => this.completeBlock(placement, generation, outputs ?? {}),
+      () => this.failBlock(placement, generation),
     );
   }
 
   private deliverSkip(placement: BlockExecution, reason: SkipReason): void {
+    const generation = placement.generation;
     const handler = placement.skipHandler;
     if (handler === undefined) {
       return;
@@ -269,19 +402,25 @@ export class TimelineRunner {
     try {
       result = handler(reason);
     } catch {
-      this.failBlock(placement);
+      this.failBlock(placement, generation);
       return;
     }
     if (result !== undefined) {
-      Promise.resolve(result).catch(() => this.failBlock(placement));
+      Promise.resolve(result).catch(() =>
+        this.failBlock(placement, generation),
+      );
     }
   }
 
   private completeBlock(
     placement: BlockExecution,
+    generation: number,
     outputs: BlockOutputs,
   ): void {
     if (this.currentPhase !== "running") {
+      return;
+    }
+    if (placement.generation !== generation) {
       return;
     }
     if (placement.state !== "running") {
@@ -293,8 +432,11 @@ export class TimelineRunner {
     this.pump();
   }
 
-  private failBlock(placement: BlockExecution): void {
+  private failBlock(placement: BlockExecution, generation: number): void {
     if (this.currentPhase !== "running") {
+      return;
+    }
+    if (placement.generation !== generation) {
       return;
     }
     if (placement.state !== "running") {
@@ -382,6 +524,8 @@ export class TimelineRunner {
     this.pumping = true;
     try {
       while (this.currentPhase === "running") {
+        this.enterLoopsAtCurrentTime();
+
         if (
           this.currentTime < this.horizon &&
           this.lastTimeStart !== this.currentTime
@@ -428,7 +572,7 @@ export class TimelineRunner {
         if (this.currentPhase !== "running") {
           break;
         }
-        this.currentTime += 1;
+        this.advanceFrom(this.currentTime + 1);
       }
     } finally {
       this.pumping = false;

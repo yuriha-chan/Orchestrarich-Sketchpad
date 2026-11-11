@@ -1,5 +1,6 @@
 export interface NumericSlotInitialization {
-  readonly time: number;
+  readonly boundary: number;
+  readonly path: readonly string[];
   readonly value: number;
 }
 
@@ -8,6 +9,10 @@ export interface NumericSlot {
   readonly trackId: string | null;
   readonly name?: string;
   readonly initializations: readonly NumericSlotInitialization[];
+}
+
+export function initializationPathKey(path: readonly string[]): string {
+  return path.join("/");
 }
 
 export interface NumericSlotRead {
@@ -40,7 +45,7 @@ export function validateNumericSlotReads(
     }
     if (
       slot.initializations.some(
-        (initialization) => initialization.time <= read.time,
+        (initialization) => initialization.boundary <= read.time,
       )
     ) {
       return false;

@@ -1,8 +1,11 @@
-import type { NumericSlotInitialization } from "../core/slots/numeric-slots";
+export interface SlotValueAnchor {
+  readonly left: number;
+  readonly center: number;
+}
 
 export interface SlotValueSpan {
-  readonly start: number;
-  readonly end: number;
+  readonly x1: number;
+  readonly x2: number;
 }
 
 export interface SlotValueRail {
@@ -11,30 +14,29 @@ export interface SlotValueRail {
 }
 
 export function slotValueRail(
-  initializations: readonly NumericSlotInitialization[],
-  columnCount: number,
-  assignmentTimes: readonly number[] = [],
+  anchors: readonly SlotValueAnchor[],
+  gapCenters: readonly number[],
+  width: number,
 ): SlotValueRail {
-  const times = [
-    ...new Set([
-      ...initializations.map((initialization) => initialization.time),
-      ...assignmentTimes,
-    ]),
-  ].sort((a, b) => a - b);
+  const sorted = [...anchors].sort((left, right) => left.center - right.center);
   const spans: SlotValueSpan[] = [];
   const dots: number[] = [];
 
-  for (let index = 0; index < times.length; index += 1) {
-    const start = times[index];
-    if (start >= columnCount) {
+  for (let index = 0; index < sorted.length; index += 1) {
+    const anchor = sorted[index];
+    if (anchor.center >= width) {
       break;
     }
-    const next = times[index + 1];
-    const end = next !== undefined ? Math.min(next, columnCount) : columnCount;
-    spans.push({ start, end });
-
-    for (let time = start + 1; time < end; time += 1) {
-      dots.push(time);
+    const next = sorted[index + 1];
+    const x2 = next !== undefined && next.left < width ? next.left : width;
+    if (x2 <= anchor.center) {
+      continue;
+    }
+    spans.push({ x1: anchor.center, x2 });
+    for (const gap of gapCenters) {
+      if (gap > anchor.center && gap < x2) {
+        dots.push(gap);
+      }
     }
   }
 

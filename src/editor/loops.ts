@@ -22,6 +22,40 @@ export function allLoops(loops: readonly LoopNode[]): LoopNode[] {
   return loops.flatMap((node) => [node, ...allLoops(node.children)]);
 }
 
+export function boundaryGapPaths(
+  loops: readonly LoopNode[],
+  time: number,
+): string[][] {
+  const nodes = allLoops(loops);
+  const leftPath = nodes
+    .filter((node) => node.start < time && node.end >= time)
+    .map((node) => node.id);
+  const rightPath = nodes
+    .filter((node) => node.start <= time && node.end > time)
+    .map((node) => node.id);
+
+  let common = 0;
+  while (
+    common < leftPath.length &&
+    common < rightPath.length &&
+    leftPath[common] === rightPath[common]
+  ) {
+    common += 1;
+  }
+
+  const contexts: string[][] = [leftPath];
+  let current = leftPath;
+  while (current.length > common) {
+    current = current.slice(0, -1);
+    contexts.push(current);
+  }
+  for (const id of rightPath.slice(common)) {
+    current = [...current, id];
+    contexts.push(current);
+  }
+  return contexts;
+}
+
 export function maxLoopDepth(loops: readonly LoopNode[]): number {
   return loops.reduce(
     (maximum, node) => Math.max(maximum, 1 + maxLoopDepth(node.children)),

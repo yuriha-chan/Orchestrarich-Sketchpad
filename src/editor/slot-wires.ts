@@ -6,7 +6,7 @@ import {
 } from "./model";
 import { rowTop, type TimelineRow } from "./timeline-rows";
 import {
-  baseGapCenter,
+  anchorGapCenter,
   cellLeft,
   cellRight,
   type TimelineLayout,
@@ -154,7 +154,7 @@ export function outputWires(
         blockCenterY:
           rowTop(rows, trackIndex, layout.trackHeight, layout.slotHeight) +
           layout.trackHeight / 2,
-        gapX: baseGapCenter(layout.layout, assignmentTime),
+        gapX: anchorGapCenter(layout.layout, assignmentTime),
         slotY:
           rowTop(rows, slotIndex, layout.trackHeight, layout.slotHeight) +
           layout.slotHeight / 2,

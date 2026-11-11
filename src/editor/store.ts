@@ -34,6 +34,7 @@ import {
 import {
   allLoops,
   blocksRespectLoops,
+  boundaryGapPaths,
   insertLoop,
   removeLoopNode,
   setLoopSpan,
@@ -42,7 +43,7 @@ import {
 } from "./loops";
 import type { WorkspaceId } from "./workspaces";
 import { convertRectUnit } from "./stage-geometry";
-import type { NumericSlot } from "../core/slots/numeric-slots";
+import { initializationPathKey, type NumericSlot } from "../core/slots/numeric-slots";
 
 interface ExperimentState {
   blocks: Placement[];
@@ -89,8 +90,17 @@ interface ExperimentState {
   addSlot: (trackId: string | null) => void;
   renameSlot: (id: string, name: string) => void;
   removeSlot: (id: string) => void;
-  clearSlotInitialization: (id: string, time: number) => void;
-  initializeSlot: (id: string, time: number, value: number) => void;
+  clearSlotInitialization: (
+    id: string,
+    boundary: number,
+    path: readonly string[],
+  ) => void;
+  initializeSlot: (
+    id: string,
+    boundary: number,
+    path: readonly string[],
+    value: number,
+  ) => void;
   setSlotBinding: (
     id: string,
     key: string,
@@ -244,7 +254,10 @@ export const useExperimentStore = create<ExperimentState>()(
             ...slot,
             id: copyId,
             trackId: id,
-            initializations: slot.initializations.map((entry) => ({ ...entry })),
+            initializations: slot.initializations.map((entry) => ({
+              ...entry,
+              path: [...entry.path],
+            })),
           });
         }
         for (const block of sourceBlocks) {
@@ -563,18 +576,30 @@ export const useExperimentStore = create<ExperimentState>()(
       set((state) => {
         state.slots = state.slots.filter((slot) => slot.id !== id);
       }),
-    clearSlotInitialization: (id, time) =>
+    clearSlotInitialization: (id, boundary, path) =>
       set((state) => {
         const slot = state.slots.find((candidate) => candidate.id === id);
-        if (slot !== undefined) {
-          slot.initializations = slot.initializations.filter(
-            (initialization) => initialization.time !== time,
-          );
+        if (slot === undefined) {
+          return;
         }
+        const key = initializationPathKey(path);
+        slot.initializations = slot.initializations.filter(
+          (initialization) =>
+            initialization.boundary !== boundary ||
+            initializationPathKey(initialization.path) !== key,
+        );
       }),
-    initializeSlot: (id, time, value) =>
+    initializeSlot: (id, boundary, path, value) =>
       set((state) => {
-        if (!Number.isInteger(time) || time < 0 || !Number.isFinite(value)) {
+        if (!Number.isInteger(boundary) || boundary < 0 || !Number.isFinite(value)) {
+          return;
+        }
+        const contexts = boundaryGapPaths(state.loops, boundary);
+        const key = initializationPathKey(path);
+        const context = contexts.find(
+          (candidate) => initializationPathKey(candidate) === key,
+        );
+        if (context === undefined) {
           return;
         }
         const slot = state.slots.find((candidate) => candidate.id === id);
@@ -582,14 +607,31 @@ export const useExperimentStore = create<ExperimentState>()(
           return;
         }
         const existing = slot.initializations.find(
-          (initialization) => initialization.time === time,
+          (initialization) =>
+            initialization.boundary === boundary &&
+            initializationPathKey(initialization.path) === key,
         );
         if (existing !== undefined) {
           existing.value = value;
           return;
         }
-        slot.initializations.push({ time, value });
-        slot.initializations.sort((left, right) => left.time - right.time);
+        slot.initializations.push({ boundary, path: [...context], value });
+        slot.initializations.sort((left, right) => {
+          if (left.boundary !== right.boundary) {
+            return left.boundary - right.boundary;
+          }
+          const leftIndex = boundaryGapPaths(state.loops, left.boundary).findIndex(
+            (candidate) =>
+              initializationPathKey(candidate) ===
+              initializationPathKey(left.path),
+          );
+          const rightIndex = boundaryGapPaths(state.loops, right.boundary).findIndex(
+            (candidate) =>
+              initializationPathKey(candidate) ===
+              initializationPathKey(right.path),
+          );
+          return leftIndex - rightIndex;
+        });
       }),
     setSlotBinding: (id, key, slotId) =>
       set((state) => {

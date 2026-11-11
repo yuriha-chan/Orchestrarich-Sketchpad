@@ -68,7 +68,7 @@ import { generateDotGradientSVG } from "./dot-gradient";
 import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
 import type { FadeBoundary } from "./fade-editing";
 import { useExperimentStore } from "./store";
-import { allLoops, maxLoopDepth, type LoopNode } from "./loops";
+import { allLoops, boundaryGapPaths, maxLoopDepth, type LoopNode } from "./loops";
 import { loopLevelColor } from "./loop-colors";
 import { TimelineSession, slotReads, slotWrites } from "./execution";
 import { Stage } from "./Stage";
@@ -79,8 +79,8 @@ import { outputWires, slotWires } from "./slot-wires";
 import {
   BASE_GAP_WIDTH,
   CELL_WIDTH,
+  anchorGapCenter,
   barrierRect,
-  baseGapCenter,
   blockSpan,
   boundary,
   buildTimelineLayout,
@@ -88,6 +88,7 @@ import {
   cellDelta,
   cellLeft,
   cellRight,
+  loopEdgeX,
   type TimelineLayout,
 } from "./timeline-layout";
 import { WORKSPACES } from "./workspaces";
@@ -99,12 +100,14 @@ import {
   type TimelineRow,
 } from "./timeline-rows";
 import {
+  initializationPathKey,
   validateNumericSlotReads,
   validateNumericSlotWrites,
   type NumericSlot,
   type NumericSlotRead,
   type NumericSlotWrite,
 } from "../core/slots/numeric-slots";
+import { liveNumericSlots } from "./slot-gaps";
 import type {
   BlockState,
   TimelinePhase,
@@ -308,12 +311,10 @@ export function App() {
   const loopRegions = useMemo(() => allLoops(loops), [loops]);
   const layout = useMemo(
     () =>
-      buildTimelineLayout(columnCount, () => ({
-        before: [],
-        baseWidth: BASE_GAP_WIDTH,
-        after: [],
-      })),
-    [columnCount],
+      buildTimelineLayout(columnCount, (time) =>
+        boundaryGapPaths(loops, time),
+      ),
+    [columnCount, loops],
   );
   const slotWireLayout = useMemo(
     () => ({
@@ -526,18 +527,28 @@ export function App() {
     );
     return names;
   }, [slots, tracks]);
+  const liveSlots = useMemo(
+    () => liveNumericSlots(slots, loops),
+    [slots, loops],
+  );
   const writes = useMemo(() => slotWrites(blocks), [blocks]);
   const invalidSlotWrites = useMemo(
-    () => validateNumericSlotWrites(slots, writes),
-    [slots, writes],
+    () => validateNumericSlotWrites(liveSlots, writes),
+    [liveSlots, writes],
   );
   const invalidSlotReads = useMemo(
-    () => validateNumericSlotReads(slots, slotReads(blocks), writes),
-    [slots, blocks, writes],
+    () => validateNumericSlotReads(liveSlots, slotReads(blocks), writes),
+    [liveSlots, blocks, writes],
   );
   const slotValidationMessage = useMemo(
-    () => formatSlotValidation(invalidSlotReads, invalidSlotWrites, slots, tracks),
-    [invalidSlotReads, invalidSlotWrites, slots, tracks],
+    () =>
+      formatSlotValidation(
+        invalidSlotReads,
+        invalidSlotWrites,
+        liveSlots,
+        tracks,
+      ),
+    [invalidSlotReads, invalidSlotWrites, liveSlots, tracks],
   );
 
   const beginSlotDrag = useCallback(
@@ -655,17 +666,32 @@ export function App() {
   }, [dragPointerId, dragSlotId, blocks]);
 
   const startRun = () => {
-    const next = new TimelineSession(tracks, blocks, bpm, useStageStore.getState(), {
-      slots,
-      onSnapshot: (snapshot) =>
-        setRun((current) =>
-          current === null ? null : { ...current, snapshot },
-        ),
-      onActivity: setActivity,
-    });
-    sessionRef.current = next;
-    setRun({ session: next, snapshot: next.snapshot });
-    next.start();
+    let next: TimelineSession;
+    try {
+      next = new TimelineSession(
+        tracks,
+        blocks,
+        loops,
+        bpm,
+        useStageStore.getState(),
+        {
+          slots,
+          onSnapshot: (snapshot) =>
+            setRun((current) =>
+              current === null ? null : { ...current, snapshot },
+            ),
+          onActivity: setActivity,
+        },
+      );
+      sessionRef.current = next;
+      setRun({ session: next, snapshot: next.snapshot });
+      next.start();
+    } catch (error) {
+      sessionRef.current?.dispose();
+      sessionRef.current = null;
+      setRun(null);
+      setActivity(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const resetRun = useCallback(() => {
@@ -1112,14 +1138,15 @@ export function App() {
                 >
                   {loopEntries.map(({ node, depth }) => {
                     const colors = loopLevelColor(depth);
+                    const startX = loopEdgeX(layout, node.start, node.id, "start");
+                    const endX = loopEdgeX(layout, node.end, node.id, "end");
                     return (
                       <div
                         key={node.id}
                         className="loop-region"
                         style={{
-                          left: loopMarkerX(layout, node.start),
-                          width:
-                            loopMarkerX(layout, node.end) - loopMarkerX(layout, node.start),
+                          left: startX,
+                          width: endX - startX,
                           top: depth * LOOP_LANE_HEIGHT,
                           borderColor: colors.line,
                           background: colors.barFill,
@@ -1216,15 +1243,16 @@ export function App() {
                     )}
                     {loopEntries.map(({ node, depth }) => {
                       const colors = loopLevelColor(depth);
+                      const startX = loopEdgeX(layout, node.start, node.id, "start");
+                      const endX = loopEdgeX(layout, node.end, node.id, "end");
                       return (
                         <Fragment key={node.id}>
                           <div
                             className="loop-band"
                             aria-hidden="true"
                             style={{
-                              left: loopMarkerX(layout, node.start),
-                              width:
-                                loopMarkerX(layout, node.end) - loopMarkerX(layout, node.start),
+                              left: startX,
+                              width: endX - startX,
                               background: colors.fill,
                             }}
                           />
@@ -1232,7 +1260,7 @@ export function App() {
                             className="loop-line"
                             aria-hidden="true"
                             style={{
-                              left: loopMarkerX(layout, node.start),
+                              left: startX,
                               background: colors.line,
                             }}
                           />
@@ -1240,7 +1268,7 @@ export function App() {
                             className="loop-line"
                             aria-hidden="true"
                             style={{
-                              left: loopMarkerX(layout, node.end),
+                              left: endX,
                               background: colors.line,
                             }}
                           />
@@ -2321,7 +2349,10 @@ function SlotRow({
   const clearSlotInitialization = useExperimentStore(
     (state) => state.clearSlotInitialization,
   );
-  const [editing, setEditing] = useState<number | null>(null);
+  const [editing, setEditing] = useState<{
+    boundary: number;
+    path: readonly string[];
+  } | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingDrag, setPendingDrag] = useState<{
     pointerId: number;
@@ -2379,19 +2410,30 @@ function SlotRow({
     };
   }, [pendingDrag, onValueDragStart, slot.id, slot.trackId, name]);
 
-  const initializationAt = (time: number) =>
-    slot.initializations.find((candidate) => candidate.time === time);
+  const initializationAt = (
+    boundary: number,
+    path: readonly string[],
+  ) => {
+    const key = initializationPathKey(path);
+    return slot.initializations.find(
+      (candidate) =>
+        candidate.boundary === boundary &&
+        initializationPathKey(candidate.path) === key,
+    );
+  };
 
   const editedInitialization =
-    editing === null ? undefined : initializationAt(editing);
+    editing === null
+      ? undefined
+      : initializationAt(editing.boundary, editing.path);
 
-  const startEditing = (time: number) => {
+  const startEditing = (boundary: number, path: readonly string[]) => {
     if (!editable) {
       return;
     }
-    const initialization = initializationAt(time);
+    const initialization = initializationAt(boundary, path);
     setDraft(initialization === undefined ? "0" : String(initialization.value));
-    setEditing(time);
+    setEditing({ boundary, path });
   };
 
   const commit = () => {
@@ -2402,12 +2444,34 @@ function SlotRow({
     if (!Number.isFinite(value)) {
       return;
     }
-    initializeSlot(slot.id, editing, value);
+    initializeSlot(slot.id, editing.boundary, editing.path, value);
     setEditing(null);
   };
 
-  const rail = slotValueRail(slot.initializations, columnCount, assignmentTimes);
-  const gapCenter = (time: number) => baseGapCenter(layout, time);
+  const gapCenters = layout.boundaries.flatMap((run) =>
+    run.gaps.map((gap) => gap.center),
+  );
+  const anchors = layout.boundaries.flatMap((run) => {
+    const positions = run.gaps
+      .filter((gap) => initializationAt(run.time, gap.path) !== undefined)
+      .map((gap) => ({ left: gap.left, center: gap.center }));
+    if (assignmentTimes.includes(run.time)) {
+      const first = run.gaps[0];
+      positions.push({ left: first.left, center: first.center });
+    }
+    return positions;
+  });
+  const rail = slotValueRail(anchors, gapCenters, layout.width);
+  const editingGap =
+    editing === null
+      ? undefined
+      : layout.boundaries
+          .find((run) => run.time === editing.boundary)
+          ?.gaps.find(
+            (gap) =>
+              initializationPathKey(gap.path) ===
+              initializationPathKey(editing.path),
+          );
 
   return (
     <div
@@ -2426,71 +2490,71 @@ function SlotRow({
       >
         {rail.spans.map((span) => (
           <line
-            key={`span-${span.start}-${span.end}`}
-            x1={gapCenter(span.start)}
-            x2={
-              span.end >= columnCount
-                ? layout.width
-                : boundary(layout, span.end).left
-            }
+            key={`span-${span.x1}-${span.x2}`}
+            x1={span.x1}
+            x2={span.x2}
             y1={SLOT_HEIGHT / 2}
             y2={SLOT_HEIGHT / 2}
           />
         ))}
       </svg>
-      {Array.from({ length: columnCount }, (_, time) => {
-        const initialization = initializationAt(time);
-        const initialized = initialization !== undefined;
-        const description = initialized
-          ? `${name} at time ${time}, initialized to ${initialization.value}. Open to edit or delete the initialization.`
-          : `${name} at time ${time}, unset. Open to initialize it.`;
-        const run = boundary(layout, time);
-        return (
-          <button
-            key={time}
-            type="button"
-            className={`slot-cell${initialized ? " is-initialized" : ""}`}
-            style={{ left: run.left, width: cellRight(layout, time) - run.left }}
-            aria-label={description}
-            title={initialized ? "Edit or delete initialization" : "Initialize slot"}
-            disabled={!editable}
-            onClick={() => {
-              if (performance.now() < suppressClickUntil.current) {
-                return;
-              }
-              startEditing(time);
-            }}
-          >
-            {initialization !== undefined ? (
-              <span
-                className="slot-cell-value"
-                style={{ left: run.base.center - run.left }}
-                title="Drag to bind a parameter"
-                onPointerDown={(event) => {
-                  if (!editable || event.button !== 0) {
-                    return;
-                  }
-                  event.stopPropagation();
-                  setPendingDrag({
-                    pointerId: event.pointerId,
-                    x: event.clientX,
-                    y: event.clientY,
-                  });
-                }}
-              >
-                {initialization.value}
-              </span>
-            ) : null}
-          </button>
-        );
-      })}
-      {rail.dots.map((time) => (
+      {layout.boundaries.flatMap((run) =>
+        run.gaps.map((gap) => {
+          const initialization = initializationAt(run.time, gap.path);
+          const key = initializationPathKey(gap.path);
+          const initialized = initialization !== undefined;
+          const context =
+            key === "" ? "outside all loops" : `inside ${key.replaceAll("/", " and ")}`;
+          const description = initialized
+            ? `${name} at time ${run.time} (${context}), initialized to ${initialization.value}. Open to edit or delete the initialization.`
+            : `${name} at time ${run.time} (${context}), unset. Open to initialize it.`;
+          return (
+            <button
+              key={`gap-${run.time}-${key}`}
+              type="button"
+              className={`slot-cell${initialized ? " is-initialized" : ""}`}
+              style={{ left: gap.left, width: gap.width }}
+              aria-label={description}
+              title={initialized ? "Edit or delete initialization" : "Initialize slot"}
+              disabled={!editable}
+              onClick={() => {
+                if (performance.now() < suppressClickUntil.current) {
+                  return;
+                }
+                startEditing(run.time, gap.path);
+              }}
+            >
+              {initialization !== undefined ? (
+                <span
+                  className="slot-cell-value"
+                  style={{ left: gap.center - gap.left }}
+                  title="Drag to bind a parameter"
+                  onPointerDown={(event) => {
+                    if (!editable || event.button !== 0) {
+                      return;
+                    }
+                    event.stopPropagation();
+                    setPendingDrag({
+                      pointerId: event.pointerId,
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
+                  }}
+                >
+                  {initialization.value}
+                </span>
+              ) : null}
+            </button>
+          );
+        }),
+      )}
+      {rail.dots.map((x) => (
         <button
-          key={`dot-${time}`}
+          key={`dot-${x}`}
           type="button"
           className="slot-value-dot"
-          style={{ left: gapCenter(time) }}
-          aria-label={`${name} value at time ${time}; drag to bind a parameter`}
+          style={{ left: x }}
+          aria-label={`${name} value at ${x}px; drag to bind a parameter`}
           title="Drag to bind a parameter"
           disabled={!editable}
           onPointerDown={(event) => {
@@ -2510,16 +2574,13 @@ function SlotRow({
           }}
         />
       ))}
-      {editing !== null && editable ? (
+      {editing !== null && editingGap !== undefined && editable ? (
         <form
           className="slot-editor"
           style={{
             left: Math.max(
               2,
-              Math.min(
-                cellLeft(layout, editing) + 2,
-                layout.width - SLOT_EDITOR_WIDTH - 2,
-              ),
+              Math.min(editingGap.left, layout.width - SLOT_EDITOR_WIDTH - 2),
             ),
             width: SLOT_EDITOR_WIDTH,
           }}
@@ -2534,7 +2595,7 @@ function SlotRow({
             step="any"
             inputMode="decimal"
             autoFocus
-            aria-label={`${name} value at time ${editing}`}
+            aria-label={`${name} value at time ${editing.boundary}`}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -2546,14 +2607,14 @@ function SlotRow({
           />
           <button
             type="submit"
-            aria-label={`Set ${name} at time ${editing}`}
+            aria-label={`Set ${name} at time ${editing.boundary}`}
             title="Set value"
           >
             <Check size={12} aria-hidden="true" />
           </button>
           <button
             type="button"
-            aria-label={`Cancel editing ${name} at time ${editing}`}
+            aria-label={`Cancel editing ${name} at time ${editing.boundary}`}
             title="Cancel"
             onClick={() => setEditing(null)}
           >
@@ -2563,10 +2624,14 @@ function SlotRow({
             <button
               type="button"
               className="slot-editor-delete"
-              aria-label={`Delete initialization for ${name} at time ${editing}`}
+              aria-label={`Delete initialization for ${name} at time ${editing.boundary}`}
               title="Delete initialization"
               onClick={() => {
-                clearSlotInitialization(slot.id, editing);
+                clearSlotInitialization(
+                  slot.id,
+                  editing.boundary,
+                  editing.path,
+                );
                 setEditing(null);
               }}
             >
@@ -3199,7 +3264,7 @@ function formatSlotValidation(
       continue;
     }
     const firstInitializationTime = Math.min(
-      ...initializations.map((initialization) => initialization.time),
+      ...initializations.map((initialization) => initialization.boundary),
     );
     if (read.time < firstInitializationTime) {
       messages.add(
@@ -3231,10 +3296,6 @@ function flattenLoops(
     { node, depth },
     ...flattenLoops(node.children, depth + 1),
   ]);
-}
-
-function loopMarkerX(layout: TimelineLayout, time: number): number {
-  return baseGapCenter(layout, time);
 }
 
 function cellFromPointer(

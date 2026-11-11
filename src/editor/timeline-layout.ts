@@ -1,19 +1,14 @@
 export const CELL_WIDTH = 96;
 export const BASE_GAP_WIDTH = 32;
 
-export interface BoundarySpec {
-  readonly before?: readonly number[];
-  readonly baseWidth?: number;
-  readonly after?: readonly number[];
-}
-
 export interface TimelineGap {
   readonly kind: "gap";
   readonly time: number;
-  readonly role: "base" | "loop";
+  readonly path: readonly string[];
   readonly width: number;
   readonly left: number;
   readonly center: number;
+  readonly right: number;
 }
 
 export interface TimelineCell {
@@ -31,7 +26,6 @@ export interface Boundary {
   readonly left: number;
   readonly right: number;
   readonly gaps: readonly TimelineGap[];
-  readonly base: TimelineGap;
 }
 
 export interface TimelineLayout {
@@ -42,10 +36,13 @@ export interface TimelineLayout {
   readonly width: number;
 }
 
+export type GapPathsAt = (time: number) => readonly (readonly string[])[];
+
 export function buildTimelineLayout(
   cellCount: number,
-  specAt: (time: number) => BoundarySpec,
+  gapPathsAt: GapPathsAt,
   cellWidth: number = CELL_WIDTH,
+  gapWidth: number = BASE_GAP_WIDTH,
 ): TimelineLayout {
   const segments: TimelineSegment[] = [];
   const boundaries: Boundary[] = [];
@@ -53,39 +50,22 @@ export function buildTimelineLayout(
   let x = 0;
 
   for (let time = 0; time <= cellCount; time += 1) {
-    const spec = specAt(time);
-    const gaps: TimelineGap[] = [];
-    const pushGap = (role: TimelineGap["role"], width: number) => {
+    const runLeft = x;
+    const gaps = gapPathsAt(time).map((path): TimelineGap => {
       const gap: TimelineGap = {
         kind: "gap",
         time,
-        role,
-        width,
+        path,
+        width: gapWidth,
         left: x,
-        center: x + width / 2,
+        center: x + gapWidth / 2,
+        right: x + gapWidth,
       };
-      gaps.push(gap);
       segments.push(gap);
-      x += width;
+      x += gapWidth;
       return gap;
-    };
-
-    const left = x;
-    for (const width of spec.before ?? []) {
-      pushGap("loop", width);
-    }
-    const base = pushGap("base", spec.baseWidth ?? BASE_GAP_WIDTH);
-    for (const width of spec.after ?? []) {
-      pushGap("loop", width);
-    }
-
-    boundaries.push({
-      time,
-      left,
-      right: x,
-      gaps,
-      base,
     });
+    boundaries.push({ time, left: runLeft, right: x, gaps });
 
     if (time < cellCount) {
       cellLefts.push(x);
@@ -115,8 +95,27 @@ export function boundary(layout: TimelineLayout, time: number): Boundary {
   return layout.boundaries[time];
 }
 
-export function baseGapCenter(layout: TimelineLayout, time: number): number {
-  return layout.boundaries[time].base.center;
+export function anchorGapCenter(layout: TimelineLayout, time: number): number {
+  return layout.boundaries[time].gaps[0].center;
+}
+
+export type LoopEdge = "start" | "end";
+
+export function loopEdgeX(
+  layout: TimelineLayout,
+  time: number,
+  loopId: string,
+  edge: LoopEdge,
+): number {
+  const gaps = layout.boundaries[time].gaps;
+  for (let index = 0; index + 1 < gaps.length; index += 1) {
+    const before = gaps[index].path.includes(loopId);
+    const after = gaps[index + 1].path.includes(loopId);
+    if (edge === "start" ? !before && after : before && !after) {
+      return gaps[index].right;
+    }
+  }
+  throw new Error(`No ${edge} edge of loop ${loopId} at time ${time}`);
 }
 
 export function cellAtX(layout: TimelineLayout, x: number): number {

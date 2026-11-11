@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   TimelineRunner,
   type BlockSnapshot,
+  type LoopDefinition,
   type SkipReason,
   type TimelineDefinition,
   type TimelineSnapshot,
@@ -39,6 +40,11 @@ interface RunnerConfig {
     resolve: (blockId: string) => void,
   ) => void | Promise<void>;
   readonly onTerminate?: (block: BlockSnapshot) => void;
+  readonly onLoopRepeat?: (
+    loop: LoopDefinition,
+    endTime: number,
+    startTime: number,
+  ) => void;
 }
 
 function createRunner(
@@ -65,6 +71,7 @@ function createRunner(
 
   const runner = new TimelineRunner(definition, {
     onTimeStart: config.onTimeStart,
+    onLoopRepeat: config.onLoopRepeat,
     onBlockStart: (block) => {
       config.onStart?.(block);
       const execution = deferred();
@@ -1555,5 +1562,298 @@ describe("TimelineRunner block outputs", () => {
 
     expect(terminated).toEqual([{ outputs: {} }]);
     expect(runner.snapshot().phase).toBe("failed");
+  });
+});
+
+describe("TimelineRunner loop playback", () => {
+  function loopRunner(
+    blocks: readonly { id: string; start: number; length: number }[],
+    loops: readonly LoopDefinition[],
+    config: RunnerConfig = {},
+  ) {
+    return createRunner({ tracks: [{ id: "t", blocks }], loops }, config);
+  }
+
+  it("runs a loop body three times, jumping back to its start", async () => {
+    const starts: string[] = [];
+    const times: number[] = [];
+    const { runner, resolve } = loopRunner(
+      [
+        { id: "a", start: 0, length: 1 },
+        { id: "b", start: 1, length: 1 },
+      ],
+      [{ start: 0, end: 2, iterations: 3 }],
+      {
+        onStart: (block) => starts.push(block.id),
+        onTimeStart: (time) => times.push(time),
+      },
+    );
+
+    runner.start();
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      resolve("a");
+      await flush();
+      resolve("b");
+      await flush();
+    }
+
+    expect(starts).toEqual(["a", "b", "a", "b", "a", "b"]);
+    expect(times).toEqual([0, 1, 0, 1, 0, 1]);
+    expect(runner.time).toBe(2);
+    expect(runner.phase).toBe("finished");
+  });
+
+  it("reports each loop repeat with the loop and its boundaries", async () => {
+    const repeats: [number, number][] = [];
+    const loop: LoopDefinition = { start: 0, end: 2, iterations: 3 };
+    const { runner, resolve } = loopRunner(
+      [{ id: "a", start: 0, length: 1 }],
+      [loop],
+      {
+        onLoopRepeat: (repeated, end, start) => {
+          expect(repeated).toBe(loop);
+          repeats.push([end, start]);
+        },
+      },
+    );
+
+    runner.start();
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      resolve("a");
+      await flush();
+    }
+
+    expect(repeats).toEqual([
+      [2, 0],
+      [2, 0],
+    ]);
+    expect(runner.phase).toBe("finished");
+  });
+
+  it("runs a block after the loop exactly once", async () => {
+    const starts: string[] = [];
+    const { runner, resolve } = loopRunner(
+      [
+        { id: "inside", start: 0, length: 1 },
+        { id: "after", start: 2, length: 1 },
+      ],
+      [{ start: 0, end: 2, iterations: 3 }],
+      { onStart: (block) => starts.push(block.id) },
+    );
+
+    runner.start();
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      resolve("inside");
+      await flush();
+    }
+
+    expect(starts).toEqual(["inside", "inside", "inside", "after"]);
+    expect(runner.time).toBe(2);
+
+    resolve("after");
+    await flush();
+
+    expect(starts).toEqual(["inside", "inside", "inside", "after"]);
+    expect(runner.time).toBe(3);
+    expect(runner.phase).toBe("finished");
+  });
+
+  it("terminates blocks ending at the loop end on every iteration", async () => {
+    const terminated: string[] = [];
+    const { runner, resolve } = loopRunner(
+      [{ id: "span", start: 0, length: 2 }],
+      [{ start: 0, end: 2, iterations: 3 }],
+      { onTerminate: (block) => terminated.push(block.id) },
+    );
+
+    runner.start();
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      resolve("span");
+      await flush();
+    }
+
+    expect(terminated).toEqual(["span", "span", "span"]);
+    expect(runner.time).toBe(2);
+    expect(runner.phase).toBe("finished");
+  });
+
+  it("multiplies nested loop iterations", async () => {
+    const starts: string[] = [];
+    const { runner, resolve } = loopRunner(
+      [{ id: "a", start: 0, length: 1 }],
+      [
+        {
+          start: 0,
+          end: 2,
+          iterations: 3,
+          loops: [{ start: 0, end: 1, iterations: 3 }],
+        },
+      ],
+      { onStart: (block) => starts.push(block.id) },
+    );
+
+    runner.start();
+    for (let iteration = 0; iteration < 9; iteration += 1) {
+      resolve("a");
+      await flush();
+    }
+
+    expect(starts).toHaveLength(9);
+    expect(runner.time).toBe(2);
+    expect(runner.phase).toBe("finished");
+  });
+
+  it("runs loops that share an end boundary", async () => {
+    const starts: string[] = [];
+    const { runner, resolve } = loopRunner(
+      [{ id: "a", start: 1, length: 1 }],
+      [
+        {
+          start: 0,
+          end: 2,
+          iterations: 2,
+          loops: [{ start: 1, end: 2, iterations: 2 }],
+        },
+      ],
+      { onStart: (block) => starts.push(block.id) },
+    );
+
+    runner.start();
+    for (let iteration = 0; iteration < 4; iteration += 1) {
+      resolve("a");
+      await flush();
+    }
+
+    expect(starts).toHaveLength(4);
+    expect(runner.time).toBe(2);
+    expect(runner.phase).toBe("finished");
+  });
+
+  it("keeps looping to the loop end even when the last cells are empty", async () => {
+    const starts: string[] = [];
+    const { runner, resolve } = loopRunner(
+      [{ id: "a", start: 0, length: 1 }],
+      [{ start: 0, end: 3, iterations: 3 }],
+      { onStart: (block) => starts.push(block.id) },
+    );
+
+    runner.start();
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      resolve("a");
+      await flush();
+    }
+
+    expect(starts).toHaveLength(3);
+    expect(runner.time).toBe(3);
+    expect(runner.phase).toBe("finished");
+  });
+
+  it("ignores a skip rejection from a previous loop iteration", async () => {
+    const executions: Deferred[] = [];
+    const skipRejects: ((error?: unknown) => void)[] = [];
+    const starts: string[] = [];
+    const runner = new TimelineRunner(
+      {
+        tracks: [{ id: "t", blocks: [{ id: "a", start: 0, length: 1 }] }],
+        loops: [{ start: 0, end: 1, iterations: 2 }],
+      },
+      {
+        onBlockStart: (block) => {
+          starts.push(block.id);
+          const execution = deferred();
+          executions.push(execution);
+          const skip = new Promise<void>((_resolve, reject) => {
+            skipRejects.push(reject);
+          });
+          return { execution: execution.promise, skip: () => skip };
+        },
+      },
+    );
+
+    runner.start();
+    expect(starts).toEqual(["a"]);
+
+    runner.requestSkip();
+    executions[0].resolve();
+    await flush();
+
+    expect(starts).toEqual(["a", "a"]);
+    expect(runner.phase).toBe("running");
+    expect(runner.time).toBe(0);
+
+    skipRejects[0](new Error("late rejection"));
+    await flush();
+
+    expect(runner.phase).toBe("running");
+    expect(runner.snapshot().blocks[0].state).toBe("running");
+  });
+
+  it("allows a block spanning exactly the loop", async () => {
+    const { runner, resolve } = loopRunner(
+      [{ id: "a", start: 0, length: 2 }],
+      [{ start: 0, end: 2, iterations: 2 }],
+    );
+
+    runner.start();
+    resolve("a");
+    await flush();
+    resolve("a");
+    await flush();
+
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(2);
+  });
+
+  it("rejects a block that contains a loop", () => {
+    expect(
+      () =>
+        new TimelineRunner({
+          tracks: [{ id: "t", blocks: [{ id: "wrap", start: 0, length: 4 }] }],
+          loops: [{ start: 1, end: 3, iterations: 3 }],
+        }),
+    ).toThrow(/contains loop/i);
+  });
+
+  it("rejects a block that partially overlaps a loop", () => {
+    expect(
+      () =>
+        new TimelineRunner({
+          tracks: [{ id: "t", blocks: [{ id: "cut", start: 0, length: 2 }] }],
+          loops: [{ start: 1, end: 3, iterations: 3 }],
+        }),
+    ).toThrow(/overlaps loop/i);
+  });
+
+  it("rejects crossing loops", () => {
+    expect(
+      () =>
+        new TimelineRunner({
+          tracks: [],
+          loops: [
+            { start: 0, end: 4, iterations: 2 },
+            { start: 3, end: 6, iterations: 2 },
+          ],
+        }),
+    ).toThrow(/loop/i);
+  });
+
+  it("rejects a loop with no iterations", () => {
+    expect(
+      () =>
+        new TimelineRunner({
+          tracks: [],
+          loops: [{ start: 0, end: 2, iterations: 0 }],
+        }),
+    ).toThrow(/iterations/i);
+  });
+
+  it("includes loop ends in the barrier check times", () => {
+    const runner = new TimelineRunner({
+      tracks: [{ id: "t", blocks: [{ id: "a", start: 0, length: 1 }] }],
+      loops: [{ start: 0, end: 5, iterations: 2 }],
+    });
+
+    expect(runner.barrierSpan(0)).toEqual({ start: 0, end: 1 });
+    expect(runner.barrierSpan(1)).toEqual({ start: 1, end: 5 });
   });
 });

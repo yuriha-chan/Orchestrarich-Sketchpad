@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   allLoops,
   blocksRespectLoops,
+  boundaryGapPaths,
   insertLoop,
   loopsAreWellFormed,
   maxLoopDepth,
@@ -264,6 +265,79 @@ describe("allLoops and maxLoopDepth", () => {
     expect(maxLoopDepth([])).toBe(0);
     expect(maxLoopDepth([loop("a", 0, 2)])).toBe(1);
     expect(maxLoopDepth(tree)).toBe(3);
+  });
+});
+
+describe("boundaryGapPaths", () => {
+  it("returns one context on a boundary without a loop edge", () => {
+    expect(boundaryGapPaths([], 2)).toEqual([[]]);
+    expect(boundaryGapPaths([loop("outer", 0, 4)], 2)).toEqual([["outer"]]);
+  });
+
+  it("splits a loop start boundary into outside and inside contexts", () => {
+    expect(boundaryGapPaths([loop("outer", 0, 4)], 0)).toEqual([
+      [],
+      ["outer"],
+    ]);
+  });
+
+  it("closes inner loops before outer loops at an end boundary", () => {
+    const outer = loop("outer", 0, 4, [loop("inner", 1, 3)]);
+
+    expect(boundaryGapPaths([outer], 3)).toEqual([
+      ["outer", "inner"],
+      ["outer"],
+    ]);
+    expect(boundaryGapPaths([outer], 4)).toEqual([["outer"], []]);
+  });
+
+  it("closes one loop and opens another inside a remaining context", () => {
+    const outer = loop("outer", 0, 6, [
+      loop("before", 1, 3),
+      loop("after", 3, 5),
+    ]);
+
+    expect(boundaryGapPaths([outer], 3)).toEqual([
+      ["outer", "before"],
+      ["outer"],
+      ["outer", "after"],
+    ]);
+  });
+
+  it("counts every nested edge that ends at the same boundary", () => {
+    const nested = [
+      loop("a", 0, 4, [loop("b", 1, 4, [loop("c", 2, 4)])]),
+    ];
+
+    expect(boundaryGapPaths(nested, 4)).toEqual([
+      ["a", "b", "c"],
+      ["a", "b"],
+      ["a"],
+      [],
+    ]);
+  });
+
+  it("counts every nested edge that starts at the same boundary", () => {
+    const nested = [
+      loop("a", 0, 4, [loop("b", 0, 3, [loop("c", 0, 2)])]),
+    ];
+
+    expect(boundaryGapPaths(nested, 0)).toEqual([
+      [],
+      ["a"],
+      ["a", "b"],
+      ["a", "b", "c"],
+    ]);
+  });
+
+  it("keeps touching siblings in separate contexts", () => {
+    const loops = [loop("first", 0, 3), loop("second", 3, 6)];
+
+    expect(boundaryGapPaths(loops, 3)).toEqual([
+      ["first"],
+      [],
+      ["second"],
+    ]);
   });
 });
 

@@ -20,19 +20,15 @@ const tracks: readonly Track[] = [
 ];
 
 const slots: readonly NumericSlot[] = [
-  { id: "first-slot", trackId: "first", initializations: [{ time: 0, value: 1 }] },
-  { id: "second-slot", trackId: "second", initializations: [{ time: 0, value: 2 }] },
-  { id: "shared-slot", trackId: null, initializations: [{ time: 0, value: 3 }] },
+  { id: "first-slot", trackId: "first", initializations: [{ boundary: 0, path: [], value: 1 }] },
+  { id: "second-slot", trackId: "second", initializations: [{ boundary: 0, path: [], value: 2 }] },
+  { id: "shared-slot", trackId: null, initializations: [{ boundary: 0, path: [], value: 3 }] },
 ];
 
 const rows = timelineRows(tracks, slots);
 
 const layout: SlotWireLayout = {
-  layout: buildTimelineLayout(
-    16,
-    () => ({ before: [], baseWidth: 20, after: [] }),
-    110,
-  ),
+  layout: buildTimelineLayout(16, () => [[]], 110, 20),
   blockInset: 10,
   trackHeight: 48,
   slotHeight: 24,

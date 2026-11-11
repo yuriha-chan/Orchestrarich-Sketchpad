@@ -117,3 +117,55 @@
   a separate User decision.
 - Status: resolved for authoring. Playback, conditions, and redo/exit remain
   later increments.
+
+## Semantic gaps and recursive gap/cell derivation
+
+- Consultation package for manual Counsel review:
+  `docs/consultation-semantic-gaps.md`. This entry is the ledger pointer only.
+- Affected work: the timeline layout model (`src/editor/timeline-layout.ts`,
+  committed as 8dc624a), the identity and placement of slot initializations, and
+  whether loop playback enters this increment. Loop-gap work is stopped.
+- User message (verbatim): "two things to clarify: gaps are not only a visual
+  component. gap is a place where value initialization take place. so initialize
+  in the gap before loop edge: variable initialized only once. initialize in the
+  gap after loop edge: variable initialized at every iteration. so don't think
+  there are three kinds of gaps (before, base, after) to render. the structure
+  automatically derives gap and cell sequence by recursive rules, and the
+  component reflect that structure. there may be 4 or more contiguous gap run if
+  nested loop starts at the same position. the derived model is used in the
+  execution too." The message was accompanied by a nested-loop diagram showing a
+  gap on each side of every loop bracket, with the innermost level containing
+  `gap | cell | gap | cell | gap`.
+- Earlier layout request (verbatim): "In current UI model, gaps are part of cell.
+  We are going to create contiguous gaps since there will be outer-loop gap and
+  inner-loop gap. So at first we change the UI model. cells and gaps are UI
+  objects, like: [gap, cell, gap, cell, gap, gap, cell, gap, cell, gap, gap, gap,
+  cell, gap, cell, gap, gap]".
+- Established facts: loops are an authored laminar forest (`src/editor/loops.ts`)
+  with authoring only ("only authoring markers"); the runner executes a single
+  pass; slot initializations are keyed by logical time only (latest at or before
+  a read), rendered as pills in the single 32px base gap at each boundary, and
+  applied through the runner's `onTimeStart(time)` hook.
+- Lead reading of the new message: start from a spine `gap, cell, gap, ..., gap`.
+  Every loop start edge splits the gap at its time into an outside gap (runs
+  once) and an inside gap (runs every iteration), with the marker between them;
+  every end edge splits it into an inside and an outside gap. Nested loops split
+  the same inside gap again, so `k` edges at one boundary produce `k+1`
+  contiguous gaps (e.g. four gaps for three nested starts at the same position).
+  Ordering at a boundary: ending edges innermost-to-outermost, then starting
+  edges outermost-to-innermost. Each gap therefore carries the loop path that
+  determines repetition, and the derived sequence drives both rendering and
+  execution. The earlier before/base/after classification is discarded.
+- Questions requiring the User's judgment:
+  1. Does this increment include loop playback/repetition (so "initialized at
+     every iteration" is observable), or only the recursive structure and
+     gap-attached initialization with runs still single-pass?
+  2. Must a slot initialization now be identified by its gap (for example slot,
+     boundary time, gap index), so two initializations at the same logical time
+     can sit on opposite sides of a loop edge and the editor can choose among the
+     gaps? Today it is keyed by time alone and always occupies the single gap.
+  3. Should every derived gap keep the current 32px width, so the grid widens by
+     32px for each extra gap at a boundary, or should gaps share the existing
+     boundary space?
+- Status: blocked pending the User's manual counsel answer. No code changed
+  since commit 8dc624a.

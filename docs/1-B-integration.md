@@ -125,10 +125,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
 ## What Was Confirmed
 
 - `pnpm typecheck`: core and 1-B UI both pass.
-- `pnpm test`: 349 tests pass (55 core + 19 numeric slots + 54 placement model
-  + 82 store + 16 timeline rows + 40 integration + 8 stage geometry + 10 slot
-  value rail + 15 slot wires + 6 fade editing and dot-pattern tests + 39 loop
-  tree tests + 5 loop color tests).
+- `pnpm test`: 387 tests pass (68 core + 19 numeric slots + 54 placement model
+  + 82 store + 16 timeline rows + 42 integration + 8 stage geometry + 10 slot
+  value rail + 15 slot wires + 6 fade editing and dot-pattern tests + 46 loop
+  tree tests + 5 loop color tests + 16 timeline layout tests).
 - `pnpm build`: production build succeeds.
 - The development server serves the page, the entry module, and the execution
   adapter with HTTP 200.
@@ -410,21 +410,60 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     top-level loop keeps the violet hue and each deeper level shifts the hue by
     one stop (violet, blue, cyan, green, then yellow-green), so nesting is
     readable at a glance and a loop keeps its color when other loops are added.
-    A run (1-A engine) does not repeat a region; loop conditions, redo/exit
-    markers, and loop playback remain for a later increment.
+    Loop playback is implemented as a pilot with a fixed iteration count
+    (decision 39); conditions and redo/exit markers remain for a later
+    increment.
 38. The timeline's horizontal geometry is an explicit sequence of cell and gap
     objects (`src/editor/timeline-layout.ts`), not a fixed cell pitch. A cell is
     a 96 px tile at an integer time. Every time boundary, including the
-    trailing boundary after the last cell, holds a contiguous gap run: one base
-    gap and any number of loop gaps before or after it. The base gap keeps slot
-    badges, rail endpoints, and output wires anchored next to the cell. All
-    horizontal geometry reads the layout: cell left/right, boundary runs, base
-    centers, time from a pointer x, drag deltas, block spans, and the barrier
-    cursor. Pointer hit-testing and drag snapping map an x to the cell whose
-    tile or boundary run contains it. Gaps are currently all base gaps; loop
-    marker gaps are not generated yet. The default layout adds a trailing base
-    gap, so the grid is one base gap wider than before and a loop ending at the
-    last rendered column has room for its marker.
+    trailing boundary after the last cell, holds one contiguous gap per
+    enclosing loop context; `k` loop edges at a boundary produce `k + 1` gaps of
+    32 px each. The contexts are derived from the loop forest by closing loops
+    from the innermost to the common prefix and then opening loops back out
+    (`boundaryGapPaths` in `src/editor/loops.ts`), so each gap carries its
+    enclosing loop path and the grid widens by one gap per edge. A loop marker
+    is drawn between the two gaps that its edge separates (`loopEdgeX`). All
+    horizontal geometry reads the layout: cell left/right, boundary runs, value
+    anchor centers, time from a pointer x, drag deltas, block spans, and the
+    barrier cursor. Pointer hit-testing and drag snapping map an x to the cell
+    whose tile or boundary run contains it. Time-keyed slot badges, rail
+    endpoints, and output wires currently anchor in the first gap of a run;
+    gap-keyed initialization authoring and execution are a later stage (see
+    `docs/loop-execution.md`). The trailing gap lets a loop ending at the last
+    rendered column draw its marker.
+
+39. Loop playback is a pilot with three iterations. The engine's
+    `TimelineDefinition` carries a forest of `LoopDefinition { start, end,
+    iterations, loops }`; the editor maps every authored loop with
+    `LOOP_ITERATIONS = 3`, so nested loops multiply. At a loop end barrier the
+    engine waits for the blocks ending there, terminates them, and then either
+    repeats the body (resetting blocks strictly inside the loop, clearing their
+    outputs, bumping a generation token, and jumping logical time back to the
+    loop start) or exits when the iterations are exhausted. Loop ends are
+    barrier check times and count toward the horizon, so empty trailing cells
+    inside a loop still repeat. A block that contains a loop, or partially
+    overlaps one, is rejected when the runner is constructed; the editor shows
+    that message in the activity line and starts no run. Containing blocks are
+    allowed by design.md 3.5 and by the editor, but their timing under repeated
+    traversal is undefined, so the pilot refuses them.
+
+40. Slot initializations are keyed by a gap, not by a time alone: the key is the
+    boundary time plus the enclosing loop path, and each rendered gap is one
+    initialization position. The slot row renders one clickable region per gap,
+    and the value badge sits in its gap. Execution applies a gap's
+    initializations when the traversal visits it: a normal boundary entry
+    applies every context in order, while a loop repeat applies the closing
+    contexts at the loop end (from the inside outward, excluding the shared
+    parent context) and then the opening contexts at the loop start (from the
+    shared parent inward). The runner reports repeats with the repeating loop,
+    and the session derives the contexts from the authored forest. Consequently
+    an initialization before a loop edge runs once per entry to its context, one
+    after the edge runs every iteration, and nested loops multiply. Read
+    validation still accepts an initialization at or before the read time,
+    because the first pass visits every gap at earlier boundaries.
+    Initializations whose gap disappears after a loop edit are kept in the
+    document but pruned from validation, rendering, and execution until the gap
+    exists again.
 
 ## Carry-Over
 
@@ -450,6 +489,6 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   drag gesture; numeric geometry and an RGB fill color are exposed now.
 - Whether the stage grid should offer presets or separate the screen resolution
   from the grid cell count.
-- Loop playback: repeat count or termination condition, redo/exit markers, and
-  how repeated iterations allocate execution instances and preserve slot
-  values. The current increment only authors nested regions.
+- Loop playback: repeat count or termination condition, redo/exit markers.
+  Three fixed iterations, nested loops, per-iteration execution instances, and
+  gap-keyed slot initializations are implemented.

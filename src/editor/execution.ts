@@ -4,11 +4,13 @@ import {
   type BlockOutputs,
   type BlockSnapshot,
   type BlockStartResult,
+  type LoopDefinition,
   type TimelineDefinition,
   type TimelinePhase,
   type TimelineSnapshot,
 } from "../core/execution/timeline-runner.ts";
 import {
+  initializationPathKey,
   validateNumericSlotReads,
   validateNumericSlotWrites,
   type NumericSlot,
@@ -20,6 +22,8 @@ import {
   type Placement,
   type Track,
 } from "./model";
+import { boundaryGapPaths, type LoopNode } from "./loops";
+import { liveNumericSlots } from "./slot-gaps";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";
 
@@ -34,9 +38,21 @@ export interface TimelineSessionOptions {
   readonly onFinalize?: (instance: ExecutionInstance) => void;
 }
 
+export const LOOP_ITERATIONS = 3;
+
+function toLoopDefinition(loop: LoopNode): LoopDefinition {
+  return {
+    start: loop.start,
+    end: loop.end,
+    iterations: LOOP_ITERATIONS,
+    loops: loop.children.map(toLoopDefinition),
+  };
+}
+
 export function toTimelineDefinition(
   tracks: readonly Track[],
   placements: readonly Placement[],
+  loops: readonly LoopNode[],
 ): TimelineDefinition {
   return {
     tracks: tracks.map((track) => ({
@@ -45,6 +61,7 @@ export function toTimelineDefinition(
         .filter((placement) => placement.trackId === track.id)
         .flatMap((placement) => definitionBlocks(compilePlacement(placement))),
     })),
+    loops: loops.map(toLoopDefinition),
   };
 }
 
@@ -78,12 +95,17 @@ export class TimelineSession {
   private readonly options: TimelineSessionOptions;
   private readonly bpm: number;
   private readonly placements: readonly Placement[];
+  private readonly loops: readonly LoopNode[];
+  private readonly slots: readonly NumericSlot[];
+  private readonly loopPaths: ReadonlyMap<LoopDefinition, readonly string[]>;
   private readonly runtimeSlots = new Map<string, number>();
+  private skipInitializationTime: number | undefined;
   private lastPhase: TimelinePhase = "idle";
 
   constructor(
     tracks: readonly Track[],
     placements: readonly Placement[],
+    loops: readonly LoopNode[],
     bpm: number,
     private readonly stage: StageActions,
     options: TimelineSessionOptions = {},
@@ -91,6 +113,25 @@ export class TimelineSession {
     this.options = options;
     this.bpm = bpm;
     this.placements = placements;
+    this.loops = loops;
+    this.slots = liveNumericSlots(options.slots ?? [], loops);
+    const loopPaths = new Map<LoopDefinition, readonly string[]>();
+    const toLoop = (
+      node: LoopNode,
+      ancestors: readonly string[],
+    ): LoopDefinition => {
+      const path = [...ancestors, node.id];
+      const definition: LoopDefinition = {
+        start: node.start,
+        end: node.end,
+        iterations: LOOP_ITERATIONS,
+        loops: node.children.map((child) => toLoop(child, path)),
+      };
+      loopPaths.set(definition, path);
+      return definition;
+    };
+    const coreLoops = loops.map((node) => toLoop(node, []));
+    this.loopPaths = loopPaths;
     const definitions = placements.map(compilePlacement);
     const byBlock: Record<string, ExecutionDefinition> = {};
     for (const definition of definitions) {
@@ -107,9 +148,12 @@ export class TimelineSession {
             .filter(({ placement }) => placement.trackId === track.id)
             .flatMap(definitionBlocks),
         })),
+        loops: coreLoops,
       },
       {
         onTimeStart: (time) => this.applyTimeStart(time),
+        onLoopRepeat: (loop, endTime, startTime) =>
+          this.applyLoopRepeat(loop, endTime, startTime),
         onBlockStart: (block) => this.startBlock(block),
         onBlockTerminate: (block, outputs) =>
           this.terminateBlock(block, outputs),
@@ -136,7 +180,7 @@ export class TimelineSession {
   }
 
   start(): void {
-    const slots = this.options.slots ?? [];
+    const slots = this.slots;
     const writes = slotWrites(this.placements);
     const invalidWrites = validateNumericSlotWrites(slots, writes);
     if (invalidWrites.length > 0) {
@@ -172,9 +216,52 @@ export class TimelineSession {
   }
 
   private applyTimeStart(time: number): void {
-    for (const slot of this.options.slots ?? []) {
+    if (this.skipInitializationTime === time) {
+      this.skipInitializationTime = undefined;
+      return;
+    }
+    for (const context of boundaryGapPaths(this.loops, time)) {
+      this.applyContext(time, context);
+    }
+  }
+
+  private applyLoopRepeat(
+    loop: LoopDefinition,
+    endTime: number,
+    startTime: number,
+  ): void {
+    const path = this.loopPaths.get(loop)!;
+    const parentKey = initializationPathKey(path.slice(0, -1));
+    const endContexts = boundaryGapPaths(this.loops, endTime);
+    const endIndex = endContexts.findIndex(
+      (context) => initializationPathKey(context) === parentKey,
+    );
+    if (endIndex < 0) {
+      throw new Error("Loop parent context is missing at the loop end");
+    }
+    for (const context of endContexts.slice(0, endIndex)) {
+      this.applyContext(endTime, context);
+    }
+    const startContexts = boundaryGapPaths(this.loops, startTime);
+    const startIndex = startContexts.findIndex(
+      (context) => initializationPathKey(context) === parentKey,
+    );
+    if (startIndex < 0) {
+      throw new Error("Loop parent context is missing at the loop start");
+    }
+    for (const context of startContexts.slice(startIndex + 1)) {
+      this.applyContext(startTime, context);
+    }
+    this.skipInitializationTime = startTime;
+  }
+
+  private applyContext(boundary: number, path: readonly string[]): void {
+    const key = initializationPathKey(path);
+    for (const slot of this.slots) {
       const initialization = slot.initializations.find(
-        (candidate) => candidate.time === time,
+        (candidate) =>
+          candidate.boundary === boundary &&
+          initializationPathKey(candidate.path) === key,
       );
       if (initialization !== undefined) {
         this.runtimeSlots.set(slot.id, initialization.value);

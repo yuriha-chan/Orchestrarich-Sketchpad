@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimelineSnapshot } from "../core/execution/timeline-runner.ts";
 import type { NumericSlot } from "../core/slots/numeric-slots.ts";
+import type { LoopNode } from "./loops";
 import { TimelineSession, SKIP_FADE_MS, slotReads, toTimelineDefinition, type ExecutionInstance } from "./execution";
 import { compilePlacement, definitionBlocks, isMultiPhase, type ExecutionDefinition } from "./execution-definition";
 import type {
@@ -111,7 +112,7 @@ function placement(overrides: PlacementOverrides = {}): Placement {
 function numericSlot(
   id: string,
   trackId: string | null,
-  initializations: { time: number; value: number }[] = [],
+  initializations: { boundary: number; path: string[]; value: number }[] = [],
 ): NumericSlot {
   return { id, trackId, initializations };
 }
@@ -121,13 +122,15 @@ function setup(
   bpm = 120,
   stage = createStageStore(),
   slots: readonly NumericSlot[] = [],
+  loops: readonly LoopNode[] = [],
 ) {
   const activities: string[] = [];
   const finalized: string[] = [];
   const startedInstances: ExecutionInstance[] = [];
   const finalizedInstances: ExecutionInstance[] = [];
+  const rectangleXs: number[] = [];
   let snapshot: TimelineSnapshot | null = null;
-  const session = new TimelineSession(DEFAULT_TRACKS, placements, bpm, stage.getState(), {
+  const session = new TimelineSession(DEFAULT_TRACKS, placements, loops, bpm, stage.getState(), {
     slots,
     onSnapshot: (value) => {
       snapshot = value;
@@ -137,6 +140,17 @@ function setup(
     },
     onExecutionStart: (instance) => {
       startedInstances.push(instance);
+      if (instance.definition.placement.kind === "rectangle") {
+        const item = stage
+          .getState()
+          .items.find(
+            (candidate): candidate is RectangleView =>
+              candidate.kind === "rectangle" && candidate.id === instance.id,
+          );
+        if (item !== undefined) {
+          rectangleXs.push(item.x);
+        }
+      }
     },
     onFinalize: (instance) => {
       finalized.push(instance.definition.placement.id);
@@ -149,9 +163,12 @@ function setup(
     finalized,
     startedInstances,
     finalizedInstances,
+    rectangleXs,
     stage,
     advanceDialogue: (placementId: string) => {
-      const instance = startedInstances.find((instance) => instance.definition.placement.id === placementId)!;
+      const instance = [...startedInstances]
+        .reverse()
+        .find((instance) => instance.definition.placement.id === placementId)!;
       const dialogue = stage.getState().items.find(
         (item): item is DialogueView => item.id === instance.id && item.kind === "dialogue",
       )!;
@@ -185,7 +202,7 @@ describe("toTimelineDefinition", () => {
         length: 3,
         cooperativeSkip: true,
       }),
-    ]);
+    ], []);
 
     expect(definition.tracks).toHaveLength(DEFAULT_TRACKS.length);
     expect(definition.tracks[0].blocks).toEqual([
@@ -208,7 +225,7 @@ describe("toTimelineDefinition", () => {
         fadeIn: 1,
         fadeOut: 1,
       }),
-    ]);
+    ], []);
 
     expect(definition.tracks[1].blocks).toEqual([
       { id: "clip~0", start: 2, length: 1, cooperativeSkip: false },
@@ -224,7 +241,7 @@ describe("toTimelineDefinition", () => {
     ];
     const definition = toTimelineDefinition(tracks, [
       placement({ id: "extra-block", trackId: "extra" }),
-    ]);
+    ], []);
 
     expect(definition.tracks).toHaveLength(4);
     expect(definition.tracks[3]).toEqual({
@@ -233,6 +250,30 @@ describe("toTimelineDefinition", () => {
         { id: "extra-block", start: 0, length: 1, cooperativeSkip: false },
       ],
     });
+  });
+
+  it("maps the loop forest with the pilot iteration count", () => {
+    const definition = toTimelineDefinition(
+      DEFAULT_TRACKS,
+      [placement({ id: "a", start: 0, length: 1 })],
+      [
+        {
+          id: "outer",
+          start: 0,
+          end: 4,
+          children: [{ id: "inner", start: 1, end: 2, children: [] }],
+        },
+      ],
+    );
+
+    expect(definition.loops).toEqual([
+      {
+        start: 0,
+        end: 4,
+        iterations: 3,
+        loops: [{ start: 1, end: 2, iterations: 3, loops: [] }],
+      },
+    ]);
   });
 });
 
@@ -296,6 +337,30 @@ describe("TimelineSession", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("re-executes a block inside a loop", async () => {
+    const run = setup(
+      [placement({ id: "line", start: 0, length: 1 })],
+      120,
+      createStageStore(),
+      [],
+      [{ id: "loop", start: 0, end: 1, children: [] }],
+    );
+
+    run.session.start();
+    expect(run.startedInstances).toHaveLength(1);
+    expect(run.session.snapshot.blocks[0].state).toBe("running");
+
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      run.advanceDialogue("line");
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    expect(run.startedInstances).toHaveLength(3);
+    expect(run.finalized).toEqual(["line", "line", "line"]);
+    expect(run.session.snapshot.phase).toBe("finished");
+    expect(run.session.snapshot.time).toBe(1);
   });
 
   it("creates media execution subtypes that own presentation and timer cleanup", () => {
@@ -793,7 +858,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("same-time", DEFAULT_TRACKS[1].id, [{ time: 0, value: 4 }])],
+      [numericSlot("same-time", DEFAULT_TRACKS[1].id, [{ boundary: 0, path: [], value: 4 }])],
     );
 
     run.session.start();
@@ -820,7 +885,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("earlier", DEFAULT_TRACKS[1].id, [{ time: 1, value: 7 }])],
+      [numericSlot("earlier", DEFAULT_TRACKS[1].id, [{ boundary: 1, path: [], value: 7 }])],
     );
 
     run.session.start();
@@ -850,9 +915,9 @@ describe("TimelineSession", () => {
       createStageStore(),
       [
         numericSlot("size", DEFAULT_TRACKS[1].id, [
-          { time: 0, value: 1 },
-          { time: 1, value: 5 },
-          { time: 3, value: 9 },
+          { boundary: 0, path: [], value: 1 },
+          { boundary: 1, path: [], value: 5 },
+          { boundary: 3, path: [], value: 9 },
         ]),
       ],
     );
@@ -879,7 +944,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("x-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 1 }])],
+      [numericSlot("x-slot", DEFAULT_TRACKS[1].id, [{ boundary: 0, path: [], value: 1 }])],
     );
 
     run.session.start();
@@ -906,10 +971,10 @@ describe("TimelineSession", () => {
       120,
       createStageStore(),
       [
-        numericSlot("x-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 1 }]),
-        numericSlot("y-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 2 }]),
-        numericSlot("w-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 3 }]),
-        numericSlot("h-slot", DEFAULT_TRACKS[1].id, [{ time: 0, value: 4 }]),
+        numericSlot("x-slot", DEFAULT_TRACKS[1].id, [{ boundary: 0, path: [], value: 1 }]),
+        numericSlot("y-slot", DEFAULT_TRACKS[1].id, [{ boundary: 0, path: [], value: 2 }]),
+        numericSlot("w-slot", DEFAULT_TRACKS[1].id, [{ boundary: 0, path: [], value: 3 }]),
+        numericSlot("h-slot", DEFAULT_TRACKS[1].id, [{ boundary: 0, path: [], value: 4 }]),
       ],
     );
 
@@ -938,7 +1003,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("size", DEFAULT_TRACKS[1].id, [{ time: 0, value: 6 }])],
+      [numericSlot("size", DEFAULT_TRACKS[1].id, [{ boundary: 0, path: [], value: 6 }])],
     );
 
     run.session.start();
@@ -972,7 +1037,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("shared", null, [{ time: 0, value: 8 }])],
+      [numericSlot("shared", null, [{ boundary: 0, path: [], value: 8 }])],
     );
 
     run.session.start();
@@ -1031,7 +1096,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("late", DEFAULT_TRACKS[1].id, [{ time: 2, value: 5 }])],
+      [numericSlot("late", DEFAULT_TRACKS[1].id, [{ boundary: 2, path: [], value: 5 }])],
     );
 
     expect(() => run.session.start()).toThrow();
@@ -1051,7 +1116,7 @@ describe("TimelineSession", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("other-track", DEFAULT_TRACKS[2].id, [{ time: 0, value: 3 }])],
+      [numericSlot("other-track", DEFAULT_TRACKS[2].id, [{ boundary: 0, path: [], value: 3 }])],
     );
 
     expect(() => run.session.start()).toThrow();
@@ -1125,8 +1190,8 @@ describe("addition blocks", () => {
       120,
       createStageStore(),
       [
-        numericSlot("left", null, [{ time: 0, value: 4 }]),
-        numericSlot("right", null, [{ time: 0, value: 6 }]),
+        numericSlot("left", null, [{ boundary: 0, path: [], value: 4 }]),
+        numericSlot("right", null, [{ boundary: 0, path: [], value: 6 }]),
         numericSlot("sum", null),
       ],
     );
@@ -1248,5 +1313,74 @@ describe("addition blocks", () => {
     );
 
     expect(() => run.session.start()).toThrow(/Invalid numeric slot writes/);
+  });
+});
+
+describe("gap-keyed slot initialization execution", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reapplies a loop-end initialization on each iteration", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 1,
+          length: 1,
+          slotBindings: { x: "speed" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        numericSlot("speed", null, [
+          { boundary: 0, path: [], value: 1 },
+          { boundary: 3, path: ["loop-1"], value: 5 },
+        ]),
+      ],
+      [{ id: "loop-1", start: 0, end: 3, children: [] }],
+    );
+
+    run.session.start();
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(run.rectangleXs).toEqual([1, 5, 5]);
+    expect(run.snapshot()?.phase).toBe("finished");
+  });
+
+  it("reapplies an initialization in the gap inside the loop start", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 1,
+          length: 1,
+          slotBindings: { x: "speed" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        numericSlot("speed", null, [
+          { boundary: 0, path: [], value: 1 },
+          { boundary: 0, path: ["loop-1"], value: 2 },
+        ]),
+      ],
+      [{ id: "loop-1", start: 0, end: 3, children: [] }],
+    );
+
+    run.session.start();
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(run.rectangleXs).toEqual([2, 2, 2]);
   });
 });

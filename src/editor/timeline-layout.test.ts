@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   BASE_GAP_WIDTH,
   CELL_WIDTH,
+  anchorGapCenter,
   barrierRect,
-  baseGapCenter,
   blockSpan,
   boundary,
   buildTimelineLayout,
@@ -12,31 +12,29 @@ import {
   cellDelta,
   cellLeft,
   cellRight,
-  type BoundarySpec,
+  loopEdgeX,
   type TimelineLayout,
 } from "./timeline-layout";
 
-const uniform: (time: number) => BoundarySpec = () => ({
-  before: [],
-  baseWidth: BASE_GAP_WIDTH,
-  after: [],
-});
+const uniformGaps = () => [[]];
 
 function layoutFor(
   cellCount: number,
-  specs: readonly BoundarySpec[],
+  paths: readonly (readonly (readonly string[])[])[],
   cellWidth = CELL_WIDTH,
+  gapWidth = BASE_GAP_WIDTH,
 ): TimelineLayout {
   return buildTimelineLayout(
     cellCount,
-    (time) => specs[time] ?? { before: [], baseWidth: BASE_GAP_WIDTH, after: [] },
+    (time) => paths[time] ?? [[]],
     cellWidth,
+    gapWidth,
   );
 }
 
 describe("buildTimelineLayout", () => {
-  it("alternates one base gap with each cell and ends with a trailing gap", () => {
-    const layout = buildTimelineLayout(3, uniform);
+  it("separates every cell with its boundary gap and ends with a trailing gap", () => {
+    const layout = buildTimelineLayout(3, uniformGaps);
 
     expect(layout.segments.map((segment) => segment.kind)).toEqual([
       "gap",
@@ -54,7 +52,7 @@ describe("buildTimelineLayout", () => {
   });
 
   it("places each cell after its boundary gap", () => {
-    const layout = buildTimelineLayout(3, uniform);
+    const layout = buildTimelineLayout(3, uniformGaps);
 
     expect(layout.cellLefts).toEqual([
       BASE_GAP_WIDTH,
@@ -67,94 +65,91 @@ describe("buildTimelineLayout", () => {
     expect(cellRight(layout, 1)).toBe(256);
   });
 
-  it("keeps contiguous loop gaps in the given order around the base gap", () => {
-    const layout = layoutFor(3, [
-      { before: [], baseWidth: 32, after: [] },
-      { before: [12], baseWidth: 32, after: [] },
-      { before: [12, 8], baseWidth: 32, after: [6] },
-      { before: [], baseWidth: 32, after: [] },
+  it("emits one contiguous gap per derived context", () => {
+    const layout = layoutFor(4, [
+      [[], ["a"]],
+      [["a"], ["a", "b"]],
+      [["a", "b"]],
+      [["a", "b"], ["a"]],
+      [["a"], []],
     ]);
 
+    expect(
+      layout.boundaries.map((entry) => entry.gaps.map((gap) => gap.path)),
+    ).toEqual([
+      [[], ["a"]],
+      [["a"], ["a", "b"]],
+      [["a", "b"]],
+      [["a", "b"], ["a"]],
+      [["a"], []],
+    ]);
     expect(layout.segments.map((segment) => segment.kind)).toEqual([
       "gap",
+      "gap",
+      "cell",
+      "gap",
+      "gap",
+      "cell",
+      "gap",
       "cell",
       "gap",
       "gap",
       "cell",
       "gap",
       "gap",
-      "gap",
-      "gap",
-      "cell",
-      "gap",
     ]);
-    expect(layout.boundaries[2].gaps.map((gap) => gap.width)).toEqual([
-      12, 8, 32, 6,
-    ]);
-    expect(layout.boundaries[2].gaps.map((gap) => gap.role)).toEqual([
-      "loop",
-      "loop",
-      "base",
-      "loop",
-    ]);
+    expect(cellLeft(layout, 0)).toBe(2 * BASE_GAP_WIDTH);
+    expect(cellLeft(layout, 1)).toBe(2 * BASE_GAP_WIDTH + CELL_WIDTH + 2 * BASE_GAP_WIDTH);
+    expect(cellLeft(layout, 2)).toBe(2 * BASE_GAP_WIDTH + 2 * CELL_WIDTH + 3 * BASE_GAP_WIDTH);
+    expect(cellLeft(layout, 3)).toBe(2 * BASE_GAP_WIDTH + 3 * CELL_WIDTH + 5 * BASE_GAP_WIDTH);
   });
 
-  it("lays out the contiguous gap sequence from the design example", () => {
-    const layout = layoutFor(6, [
-      { before: [], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [16], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [16, 16], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [16], baseWidth: 32, after: [] },
-    ]);
-
-    expect(layout.segments.map((segment) => segment.kind)).toEqual([
-      "gap",
-      "cell",
-      "gap",
-      "cell",
-      "gap",
-      "gap",
-      "cell",
-      "gap",
-      "cell",
-      "gap",
-      "gap",
-      "gap",
-      "cell",
-      "gap",
-      "cell",
-      "gap",
-      "gap",
-    ]);
-  });
-
-  it("reports the base gap center regardless of where the loop gaps sit", () => {
+  it("keeps four contiguous gaps when nested loops start together", () => {
     const layout = layoutFor(2, [
-      { before: [], baseWidth: 32, after: [] },
-      { before: [16, 16], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
+      [[], ["a"], ["a", "b"], ["a", "b", "c"]],
+      [["a", "b", "c"]],
+      [["a", "b", "c"]],
     ]);
 
-    expect(boundary(layout, 1).left).toBe(128);
-    expect(baseGapCenter(layout, 1)).toBe(128 + 32 + 16);
-    expect(baseGapCenter(layout, 2)).toBe(layout.width - 16);
+    expect(layout.boundaries[0].gaps.map((gap) => gap.path)).toEqual([
+      [],
+      ["a"],
+      ["a", "b"],
+      ["a", "b", "c"],
+    ]);
+    expect(layout.boundaries[0].gaps.map((gap) => gap.width)).toEqual([
+      BASE_GAP_WIDTH,
+      BASE_GAP_WIDTH,
+      BASE_GAP_WIDTH,
+      BASE_GAP_WIDTH,
+    ]);
+    expect(cellLeft(layout, 0)).toBe(4 * BASE_GAP_WIDTH);
+  });
+
+  it("anchors time-keyed values in the first gap of the run", () => {
+    const layout = layoutFor(2, [
+      [[], ["a"]],
+      [["a"]],
+      [["a"], []],
+    ]);
+
+    expect(anchorGapCenter(layout, 0)).toBe(boundary(layout, 0).gaps[0].center);
+    expect(anchorGapCenter(layout, 2)).toBe(boundary(layout, 2).gaps[0].center);
   });
 });
 
 describe("cellAtX", () => {
-  const layout = layoutFor(3, [
-    { before: [], baseWidth: 32, after: [] },
-    { before: [16, 16], baseWidth: 32, after: [] },
-    { before: [], baseWidth: 32, after: [] },
-    { before: [], baseWidth: 32, after: [] },
+  const layout = layoutFor(4, [
+    [[], ["a"]],
+    [["a"], ["a", "b"]],
+    [["a", "b"]],
+    [["a", "b"], ["a"]],
+    [["a"], []],
   ]);
 
   it("maps a boundary gap run to the cell that follows it", () => {
     expect(cellAtX(layout, boundary(layout, 1).left)).toBe(1);
-    expect(cellAtX(layout, baseGapCenter(layout, 1) - 1)).toBe(1);
+    expect(cellAtX(layout, boundary(layout, 1).right - 1)).toBe(1);
     expect(cellAtX(layout, cellLeft(layout, 1))).toBe(1);
   });
 
@@ -165,7 +160,7 @@ describe("cellAtX", () => {
 
   it("clamps before the first boundary and after the trailing gap", () => {
     expect(cellAtX(layout, -20)).toBe(0);
-    expect(cellAtX(layout, layout.width + 20)).toBe(2);
+    expect(cellAtX(layout, layout.width + 20)).toBe(3);
   });
 
   it("computes drag deltas from the containing cells", () => {
@@ -174,14 +169,58 @@ describe("cellAtX", () => {
   });
 });
 
+describe("loopEdgeX", () => {
+  const layout = layoutFor(4, [
+    [[], ["a"]],
+    [["a"], ["a", "b"]],
+    [["a", "b"]],
+    [["a", "b"], ["a"]],
+    [["a"], []],
+  ]);
+
+  it("places a start marker between the outside and inside gaps", () => {
+    expect(loopEdgeX(layout, 0, "a", "start")).toBe(
+      boundary(layout, 0).gaps[0].right,
+    );
+    expect(loopEdgeX(layout, 1, "b", "start")).toBe(
+      boundary(layout, 1).gaps[0].right,
+    );
+  });
+
+  it("places an end marker between the inside and outside gaps", () => {
+    expect(loopEdgeX(layout, 3, "b", "end")).toBe(
+      boundary(layout, 3).gaps[0].right,
+    );
+    expect(loopEdgeX(layout, 4, "a", "end")).toBe(
+      boundary(layout, 4).gaps[0].right,
+    );
+  });
+
+  it("separates a closing and an opening edge at the same boundary", () => {
+    const split = layoutFor(3, [
+      [[], ["a"]],
+      [["a", "b"]],
+      [["a", "b"], ["a"], ["a", "c"]],
+      [["a", "c"], ["a"], []],
+    ]);
+
+    expect(loopEdgeX(split, 2, "b", "end")).toBe(
+      boundary(split, 2).gaps[0].right,
+    );
+    expect(loopEdgeX(split, 2, "c", "start")).toBe(
+      boundary(split, 2).gaps[1].right,
+    );
+  });
+});
+
 describe("blockSpan", () => {
   it("covers the cells of the span and hides the gaps inside it", () => {
     const layout = layoutFor(4, [
-      { before: [], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
+      [[], ["a"]],
+      [["a"], ["a", "b"]],
+      [["a", "b"]],
+      [["a", "b"], ["a"]],
+      [["a"], []],
     ]);
 
     expect(blockSpan(layout, 1, 2, 3)).toEqual({
@@ -192,11 +231,11 @@ describe("blockSpan", () => {
 
   it("spans across extra loop gaps inside the block", () => {
     const layout = layoutFor(4, [
-      { before: [], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [16, 16], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
+      [[]],
+      [[]],
+      [["a"], ["a", "b"]],
+      [[]],
+      [[]],
     ]);
 
     const span = blockSpan(layout, 1, 3, 3);
@@ -204,12 +243,12 @@ describe("blockSpan", () => {
     expect(span.left + span.width).toBe(cellRight(layout, 3) - 3);
   });
 
-  it("keeps the gap outside the block visible", () => {
+  it("keeps the gaps outside the block visible", () => {
     const layout = layoutFor(3, [
-      { before: [], baseWidth: 32, after: [] },
-      { before: [16], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
+      [[]],
+      [["a"], ["a", "b"]],
+      [[]],
+      [[]],
     ]);
 
     const span = blockSpan(layout, 1, 1, 0);
@@ -221,11 +260,11 @@ describe("blockSpan", () => {
 describe("barrierRect", () => {
   it("covers the cell tiles of the barrier span, not the gaps", () => {
     const layout = layoutFor(4, [
-      { before: [], baseWidth: 32, after: [] },
-      { before: [16], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
-      { before: [16, 8], baseWidth: 32, after: [] },
-      { before: [], baseWidth: 32, after: [] },
+      [[]],
+      [["a"]],
+      [[]],
+      [["a"], ["b"], []],
+      [[]],
     ]);
 
     expect(barrierRect(layout, 1, 3)).toEqual({

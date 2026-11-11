@@ -2,20 +2,25 @@
 
 Track slots belong to one track; shared slots can be read from any track. Slots
 can be given a name, and each slot has a row on the timeline. A slot can be
-initialized with numbers at multiple logical times. From each initialization time
-onward, that value substitutes the previous one. Editing the initialization at
-the same time changes its value. Delete removes only the initialization at that
-time. Removing a slot does not remove bindings to it, so those bindings remain
-invalid until repaired.
+initialized in any gap of its row. The key is the boundary time together with
+the enclosing loop path, and the value is applied every time the traversal
+visits that gap. An initialization in the gap before a loop edge runs once per
+entry to that context; one in the gap after the edge runs once per loop
+iteration, and nested loops multiply. Editing the initialization in a gap
+changes its value. Delete removes only the initialization in that gap. Removing
+a slot does not remove bindings to it, so those bindings remain invalid until
+repaired. If a loop edit removes a gap, its initializations are kept in the
+document but are neither rendered nor executed until the gap exists again.
 
-Multiple-time substitution is the current scope. It temporarily relaxes the
+Multiple initializations are the current scope. It temporarily relaxes the
 single-value rule for a slot; discard and reuse are still not modeled.
 
 Grouped slot rows are half-height. The timeline is a sequence of cell and gap
-objects; each time boundary has a contiguous gap run with one base gap, and a
-trailing base gap follows the last cell. An initialization is shown as a value
-badge in the base gap at its time boundary. A value's rail runs from its
-boundary to the next boundary that replaces it, whether that boundary is another
+objects; each time boundary has a contiguous gap run derived from the loop
+edges, and a trailing run follows the last cell. Every gap in a slot row is an
+initialization position; an initialization is shown as a value badge centered in
+its gap, and clicking a gap edits that gap's initialization. A value's rail runs
+from its gap to the next gap that replaces it, whether that gap is another
 initialization or a block output assignment.
 
 Rectangle X, Y, width, and height accept either an immediate number or a slot
@@ -74,5 +79,9 @@ value-transfer wires, and slot-backed properties beyond rectangle geometry and
 the addition inputs/output remain outside this slice.
 
 The runner invokes its time-start callback once per processed logical time,
-before starting blocks at that time. Slot initialization uses this boundary so
-the same-time ordering holds even when the runner revisits a barrier.
+before starting blocks at that time, and reports a loop repeat with the
+repeating loop. The session applies all gaps at a normal boundary entry; on a
+repeat it applies the closing gaps at the loop end that belong to the repeated
+body, then the opening gaps at the loop start, so the shared parent gap is not
+revisited. A read therefore uses the value left by the last visited gap before
+the block starts; every gap at the block's own boundary is visited first.
