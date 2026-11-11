@@ -11,10 +11,11 @@ invalid until repaired.
 Multiple-time substitution is the current scope. It temporarily relaxes the
 single-value rule for a slot; discard and reuse are still not modeled.
 
-Grouped slot rows are half-height. Cells are separated by a horizontal gap, with
-a leading gap before the first column. An initialization is shown as a value
-badge in the gap at its time boundary. A value's rail runs from its boundary to
-the next boundary that replaces it, whether that boundary is another
+Grouped slot rows are half-height. The timeline is a sequence of cell and gap
+objects; each time boundary has a contiguous gap run with one base gap, and a
+trailing base gap follows the last cell. An initialization is shown as a value
+badge in the base gap at its time boundary. A value's rail runs from its
+boundary to the next boundary that replaces it, whether that boundary is another
 initialization or a block output assignment.
 
 Rectangle X, Y, width, and height accept either an immediate number or a slot

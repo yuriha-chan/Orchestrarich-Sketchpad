@@ -412,6 +412,19 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     readable at a glance and a loop keeps its color when other loops are added.
     A run (1-A engine) does not repeat a region; loop conditions, redo/exit
     markers, and loop playback remain for a later increment.
+38. The timeline's horizontal geometry is an explicit sequence of cell and gap
+    objects (`src/editor/timeline-layout.ts`), not a fixed cell pitch. A cell is
+    a 96 px tile at an integer time. Every time boundary, including the
+    trailing boundary after the last cell, holds a contiguous gap run: one base
+    gap and any number of loop gaps before or after it. The base gap keeps slot
+    badges, rail endpoints, and output wires anchored next to the cell. All
+    horizontal geometry reads the layout: cell left/right, boundary runs, base
+    centers, time from a pointer x, drag deltas, block spans, and the barrier
+    cursor. Pointer hit-testing and drag snapping map an x to the cell whose
+    tile or boundary run contains it. Gaps are currently all base gaps; loop
+    marker gaps are not generated yet. The default layout adds a trailing base
+    gap, so the grid is one base gap wider than before and a loop ending at the
+    last rendered column has room for its marker.
 
 ## Carry-Over
 

@@ -76,6 +76,20 @@ import { createStageStore } from "./stage-state";
 import { compilePlacement, definitionBlocks } from "./execution-definition";
 import { slotValueRail } from "./slot-value-rail";
 import { outputWires, slotWires } from "./slot-wires";
+import {
+  BASE_GAP_WIDTH,
+  CELL_WIDTH,
+  barrierRect,
+  baseGapCenter,
+  blockSpan,
+  boundary,
+  buildTimelineLayout,
+  cellAtX,
+  cellDelta,
+  cellLeft,
+  cellRight,
+  type TimelineLayout,
+} from "./timeline-layout";
 import { WORKSPACES } from "./workspaces";
 import {
   rowTop,
@@ -97,8 +111,6 @@ import type {
   TimelineSnapshot,
 } from "../core/execution/timeline-runner.ts";
 
-const CELL_WIDTH = 128;
-const CELL_GAP = 32;
 const TRACK_HEIGHT = 48;
 const SLOT_HEIGHT = 24;
 const BLOCK_INSET = 3;
@@ -108,14 +120,7 @@ const SLOT_EDITOR_WIDTH = 210;
 const SLOT_CONTROL_HEIGHT = 32;
 const SLOT_WIRE_CASING_INSET = 4;
 const LOOP_LANE_HEIGHT = 24;
-
-const SLOT_WIRE_LAYOUT = {
-  cellWidth: CELL_WIDTH,
-  cellGap: CELL_GAP,
-  blockInset: BLOCK_INSET,
-  trackHeight: TRACK_HEIGHT,
-  slotHeight: SLOT_HEIGHT,
-};
+const GROWTH_MARGIN = 4 * (CELL_WIDTH + BASE_GAP_WIDTH);
 
 const PHASE_LABELS: Record<TimelinePhase, string> = {
   idle: "Not running",
@@ -227,8 +232,6 @@ interface RunState {
 type RectField = "x" | "y" | "w" | "h";
 
 const gridVariables = {
-  "--cell-width": `${CELL_WIDTH}px`,
-  "--cell-gap": `${CELL_GAP}px`,
   "--track-height": `${TRACK_HEIGHT}px`,
   "--slot-height": `${SLOT_HEIGHT}px`,
   "--loop-height": "24px",
@@ -303,6 +306,24 @@ export function App() {
   const loopBarHeight =
     Math.max(1, maxLoopDepth(loops)) * LOOP_LANE_HEIGHT;
   const loopRegions = useMemo(() => allLoops(loops), [loops]);
+  const layout = useMemo(
+    () =>
+      buildTimelineLayout(columnCount, () => ({
+        before: [],
+        baseWidth: BASE_GAP_WIDTH,
+        after: [],
+      })),
+    [columnCount],
+  );
+  const slotWireLayout = useMemo(
+    () => ({
+      layout,
+      blockInset: BLOCK_INSET,
+      trackHeight: TRACK_HEIGHT,
+      slotHeight: SLOT_HEIGHT,
+    }),
+    [layout],
+  );
   const editable = run === null;
   const phase: TimelinePhase = run?.snapshot.phase ?? "idle";
   const runningRun =
@@ -462,10 +483,13 @@ export function App() {
   const rectStep = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
 
   const rows = useMemo(() => timelineRows(tracks, slots), [tracks, slots]);
-  const wires = useMemo(() => slotWires(rows, blocks, SLOT_WIRE_LAYOUT), [rows, blocks]);
+  const wires = useMemo(
+    () => slotWires(rows, blocks, slotWireLayout),
+    [rows, blocks, slotWireLayout],
+  );
   const outputWireList = useMemo(
-    () => outputWires(rows, blocks, SLOT_WIRE_LAYOUT),
-    [rows, blocks],
+    () => outputWires(rows, blocks, slotWireLayout),
+    [rows, blocks, slotWireLayout],
   );
   const slotAssignments = useMemo(() => {
     const assignments = new Map<string, number[]>();
@@ -670,7 +694,7 @@ export function App() {
     if (!editable || event.button !== 0 || creation) {
       return;
     }
-    const start = cellFromPointer(event, columnCount);
+    const start = cellFromPointer(event, layout);
     if (!canPlace(tracks, blocks, { trackId, start, length: 1 }, loopRegions)) {
       return;
     }
@@ -686,7 +710,7 @@ export function App() {
 
   const handleRowPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const pointerId = event.pointerId;
-    const currentCell = cellFromPointer(event, columnCount);
+    const currentCell = cellFromPointer(event, layout);
     setCreation((state) =>
       state && state.pointerId === pointerId
         ? { ...state, current: currentCell }
@@ -699,7 +723,7 @@ export function App() {
     if (!active || active.pointerId !== event.pointerId) {
       return;
     }
-    const end = cellFromPointer(event, columnCount);
+    const end = cellFromPointer(event, layout);
     const start = Math.min(active.anchor, end);
     const length = Math.abs(end - active.anchor) + 1;
     create(active.trackId, active.kind, start, length);
@@ -764,10 +788,7 @@ export function App() {
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
-    const time = Math.max(
-      0,
-      Math.floor((event.clientX - rect.left + CELL_GAP / 2) / CELL_WIDTH),
-    );
+    const time = Math.max(0, cellAtX(layout, event.clientX - rect.left));
     setMenu({ kind: "grid", time, x: event.clientX, y: event.clientY });
   };
 
@@ -787,7 +808,7 @@ export function App() {
     const element = event.currentTarget;
     if (
       element.scrollLeft + element.clientWidth >=
-      element.scrollWidth - CELL_WIDTH * 4
+      element.scrollWidth - GROWTH_MARGIN
     ) {
       setColumnCount((count) => count + COLUMN_CHUNK);
     }
@@ -818,9 +839,7 @@ export function App() {
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
-    const time = Math.round(
-      (event.clientX - rect.left - CELL_GAP / 2) / CELL_WIDTH,
-    );
+    const time = cellAtX(layout, event.clientX - rect.left);
     if (loopDrag.edge === "start") {
       setLoopBoundary(node.id, "start", clamp(time, 0, node.end - 1));
     } else {
@@ -852,6 +871,14 @@ export function App() {
       start: previewStart,
       length: previewLength,
     }, loopRegions);
+  const previewSpan =
+    creation === null
+      ? null
+      : blockSpan(layout, previewStart, previewLength, BLOCK_INSET);
+  const cursorRect =
+    barrierSpan === null
+      ? null
+      : barrierRect(layout, barrierSpan.start, barrierSpan.end);
 
   return (
     <main className="app" style={gridVariables}>
@@ -1073,7 +1100,7 @@ export function App() {
             <div className="grid-scroll" onScroll={handleGridScroll}>
               <div
                 className="grid-content"
-                style={{ width: columnCount * CELL_WIDTH }}
+                style={{ width: layout.width }}
               >
                 <div
                   className="loop-bar"
@@ -1090,9 +1117,9 @@ export function App() {
                         key={node.id}
                         className="loop-region"
                         style={{
-                          left: loopMarkerX(node.start),
+                          left: loopMarkerX(layout, node.start),
                           width:
-                            loopMarkerX(node.end) - loopMarkerX(node.start),
+                            loopMarkerX(layout, node.end) - loopMarkerX(layout, node.start),
                           top: depth * LOOP_LANE_HEIGHT,
                           borderColor: colors.line,
                           background: colors.barFill,
@@ -1138,6 +1165,10 @@ export function App() {
                     <span
                       key={column}
                       className={`ruler-cell${runningRun !== null && runningRun.snapshot.time === column ? " is-current" : ""}`}
+                      style={{
+                        left: cellLeft(layout, column),
+                        width: layout.cellWidth,
+                      }}
                     >
                       {column}
                     </span>
@@ -1166,12 +1197,15 @@ export function App() {
                           onPointerMove={handleRowPointerMove}
                           onPointerUp={finishCreation}
                           onPointerCancel={cancelCreation}
-                        />
+                        >
+                          <RowTiles layout={layout} />
+                        </div>
                       ) : (
                         <SlotRow
                           key={`slot-${row.slotId}`}
                           slot={slotsById[row.slotId]}
                           name={slotNames.get(row.slotId) ?? row.slotId}
+                          layout={layout}
                           columnCount={columnCount}
                           editable={editable}
                           groupStart={rowGroupStarts[rowIndex]}
@@ -1188,9 +1222,9 @@ export function App() {
                             className="loop-band"
                             aria-hidden="true"
                             style={{
-                              left: loopMarkerX(node.start),
+                              left: loopMarkerX(layout, node.start),
                               width:
-                                loopMarkerX(node.end) - loopMarkerX(node.start),
+                                loopMarkerX(layout, node.end) - loopMarkerX(layout, node.start),
                               background: colors.fill,
                             }}
                           />
@@ -1198,7 +1232,7 @@ export function App() {
                             className="loop-line"
                             aria-hidden="true"
                             style={{
-                              left: loopMarkerX(node.start),
+                              left: loopMarkerX(layout, node.start),
                               background: colors.line,
                             }}
                           />
@@ -1206,7 +1240,7 @@ export function App() {
                             className="loop-line"
                             aria-hidden="true"
                             style={{
-                              left: loopMarkerX(node.end),
+                              left: loopMarkerX(layout, node.end),
                               background: colors.line,
                             }}
                           />
@@ -1249,6 +1283,7 @@ export function App() {
                           key={block.id}
                           block={block}
                           rows={rows}
+                          layout={layout}
                           columnCount={columnCount}
                           selected={block.id === selectedId}
                           editable={editable}
@@ -1257,11 +1292,11 @@ export function App() {
                           onContextMenu={(event) => openBlockContextMenu(event, block)}
                         />
                       ))}
-                      {creation ? (
+                      {creation && previewSpan ? (
                         <div
                           className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
                           style={{
-                            left: previewStart * CELL_WIDTH + CELL_GAP + BLOCK_INSET,
+                            left: previewSpan.left,
                             top:
                               rowTop(
                                 rows,
@@ -1269,10 +1304,7 @@ export function App() {
                                 TRACK_HEIGHT,
                                 SLOT_HEIGHT,
                               ) + BLOCK_INSET,
-                            width:
-                              previewLength * CELL_WIDTH -
-                              CELL_GAP -
-                              2 * BLOCK_INSET,
+                            width: previewSpan.width,
                             height: TRACK_HEIGHT - 2 * BLOCK_INSET,
                           }}
                         >
@@ -1295,14 +1327,12 @@ export function App() {
                         />
                       ))}
                     </svg>
-                    {barrierSpan ? (
+                    {cursorRect ? (
                       <div
                         className="time-cursor"
                         style={{
-                          left: barrierSpan.start * CELL_WIDTH + CELL_GAP,
-                          width:
-                            (barrierSpan.end - barrierSpan.start) * CELL_WIDTH -
-                            CELL_GAP,
+                          left: cursorRect.left,
+                          width: cursorRect.width,
                         }}
                         aria-hidden="true"
                       />
@@ -2264,6 +2294,7 @@ function SlotLabel({
 function SlotRow({
   slot,
   name,
+  layout,
   columnCount,
   editable,
   groupStart,
@@ -2272,6 +2303,7 @@ function SlotRow({
 }: {
   slot: NumericSlot;
   name: string;
+  layout: TimelineLayout;
   columnCount: number;
   editable: boolean;
   groupStart: boolean;
@@ -2375,7 +2407,7 @@ function SlotRow({
   };
 
   const rail = slotValueRail(slot.initializations, columnCount, assignmentTimes);
-  const gapCenter = (time: number) => time * CELL_WIDTH + CELL_GAP / 2;
+  const gapCenter = (time: number) => baseGapCenter(layout, time);
 
   return (
     <div
@@ -2384,6 +2416,7 @@ function SlotRow({
       role="group"
       aria-label={`${name} slot row`}
     >
+      <RowTiles layout={layout} />
       <svg
         className="slot-value-rail"
         width="100%"
@@ -2395,7 +2428,11 @@ function SlotRow({
           <line
             key={`span-${span.start}-${span.end}`}
             x1={gapCenter(span.start)}
-            x2={span.end * CELL_WIDTH}
+            x2={
+              span.end >= columnCount
+                ? layout.width
+                : boundary(layout, span.end).left
+            }
             y1={SLOT_HEIGHT / 2}
             y2={SLOT_HEIGHT / 2}
           />
@@ -2407,11 +2444,13 @@ function SlotRow({
         const description = initialized
           ? `${name} at time ${time}, initialized to ${initialization.value}. Open to edit or delete the initialization.`
           : `${name} at time ${time}, unset. Open to initialize it.`;
+        const run = boundary(layout, time);
         return (
           <button
             key={time}
             type="button"
             className={`slot-cell${initialized ? " is-initialized" : ""}`}
+            style={{ left: run.left, width: cellRight(layout, time) - run.left }}
             aria-label={description}
             title={initialized ? "Edit or delete initialization" : "Initialize slot"}
             disabled={!editable}
@@ -2425,6 +2464,7 @@ function SlotRow({
             {initialization !== undefined ? (
               <span
                 className="slot-cell-value"
+                style={{ left: run.base.center - run.left }}
                 title="Drag to bind a parameter"
                 onPointerDown={(event) => {
                   if (!editable || event.button !== 0) {
@@ -2477,8 +2517,8 @@ function SlotRow({
             left: Math.max(
               2,
               Math.min(
-                editing * CELL_WIDTH + CELL_GAP + 2,
-                columnCount * CELL_WIDTH - SLOT_EDITOR_WIDTH - 2,
+                cellLeft(layout, editing) + 2,
+                layout.width - SLOT_EDITOR_WIDTH - 2,
               ),
             ),
             width: SLOT_EDITOR_WIDTH,
@@ -2700,6 +2740,7 @@ function OutputSlotField({
 function BlockView({
   block,
   rows,
+  layout,
   columnCount,
   selected,
   editable,
@@ -2709,6 +2750,7 @@ function BlockView({
 }: {
   block: Placement;
   rows: readonly TimelineRow[];
+  layout: TimelineLayout;
   columnCount: number;
   selected: boolean;
   editable: boolean;
@@ -2802,8 +2844,17 @@ function BlockView({
     if (!current || current.pointerId !== event.pointerId) {
       return;
     }
+    const rowsArea = event.currentTarget.closest(".rows-area");
+    if (rowsArea === null) {
+      return;
+    }
+    const rowsRect = rowsArea.getBoundingClientRect();
+    const delta = cellDelta(
+      layout,
+      current.originX - rowsRect.left,
+      event.clientX - rowsRect.left,
+    );
     if (current.boundary !== undefined) {
-      const delta = Math.round((event.clientX - current.originX) / CELL_WIDTH);
       const origin = current.boundary === "fadeOut"
         ? current.length - current.fadeOut
         : current.fadeIn;
@@ -2813,14 +2864,12 @@ function BlockView({
       return;
     }
     if (current.mode === "resizeStart") {
-      const delta = Math.round((event.clientX - current.originX) / CELL_WIDTH);
       const end = current.start + current.length;
       const start = clamp(current.start + delta, 0, end - 1);
       setSpan(block.id, start, end - start);
       return;
     }
     if (current.mode === "fadeIn" || current.mode === "fadeOut") {
-      const delta = Math.round((event.clientX - current.originX) / CELL_WIDTH);
       if (current.mode === "fadeIn") {
         if (delta >= 0) {
           setSpan(block.id, current.start, current.length, { fadeIn: delta });
@@ -2848,28 +2897,22 @@ function BlockView({
       return;
     }
     if (current.mode === "move") {
-      const deltaColumns = Math.round((event.clientX - current.originX) / CELL_WIDTH);
       const start = clamp(
-        current.start + deltaColumns,
+        current.start + delta,
         0,
         columnCount - current.length,
       );
-      const rowsArea = event.currentTarget.closest(".rows-area");
-      const trackId =
-        rowsArea === null
-          ? current.trackId
-          : trackAtY(
-              rows,
-              event.clientY - rowsArea.getBoundingClientRect().top,
-              TRACK_HEIGHT,
-              SLOT_HEIGHT,
-            );
+      const trackId = trackAtY(
+        rows,
+        event.clientY - rowsRect.top,
+        TRACK_HEIGHT,
+        SLOT_HEIGHT,
+      );
       move(block.id, trackId, start);
       return;
     }
-    const deltaColumns = Math.round((event.clientX - current.originX) / CELL_WIDTH);
     const length = clamp(
-      current.length + deltaColumns,
+      current.length + delta,
       1,
       columnCount - current.start,
     );
@@ -2887,6 +2930,7 @@ function BlockView({
     }
   };
 
+  const span = blockSpan(layout, block.start, block.length, BLOCK_INSET);
   const className = [
     "block",
     `block-${block.kind}`,
@@ -2924,9 +2968,9 @@ function BlockView({
       className={className}
       data-block-id={block.id}
       style={{
-        left: block.start * CELL_WIDTH + CELL_GAP + BLOCK_INSET,
+        left: span.left,
         top: rowTop(rows, trackIndex, TRACK_HEIGHT, SLOT_HEIGHT) + BLOCK_INSET,
-        width: block.length * CELL_WIDTH - CELL_GAP - 2 * BLOCK_INSET,
+        width: span.width,
         height: TRACK_HEIGHT - 2 * BLOCK_INSET,
       }}
       title={title}
@@ -2943,6 +2987,7 @@ function BlockView({
               className="block-fade block-fade-in"
               cells={block.fadeIn}
               length={block.length}
+              blockWidth={span.width}
               inward
             />
           ) : null}
@@ -2951,6 +2996,7 @@ function BlockView({
               className="block-fade block-fade-out"
               cells={block.fadeOut}
               length={block.length}
+              blockWidth={span.width}
               inward={false}
             />
           ) : null}
@@ -2992,21 +3038,36 @@ function BlockView({
   );
 }
 
-function FadeSurface({ className, cells, length, inward }: {
+function RowTiles({ layout }: { layout: TimelineLayout }) {
+  return (
+    <span className="row-tiles" aria-hidden="true">
+      {layout.cellLefts.map((left, time) => (
+        <span
+          key={time}
+          className="row-tile"
+          style={{ left, width: layout.cellWidth }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function FadeSurface({ className, cells, length, blockWidth, inward }: {
   className: string;
   cells: number;
   length: number;
+  blockWidth: number;
   inward: boolean;
 }) {
   const maskImage = useMemo(() => {
-    const width = (length * CELL_WIDTH - CELL_GAP - 2 * BLOCK_INSET) * cells / length;
+    const width = blockWidth * cells / length;
     const svg = generateDotGradientSVG(
       Math.ceil(width / 6) * 6,
       TRACK_HEIGHT - 2 * BLOCK_INSET,
       6,
       inward ? 0.25 : 4.5, inward ? 4.5 : 0.25);
     return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-  }, [cells, length, inward]);
+  }, [cells, length, blockWidth, inward]);
   return <span className={className} style={{ width: `${cells / length * 100}%`, maskImage }} aria-hidden="true" />;
 }
 
@@ -3172,20 +3233,16 @@ function flattenLoops(
   ]);
 }
 
-function loopMarkerX(time: number): number {
-  return time * CELL_WIDTH + CELL_GAP / 2;
+function loopMarkerX(layout: TimelineLayout, time: number): number {
+  return baseGapCenter(layout, time);
 }
 
 function cellFromPointer(
   event: ReactPointerEvent<HTMLDivElement>,
-  columnCount: number,
+  layout: TimelineLayout,
 ): number {
   const rect = event.currentTarget.getBoundingClientRect();
-  return clamp(
-    Math.floor((event.clientX - rect.left) / CELL_WIDTH),
-    0,
-    columnCount - 1,
-  );
+  return cellAtX(layout, event.clientX - rect.left);
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

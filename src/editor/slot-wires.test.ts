@@ -11,6 +11,7 @@ import {
   type Track,
 } from "./model";
 import { outputWires, slotWires, type SlotWireLayout } from "./slot-wires";
+import { buildTimelineLayout } from "./timeline-layout";
 import { timelineRows } from "./timeline-rows";
 
 const tracks: readonly Track[] = [
@@ -27,8 +28,11 @@ const slots: readonly NumericSlot[] = [
 const rows = timelineRows(tracks, slots);
 
 const layout: SlotWireLayout = {
-  cellWidth: 130,
-  cellGap: 20,
+  layout: buildTimelineLayout(
+    16,
+    () => ({ before: [], baseWidth: 20, after: [] }),
+    110,
+  ),
   blockInset: 10,
   trackHeight: 48,
   slotHeight: 24,

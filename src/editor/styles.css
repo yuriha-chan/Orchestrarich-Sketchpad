@@ -18,8 +18,6 @@ body {
 }
 
 .app {
-  --cell-width: 128px;
-  --cell-gap: 32px;
   --track-height: 48px;
   --ruler-height: 24px;
   --loop-height: 24px;
@@ -521,19 +519,19 @@ body {
 }
 
 .ruler {
-  display: flex;
+  position: relative;
   height: var(--ruler-height);
   border-bottom: 1px solid #cbd5e1;
   background: #f8fafc;
 }
 
 .ruler-cell {
+  position: absolute;
+  top: 0;
   display: flex;
-  flex: 0 0 var(--cell-width);
   align-items: center;
   justify-content: center;
-  width: var(--cell-width);
-  padding-left: var(--cell-gap);
+  height: 100%;
   font-size: 11px;
   color: #64748b;
 }
@@ -548,18 +546,10 @@ body {
 
 .slot-row {
   position: relative;
-  display: flex;
+  display: block;
   height: var(--slot-height);
   border-bottom: 1px solid #e2e8f0;
   background-color: #eef2f7;
-  background-image: linear-gradient(
-    to right,
-    transparent 0,
-    transparent var(--cell-gap),
-    #f8fafc var(--cell-gap),
-    #f8fafc var(--cell-width)
-  );
-  background-size: var(--cell-width) 100%;
 }
 
 .slot-row.is-group-start {
@@ -628,9 +618,9 @@ body {
 }
 
 .slot-cell {
-  position: relative;
-  flex: 0 0 var(--cell-width);
-  width: var(--cell-width);
+  position: absolute;
+  top: 0;
+  z-index: 2;
   height: 100%;
   border: 0;
   padding: 0;
@@ -653,7 +643,6 @@ body {
 .slot-cell-value {
   position: absolute;
   top: 50%;
-  left: calc(var(--cell-gap) / 2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -879,19 +868,32 @@ body {
 }
 
 .track-row {
+  position: relative;
   height: var(--track-height);
   border-bottom: 1px solid #e2e8f0;
   background-color: #eef2f7;
-  background-image: linear-gradient(
-    to right,
-    transparent 0,
-    transparent var(--cell-gap),
-    #ffffff var(--cell-gap),
-    #ffffff var(--cell-width)
-  );
-  background-size: var(--cell-width) 100%;
   cursor: crosshair;
   user-select: none;
+}
+
+.row-tiles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.row-tile {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.track-row .row-tile {
+  background: #ffffff;
+}
+
+.slot-row .row-tile {
+  background: #f8fafc;
 }
 
 .track-row.is-group-start {

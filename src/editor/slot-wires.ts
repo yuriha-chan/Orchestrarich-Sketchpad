@@ -5,10 +5,15 @@ import {
   type SlotProperty,
 } from "./model";
 import { rowTop, type TimelineRow } from "./timeline-rows";
+import {
+  baseGapCenter,
+  cellLeft,
+  cellRight,
+  type TimelineLayout,
+} from "./timeline-layout";
 
 export interface SlotWireLayout {
-  readonly cellWidth: number;
-  readonly cellGap: number;
+  readonly layout: TimelineLayout;
   readonly blockInset: number;
   readonly trackHeight: number;
   readonly slotHeight: number;
@@ -77,7 +82,7 @@ export function slotWires(
     }
   }
 
-  const laneWidth = layout.cellWidth - layout.cellGap - 2 * layout.blockInset;
+  const laneWidth = layout.layout.cellWidth - 2 * layout.blockInset;
   const wires: SlotWire[] = [];
 
   for (const start of [...columns.keys()].sort((a, b) => a - b)) {
@@ -87,8 +92,7 @@ export function slotWires(
       (count, entry) => count + entry.properties.length,
       0,
     );
-    const columnLeft =
-      start * layout.cellWidth + layout.cellGap + layout.blockInset;
+    const columnLeft = cellLeft(layout.layout, start) + layout.blockInset;
     let lane = 0;
 
     for (const entry of column) {
@@ -145,11 +149,12 @@ export function outputWires(
       }
       wires.push({
         key: `${block.id}:${key}`,
-        blockRightX: assignmentTime * layout.cellWidth - layout.blockInset,
+        blockRightX:
+          cellRight(layout.layout, assignmentTime - 1) - layout.blockInset,
         blockCenterY:
           rowTop(rows, trackIndex, layout.trackHeight, layout.slotHeight) +
           layout.trackHeight / 2,
-        gapX: assignmentTime * layout.cellWidth + layout.cellGap / 2,
+        gapX: baseGapCenter(layout.layout, assignmentTime),
         slotY:
           rowTop(rows, slotIndex, layout.trackHeight, layout.slotHeight) +
           layout.slotHeight / 2,
