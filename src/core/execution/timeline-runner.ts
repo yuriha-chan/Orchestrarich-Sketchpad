@@ -208,6 +208,7 @@ export class TimelineRunner {
     this.barrierCheckTimes = [
       ...new Set([
         ...this.placements.map((placement) => placement.end),
+        ...this.loops.map((loop) => loop.start),
         ...this.loops.map((loop) => loop.end),
       ]),
     ].sort((a, b) => a - b);

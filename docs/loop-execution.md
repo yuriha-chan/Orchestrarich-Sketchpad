@@ -77,8 +77,8 @@ Loop playback is therefore in scope. Each loop body executes **3 times total**
 - The session creates a new `ExecutionInstance` when a placement's start is
   reached again, so each iteration gets fresh block execution and presentation
   state.
-- Loop ends are barrier check times and count toward the horizon. A loop whose
-  last cells are empty still repeats to its end.
+- Loop markers are barrier check times; loop ends also count toward the
+  horizon. A loop whose last cells are empty still repeats to its end.
 - Blocks must be strictly inside a loop or disjoint from it. A block that
   contains a loop, or partially overlaps one, is rejected while the runner is
   constructed; the UI reports that message in the activity line and starts no

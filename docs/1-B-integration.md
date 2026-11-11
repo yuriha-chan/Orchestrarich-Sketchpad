@@ -73,8 +73,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   and extends the rendered columns in chunks as the horizontal scroll reaches
   the right edge. The ruler, the track rows, and the block layer share that
   width.
-- `TimelineRunner.barrierSpan(t)` returns the span between the distinct block
-  end times that contains `t`; the time cursor spans that barrier span.
+- `TimelineRunner.barrierSpan(t)` returns the span between the distinct
+  barrier check times (block end times and loop marker times) that contains
+  `t`; the time cursor spans that barrier span.
 - The core engine is used as-is apart from the added `barrierSpan` query.
 
 ## Criterion
@@ -96,9 +97,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   from 0 to 255.
 - A non-16:9 stage area centers the configured grid and letterboxes the excess
   space instead of stretching the cells.
-- `barrierSpan(t)` splits logical time at the distinct block end times. For
-  blocks ending at 2, 3, and 5, it returns [0,2] for t=0 and t=1, [2,3] for t=2,
-  and [3,5] for t=3 and t=4.
+- `barrierSpan(t)` splits logical time at the distinct barrier check times.
+  For blocks ending at 2, 3, and 5, it returns [0,2] for t=0 and t=1, [2,3]
+  for t=2, and [3,5] for t=3 and t=4. Loop start and end markers are check
+  times as well, so the span never crosses a loop marker.
 - The time cursor covers the current barrier span, not only the current column.
 - A media block with fades creates a barrier at each phase boundary, and its
    stage effect stays mounted and holds at completed phase boundaries until the next phase starts.
@@ -193,7 +195,8 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     kind keeps a timed block's duration but gives a dialogue that becomes timed
     the duration of its cell span in beats, and a timed block that becomes a
     dialogue loses its duration properties.
-15. Barrier check times are the distinct block end times, not every unit cell.
+15. Barrier check times are the distinct block end times plus the loop start
+    and end marker times, not every unit cell.
     `barrierSpan(t)` returns the span between the previous check time at or
     before `t` (with 0 as the floor) and the next check time after `t`; a check
     time belongs to the span that starts at it. At or beyond the last check time

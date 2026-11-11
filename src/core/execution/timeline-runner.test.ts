@@ -1501,6 +1501,22 @@ describe("barrierSpan", () => {
     expect(runner.barrierSpan(4)).toEqual({ start: 3, end: 5 });
   });
 
+  it("splits logical time by the loop marker times", () => {
+    const runner = new TimelineRunner({
+      tracks: [
+        { id: "a", blocks: [{ id: "a", start: 0, length: 1 }] },
+        { id: "b", blocks: [{ id: "b", start: 6, length: 2 }] },
+      ],
+      loops: [{ start: 2, end: 6, iterations: 3 }],
+    });
+
+    expect(runner.barrierSpan(0)).toEqual({ start: 0, end: 1 });
+    expect(runner.barrierSpan(1)).toEqual({ start: 1, end: 2 });
+    expect(runner.barrierSpan(2)).toEqual({ start: 2, end: 6 });
+    expect(runner.barrierSpan(5)).toEqual({ start: 2, end: 6 });
+    expect(runner.barrierSpan(6)).toEqual({ start: 6, end: 8 });
+  });
+
   it("returns the span containing the current time by default", () => {
     const runner = runnerWithChecks();
 
