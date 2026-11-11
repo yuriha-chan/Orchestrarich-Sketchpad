@@ -32,6 +32,7 @@ const layout: SlotWireLayout = {
   blockInset: 10,
   trackHeight: 48,
   slotHeight: 24,
+  loops: [],
 };
 
 function rectangle(
@@ -277,6 +278,37 @@ describe("outputWires", () => {
         blockCenterY: 96,
         gapX: 140,
         slotY: 132,
+      },
+    ]);
+  });
+
+  it("starts at the extended right edge of a block that contains a loop", () => {
+    const loopLayout: SlotWireLayout = {
+      ...layout,
+      layout: buildTimelineLayout(
+        16,
+        (time) =>
+          time === 0 ? [[], ["a"]] : time === 4 ? [["a"], []] : [[]],
+        110,
+        20,
+      ),
+      loops: [{ id: "a", start: 0, end: 4, children: [] }],
+    };
+    const block = addition({
+      id: "sum",
+      trackId: "first",
+      start: 0,
+      length: 4,
+      slotBindings: { out: "shared-slot" },
+    });
+
+    expect(outputWires(rows, [block], loopLayout)).toEqual([
+      {
+        key: "sum:out",
+        blockRightX: 570,
+        blockCenterY: 24,
+        gapX: 550,
+        slotY: 156,
       },
     ]);
   });

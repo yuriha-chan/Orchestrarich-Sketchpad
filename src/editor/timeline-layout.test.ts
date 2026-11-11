@@ -257,6 +257,36 @@ describe("blockSpan", () => {
   });
 });
 
+describe("blockSpan with loop edges", () => {
+  const layout = layoutFor(4, [
+    [[], ["a"], ["a", "b"]],
+    [[]],
+    [[]],
+    [[]],
+    [["a", "b"], ["a"], []],
+  ]);
+
+  it("extends the left edge to the anchor gap", () => {
+    const span = blockSpan(layout, 0, 4, 3, { left: ["a"], right: null });
+    expect(span.left).toBe(boundary(layout, 0).gaps[1].left + 3);
+    expect(span.left + span.width).toBe(cellRight(layout, 3) - 3);
+  });
+
+  it("extends the right edge past the anchor gap", () => {
+    const span = blockSpan(layout, 0, 4, 3, { left: null, right: ["a"] });
+    expect(span.left).toBe(cellLeft(layout, 0) + 3);
+    expect(span.left + span.width).toBe(
+      boundary(layout, 4).gaps[1].right - 3,
+    );
+  });
+
+  it("extends both edges", () => {
+    const span = blockSpan(layout, 0, 4, 3, { left: [], right: [] });
+    expect(span.left).toBe(boundary(layout, 0).left + 3);
+    expect(span.left + span.width).toBe(boundary(layout, 4).right - 3);
+  });
+});
+
 describe("barrierRect", () => {
   it("covers the cell tiles of the barrier span, not the gaps", () => {
     const layout = layoutFor(4, [

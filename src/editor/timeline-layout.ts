@@ -145,14 +145,40 @@ export function cellDelta(
   return cellAtX(layout, toX) - cellAtX(layout, fromX);
 }
 
+export interface BlockEdgeAnchors {
+  readonly left: readonly string[] | null;
+  readonly right: readonly string[] | null;
+}
+
+function gapAtPath(
+  layout: TimelineLayout,
+  time: number,
+  path: readonly string[],
+): TimelineGap {
+  const gap = layout.boundaries[time].gaps.find(
+    (candidate) =>
+      candidate.path.length === path.length &&
+      candidate.path.every((id, index) => id === path[index]),
+  );
+  if (gap === undefined) {
+    throw new Error(`No gap at time ${time} for path ${path.join("/")}`);
+  }
+  return gap;
+}
+
 export function blockSpan(
   layout: TimelineLayout,
   start: number,
   length: number,
   inset: number,
+  anchors: BlockEdgeAnchors = { left: null, right: null },
 ): { readonly left: number; readonly width: number } {
-  const left = cellLeft(layout, start) + inset;
-  const right = cellRight(layout, start + length - 1) - inset;
+  const left = anchors.left
+    ? gapAtPath(layout, start, anchors.left).left + inset
+    : cellLeft(layout, start) + inset;
+  const right = anchors.right
+    ? gapAtPath(layout, start + length, anchors.right).right - inset
+    : cellRight(layout, start + length - 1) - inset;
   return { left, width: right - left };
 }
 

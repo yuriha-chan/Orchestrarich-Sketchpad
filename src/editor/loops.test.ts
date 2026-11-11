@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allLoops,
+  blockLoopEdges,
   blocksRespectLoops,
   boundaryGapPaths,
   insertLoop,
@@ -362,6 +363,55 @@ describe("wrappableSpan", () => {
 
   it("does not expand for a block that contains the target", () => {
     expect(wrappableSpan([block(0, 10)], 3, 2)).toEqual({ start: 3, end: 5 });
+  });
+});
+
+describe("blockLoopEdges", () => {
+  const regions = allLoops([
+    loop("outer", 2, 8, [loop("inner", 4, 6)]),
+    loop("later", 10, 12),
+  ]);
+
+  it("anchors both edges in the gap outside the loop", () => {
+    expect(blockLoopEdges(regions, 2, 6)).toEqual({ left: [], right: [] });
+    expect(blockLoopEdges(regions, 10, 2)).toEqual({ left: [], right: [] });
+  });
+
+  it("anchors only the left edge when the block starts at the loop start", () => {
+    expect(blockLoopEdges(regions, 2, 9)).toEqual({ left: [], right: null });
+  });
+
+  it("anchors only the right edge when the block ends at the loop end", () => {
+    expect(blockLoopEdges(regions, 0, 8)).toEqual({ left: null, right: [] });
+  });
+
+  it("anchors no edge when the block contains a loop with margin", () => {
+    expect(blockLoopEdges(regions, 0, 14)).toEqual({
+      left: null,
+      right: null,
+    });
+  });
+
+  it("anchors no edge for a block inside or merely touching a loop", () => {
+    expect(blockLoopEdges(regions, 2, 1)).toEqual({
+      left: null,
+      right: null,
+    });
+    expect(blockLoopEdges(regions, 0, 2)).toEqual({
+      left: null,
+      right: null,
+    });
+  });
+
+  it("anchors a block inside a loop in the enclosing context", () => {
+    const nested = allLoops([loop("outer", 0, 10, [loop("inner", 0, 4)])]);
+
+    expect(blockLoopEdges(nested, 0, 4)).toEqual({
+      left: ["outer"],
+      right: ["outer"],
+    });
+    expect(blockLoopEdges(nested, 4, 4)).toEqual({ left: null, right: null });
+    expect(blockLoopEdges(nested, 0, 10)).toEqual({ left: [], right: [] });
   });
 });
 

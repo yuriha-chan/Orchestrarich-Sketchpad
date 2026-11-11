@@ -4,11 +4,12 @@ import {
   type Placement,
   type SlotProperty,
 } from "./model";
+import { blockLoopEdges, type LoopNode } from "./loops";
 import { rowTop, type TimelineRow } from "./timeline-rows";
 import {
   anchorGapCenter,
+  blockSpan,
   cellLeft,
-  cellRight,
   type TimelineLayout,
 } from "./timeline-layout";
 
@@ -17,6 +18,7 @@ export interface SlotWireLayout {
   readonly blockInset: number;
   readonly trackHeight: number;
   readonly slotHeight: number;
+  readonly loops: readonly LoopNode[];
 }
 
 export interface SlotWire {
@@ -142,6 +144,13 @@ export function outputWires(
     }
     const trackIndex = trackRows.get(block.trackId)!;
     const assignmentTime = block.start + block.length;
+    const span = blockSpan(
+      layout.layout,
+      block.start,
+      block.length,
+      layout.blockInset,
+      blockLoopEdges(layout.loops, block.start, block.length),
+    );
     for (const { key, slotId } of outputs) {
       const slotIndex = slotRows.get(slotId);
       if (slotIndex === undefined) {
@@ -149,8 +158,7 @@ export function outputWires(
       }
       wires.push({
         key: `${block.id}:${key}`,
-        blockRightX:
-          cellRight(layout.layout, assignmentTime - 1) - layout.blockInset,
+        blockRightX: span.left + span.width,
         blockCenterY:
           rowTop(rows, trackIndex, layout.trackHeight, layout.slotHeight) +
           layout.trackHeight / 2,

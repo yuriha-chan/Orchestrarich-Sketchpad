@@ -294,6 +294,50 @@ export function wrappableSpan(
   return region;
 }
 
+export interface BlockLoopEdges {
+  readonly left: readonly string[] | null;
+  readonly right: readonly string[] | null;
+}
+
+function containedByLoop(
+  loop: LoopRegion,
+  start: number,
+  end: number,
+): boolean {
+  return loop.start >= start && loop.end <= end;
+}
+
+export function blockLoopEdges(
+  loops: readonly LoopNode[],
+  start: number,
+  length: number,
+): BlockLoopEdges {
+  const end = start + length;
+  const hasStartEdge = loops.some(
+    (loop) => loop.start === start && containedByLoop(loop, start, end),
+  );
+  const hasEndEdge = loops.some(
+    (loop) => loop.end === end && containedByLoop(loop, start, end),
+  );
+
+  const enclosingPath = (time: number, side: "left" | "right"): string[] =>
+    loops
+      .filter(
+        (loop) =>
+          !containedByLoop(loop, start, end) &&
+          (side === "left"
+            ? loop.start <= time && time < loop.end
+            : loop.start < time && time <= loop.end),
+      )
+      .sort((a, b) => a.start - b.start || b.end - a.end)
+      .map((loop) => loop.id);
+
+  return {
+    left: hasStartEdge ? enclosingPath(start, "left") : null,
+    right: hasEndEdge ? enclosingPath(end, "right") : null,
+  };
+}
+
 export function blocksRespectLoops(
   placements: readonly Placement[],
   regions: readonly LoopRegion[],

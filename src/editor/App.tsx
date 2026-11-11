@@ -68,7 +68,7 @@ import { generateDotGradientSVG } from "./dot-gradient";
 import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
 import type { FadeBoundary } from "./fade-editing";
 import { useExperimentStore } from "./store";
-import { allLoops, boundaryGapPaths, maxLoopDepth, type LoopNode } from "./loops";
+import { allLoops, blockLoopEdges, boundaryGapPaths, maxLoopDepth, type LoopNode } from "./loops";
 import { loopLevelColor } from "./loop-colors";
 import { TimelineSession, slotReads, slotWrites } from "./execution";
 import { Stage } from "./Stage";
@@ -322,8 +322,9 @@ export function App() {
       blockInset: BLOCK_INSET,
       trackHeight: TRACK_HEIGHT,
       slotHeight: SLOT_HEIGHT,
+      loops: loopRegions,
     }),
-    [layout],
+    [layout, loopRegions],
   );
   const editable = run === null;
   const phase: TimelinePhase = run?.snapshot.phase ?? "idle";
@@ -900,7 +901,13 @@ export function App() {
   const previewSpan =
     creation === null
       ? null
-      : blockSpan(layout, previewStart, previewLength, BLOCK_INSET);
+      : blockSpan(
+          layout,
+          previewStart,
+          previewLength,
+          BLOCK_INSET,
+          blockLoopEdges(loopRegions, previewStart, previewLength),
+        );
   const cursorRect =
     barrierSpan === null
       ? null
@@ -1312,6 +1319,7 @@ export function App() {
                           block={block}
                           rows={rows}
                           layout={layout}
+                          loopRegions={loopRegions}
                           columnCount={columnCount}
                           selected={block.id === selectedId}
                           editable={editable}
@@ -2806,6 +2814,7 @@ function BlockView({
   block,
   rows,
   layout,
+  loopRegions,
   columnCount,
   selected,
   editable,
@@ -2816,6 +2825,7 @@ function BlockView({
   block: Placement;
   rows: readonly TimelineRow[];
   layout: TimelineLayout;
+  loopRegions: readonly LoopNode[];
   columnCount: number;
   selected: boolean;
   editable: boolean;
@@ -2995,7 +3005,13 @@ function BlockView({
     }
   };
 
-  const span = blockSpan(layout, block.start, block.length, BLOCK_INSET);
+  const span = blockSpan(
+    layout,
+    block.start,
+    block.length,
+    BLOCK_INSET,
+    blockLoopEdges(loopRegions, block.start, block.length),
+  );
   const className = [
     "block",
     `block-${block.kind}`,

@@ -465,6 +465,22 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     document but pruned from validation, rendering, and execution until the gap
     exists again.
 
+41. A block that contains a loop draws over the loop's boundary gap runs when
+    its own start or end coincides with the loop's edge. The anchor is the gap
+    whose enclosing context is exactly the loops that contain the block but are
+    not contained by it (`blockLoopEdges` in `src/editor/loops.ts`): the left
+    edge moves to that gap's left edge and the right edge to its right edge,
+    inset by the usual block inset (`blockSpan` in
+    `src/editor/timeline-layout.ts`). A single loop ended by the block therefore
+    reaches the outer edges of the run, while a block inside an outer loop that
+    contains only an inner loop stops at the inner loop's edge gap and does not
+    cover the outer loop's edge. A contained loop whose edges fall inside the
+    block changes nothing, because internal gaps are already covered. Output
+    wires start at the extended right edge, so a wire stays attached to the
+    drawn block; input wires and their endpoint lanes still use the block's
+    start cell. The creation preview uses the same rule. Blocks that are inside
+    a loop, or merely touch one, are not extended.
+
 ## Carry-Over
 
 - Multiple blocks may write the same slot; ordering is by completion time and
