@@ -17,18 +17,15 @@ import {
   type NumericSlotRead,
   type NumericSlotWrite,
 } from "../core/slots/numeric-slots.ts";
-import {
-  boundSlotProperties,
-  type Placement,
-  type Track,
-} from "./model";
+import { type Placement, type Track } from "./model";
+import { blockDefinition, boundSlotProperties } from "./builtin-blocks";
 import { boundaryGapPaths, type LoopNode } from "./loops";
 import { liveNumericSlots } from "./slot-gaps";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";
 
-import { createExecution, type ExecutionInstance } from "./block-execution";
-export { SKIP_FADE_MS, type ExecutionInstance } from "./block-execution";
+import { type ExecutionInstance } from "./block-runtime";
+export { SKIP_FADE_MS, type ExecutionInstance } from "./block-runtime";
 
 export interface TimelineSessionOptions {
   readonly slots?: readonly NumericSlot[];
@@ -281,15 +278,15 @@ export class TimelineSession {
     const definition = this.definitionByBlockId[block.id];
     const placement = definition.placement;
     if (block.start === placement.start) {
-      const instance = createExecution(
-        definition,
+      const instance = blockDefinition(placement.kind).createExecution(
         {
           bpm: this.bpm,
           stage: this.stage,
           report: (message) => this.report(message),
           time: () => this.runner.time,
-          readNumericSlot: (slotId) => this.readRuntimeSlot(slotId),
+          readSlot: (slotId) => this.readRuntimeSlot(slotId),
         },
+        placement,
       );
       this.activeExecutions.set(definition, instance);
       this.options.onExecutionStart?.(instance);

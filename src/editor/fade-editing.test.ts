@@ -1,17 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { generateDotGradientSVG } from "./dot-gradient";
-import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
-import type { MediaPlacement } from "./model";
-
-const clip: MediaPlacement = {
-  id: "clip", trackId: "sound", kind: "sound", start: 0, length: 6,
-  cooperativeSkip: false, duration: 6, durationUnit: "beats",
-  syncBeatsToCellSpan: false, fadeIn: 1, fadeOut: 2,
-};
+import { dragFadeBoundary, fadeBoundaries } from "./blocks/media-data";
 
 describe("phase boundary editing", () => {
   it("exposes both internal fade boundaries", () => {
-    expect(fadeBoundaries(clip)).toEqual([
+    expect(fadeBoundaries(1, 2, 6)).toEqual([
       { boundary: "fadeIn", offset: 1 },
       { boundary: "fadeOut", offset: 4 },
     ]);
@@ -30,15 +23,15 @@ describe("phase boundary editing", () => {
   });
 
   it("moves a shared boundary between adjacent fades", () => {
-    expect(fadeBoundaries({ ...clip, fadeIn: 4 })).toEqual([
+    expect(fadeBoundaries(4, 2, 6)).toEqual([
       { boundary: "shared", offset: 4 },
     ]);
     expect(dragFadeBoundary("shared", 2, 6, 4, 2)).toEqual({ fadeIn: 2, fadeOut: 4 });
   });
 
   it("has no internal boundary for a single phase", () => {
-    expect(fadeBoundaries({ ...clip, fadeIn: 0, fadeOut: 0 })).toEqual([]);
-    expect(fadeBoundaries({ ...clip, fadeIn: 6, fadeOut: 0 })).toEqual([]);
+    expect(fadeBoundaries(0, 0, 6)).toEqual([]);
+    expect(fadeBoundaries(6, 0, 6)).toEqual([]);
   });
 });
 

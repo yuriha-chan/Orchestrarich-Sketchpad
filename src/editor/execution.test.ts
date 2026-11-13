@@ -5,24 +5,22 @@ import type { LoopNode } from "./loops";
 import { TimelineSession, SKIP_FADE_MS, slotReads, toTimelineDefinition, type ExecutionInstance } from "./execution";
 import { compilePlacement, definitionBlocks, isMultiPhase, type ExecutionDefinition } from "./execution-definition";
 import type {
-  BlockKind,
-  DialoguePlacement,
   DurationUnit,
   Placement,
   RectUnit,
   Track,
   Vec3,
 } from "./model";
-import { DEFAULT_RECT_COLOR, DEFAULT_TRACKS } from "./model";
-import {
-  createStageStore,
-  type DialogueView,
-  type RectangleView,
-} from "./stage-state";
-import { MediaExecution, TimedExecution } from "./block-execution";
+import { DEFAULT_TRACKS } from "./model";
+import { createStageStore } from "./stage-state";
+import { MediaExecution, TimedExecution } from "./block-runtime";
+import { DEFAULT_RECT_COLOR } from "./blocks/rectangle";
+import type { DialoguePayload } from "./blocks/dialogue";
+import type { RectanglePayload } from "./blocks/rectangle";
 
-type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
-  kind?: BlockKind;
+type PlacementOverrides = Omit<Partial<Placement>, "kind" | "data"> & {
+  kind?: string;
+  data?: unknown;
   duration?: number;
   durationUnit?: DurationUnit;
   syncBeatsToCellSpan?: boolean;
@@ -42,6 +40,7 @@ type PlacementOverrides = Omit<Partial<DialoguePlacement>, "kind"> & {
 function placement(overrides: PlacementOverrides = {}): Placement {
   const {
     kind = "dialogue",
+    data,
     duration,
     durationUnit,
     syncBeatsToCellSpan,
@@ -67,8 +66,11 @@ function placement(overrides: PlacementOverrides = {}): Placement {
     ...(slotBindings === undefined ? {} : { slotBindings }),
     ...rest,
   };
+  if (data !== undefined) {
+    return { ...base, kind, data };
+  }
   if (kind === "dialogue") {
-    return { ...base, kind };
+    return { ...base, kind, data: {} };
   }
   const durationFields = {
     duration: duration ?? 1,
@@ -79,34 +81,39 @@ function placement(overrides: PlacementOverrides = {}): Placement {
     return {
       ...base,
       kind,
-      ...durationFields,
-      fadeIn: fadeIn ?? 0,
-      fadeOut: fadeOut ?? 0,
+      data: {
+        ...durationFields,
+        fadeIn: fadeIn ?? 0,
+        fadeOut: fadeOut ?? 0,
+      },
     };
   }
   if (kind === "rectangle") {
     return {
       ...base,
       kind,
-      ...durationFields,
-      x: x ?? 0,
-      y: y ?? 0,
-      w: w ?? 1,
-      h: h ?? 1,
-      rectUnit: rectUnit ?? "span",
-      color: color ?? DEFAULT_RECT_COLOR,
+      data: {
+        ...durationFields,
+        x: x ?? 0,
+        y: y ?? 0,
+        w: w ?? 1,
+        h: h ?? 1,
+        rectUnit: rectUnit ?? "span",
+        color: color ?? DEFAULT_RECT_COLOR,
+      },
     };
   }
   if (kind === "addition") {
     return {
       ...base,
       kind,
-      ...durationFields,
-      inputA: inputA ?? 0,
-      inputB: inputB ?? 0,
+      data: {
+        inputA: inputA ?? 0,
+        inputB: inputB ?? 0,
+      },
     };
   }
-  return { ...base, kind, ...durationFields };
+  return { ...base, kind, data: durationFields };
 }
 
 function numericSlot(
@@ -140,20 +147,18 @@ function setup(
     },
     onExecutionStart: (instance) => {
       startedInstances.push(instance);
-      if (instance.definition.placement.kind === "rectangle") {
-        const item = stage
-          .getState()
-          .items.find(
-            (candidate): candidate is RectangleView =>
-              candidate.kind === "rectangle" && candidate.id === instance.id,
-          );
-        if (item !== undefined) {
-          rectangleXs.push(item.x);
-        }
+      const item = stage
+        .getState()
+        .items.find(
+          (candidate) =>
+            candidate.layer === "screen" && candidate.id === instance.id,
+        );
+      if (item !== undefined) {
+        rectangleXs.push((item.payload as RectanglePayload).x);
       }
     },
     onFinalize: (instance) => {
-      finalized.push(instance.definition.placement.id);
+      finalized.push(instance.placement.id);
       finalizedInstances.push(instance);
     },
   });
@@ -168,11 +173,11 @@ function setup(
     advanceDialogue: (placementId: string) => {
       const instance = [...startedInstances]
         .reverse()
-        .find((instance) => instance.definition.placement.id === placementId)!;
+        .find((instance) => instance.placement.id === placementId)!;
       const dialogue = stage.getState().items.find(
-        (item): item is DialogueView => item.id === instance.id && item.kind === "dialogue",
+        (item) => item.id === instance.id,
       )!;
-      dialogue.confirm();
+      (dialogue.payload as DialoguePayload).confirm();
     },
     snapshot: (): TimelineSnapshot | null => snapshot,
     blockState: (id: string) =>
@@ -182,12 +187,23 @@ function setup(
 
 function rectangleItem(run: ReturnType<typeof setup>, placementId: string) {
   const instance = run.startedInstances.find(
-    (started) => started.definition.placement.id === placementId,
-  )!;
-  return run.stage.getState().items.find(
-    (item): item is RectangleView =>
-      item.kind === "rectangle" && item.id === instance.id,
+    (started) => started.placement.id === placementId,
   );
+  if (instance === undefined) {
+    return undefined;
+  }
+  const item = run.stage.getState().items.find(
+    (candidate) => candidate.layer === "screen" && candidate.id === instance.id,
+  );
+  if (item === undefined) {
+    return undefined;
+  }
+  return {
+    id: item.id,
+    kind: item.kind,
+    layer: item.layer,
+    ...(item.payload as RectanglePayload),
+  };
 }
 
 describe("toTimelineDefinition", () => {
@@ -414,12 +430,17 @@ describe("TimelineSession", () => {
     run.session.start();
 
     const rectangle = run.startedInstances.find(
-      (instance) => instance.definition.placement.id === "rect",
+      (instance) => instance.placement.id === "rect",
     )!;
     expect(
-      run.stage.getState().items.filter((item) => item.kind === "rectangle"),
+      run.stage.getState().items.filter((item) => item.layer === "screen"),
     ).toEqual([
-      { kind: "rectangle", id: rectangle.id, x: 3, y: 2, w: 1, h: 1, unit: "span", color: DEFAULT_RECT_COLOR },
+      {
+        kind: "rectangle",
+        id: rectangle.id,
+        layer: "screen",
+        payload: { x: 3, y: 2, w: 1, h: 1, unit: "span", color: DEFAULT_RECT_COLOR },
+      },
     ]);
 
     await vi.advanceTimersByTimeAsync(500);
@@ -427,7 +448,7 @@ describe("TimelineSession", () => {
     expect(run.snapshot()?.time).toBe(0);
     expect(run.blockState("rect")).toBe("completed");
     expect(
-      run.stage.getState().items.filter((item) => item.kind === "rectangle"),
+      run.stage.getState().items.filter((item) => item.layer === "screen"),
     ).toHaveLength(1);
 
     run.advanceDialogue("gate");
@@ -695,13 +716,16 @@ describe("TimelineSession", () => {
       }),
     ]);
     run.session.start();
-    const clip = run.startedInstances.find((instance) => instance.definition.placement.id === "clip")!;
+    const clip = run.startedInstances.find((instance) => instance.placement.id === "clip")!;
     const presentation = run.stage.getState().items.find((item) => item.id === clip.id)!;
     expect(presentation).toMatchObject({
       kind: "animation",
-      durationMs: 2000,
-      fadeInFraction: 0.25,
-      fadeOutFraction: 0.25,
+      layer: "card",
+      payload: {
+        durationMs: 2000,
+        fadeInFraction: 0.25,
+        fadeOutFraction: 0.25,
+      },
     });
 
     await vi.advanceTimersByTimeAsync(2000);
@@ -711,14 +735,14 @@ describe("TimelineSession", () => {
     expect(run.finalizedInstances).not.toContain(clip);
     expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
       id: presentation.id,
-      playback: { positionMs: 500, playing: false },
+      payload: { playback: { positionMs: 500, playing: false } },
     });
 
     run.advanceDialogue("gate");
     await vi.advanceTimersByTimeAsync(0);
     expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
       id: presentation.id,
-      playback: { positionMs: 500, playing: true },
+      payload: { playback: { positionMs: 500, playing: true } },
     });
     await vi.advanceTimersByTimeAsync(1500);
     expect(run.snapshot()?.time).toBe(3);
@@ -726,9 +750,9 @@ describe("TimelineSession", () => {
     expect(run.finalizedInstances).not.toContain(clip);
     expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
       id: presentation.id,
-      playback: { positionMs: 2000, playing: false },
+      payload: { playback: { positionMs: 2000, playing: false } },
     });
-    expect(run.startedInstances.filter((instance) => instance.definition.placement.id === "clip")).toEqual([clip]);
+    expect(run.startedInstances.filter((instance) => instance.placement.id === "clip")).toEqual([clip]);
 
     run.advanceDialogue("end-gate");
     await vi.advanceTimersByTimeAsync(0);
@@ -744,8 +768,11 @@ describe("TimelineSession", () => {
     const dialogue = run.stage.getState().items[0];
     expect(dialogue).toMatchObject({
       kind: "dialogue",
-      text: "lazy dog jumps ...",
-      label: "Dialogue @0",
+      layer: "card",
+      payload: {
+        text: "lazy dog jumps ...",
+        label: "Dialogue @0",
+      },
     });
     expect(run.blockState("line")).toBe("running");
 
@@ -779,8 +806,8 @@ describe("TimelineSession", () => {
     const secondInstance = second.startedInstances[0];
     expect(firstInstance).not.toBe(secondInstance);
     expect(firstInstance.id).not.toBe(secondInstance.id);
-    expect(firstInstance.definition.placement).toBe(documentPlacement);
-    expect(secondInstance.definition.placement).toBe(documentPlacement);
+    expect(firstInstance.placement).toBe(documentPlacement);
+    expect(secondInstance.placement).toBe(documentPlacement);
 
     await vi.advanceTimersByTimeAsync(500);
     expect(first.finalizedInstances).toEqual([firstInstance]);

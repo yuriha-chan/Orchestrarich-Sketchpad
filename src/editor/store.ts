@@ -2,33 +2,19 @@ import { current } from "immer";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type {
-  BlockKind,
-  DurationUnit,
   Placement,
-  RectUnit,
   Track,
   TrackColor,
-  Vec3,
 } from "./model";
 import {
   canPlace,
-  clampFadesToLength,
-  convertDuration,
-  convertPlacementKind,
   DEFAULT_BPM,
   DEFAULT_GRID_COLUMNS,
   DEFAULT_GRID_ROWS,
-  DEFAULT_RECT_GEOMETRY,
-  DEFAULT_RECT_COLOR,
   DEFAULT_TRACKS,
-  isMediaKind,
-  isMediaPlacement,
-  isDurationPlacement,
-  isRectanglePlacement,
   MAX_GRID_SIZE,
   nextFreeStart,
   MIN_GRID_SIZE,
-  SLOT_CAPABLE_PROPERTIES,
   TRACK_COLORS,
 } from "./model";
 import {
@@ -42,7 +28,7 @@ import {
   type LoopNode,
 } from "./loops";
 import type { WorkspaceId } from "./workspaces";
-import { convertRectUnit } from "./stage-geometry";
+import { blockDefinition } from "./builtin-blocks";
 import { initializationPathKey, type NumericSlot } from "../core/slots/numeric-slots";
 
 interface ExperimentState {
@@ -53,7 +39,8 @@ interface ExperimentState {
   loops: LoopNode[];
   gridColumns: number;
   gridRows: number;
-  selectedKind: BlockKind;
+  stageSpan: number;
+  selectedKind: string;
   selectedId: string | null;
   workspace: WorkspaceId;
   addTrack: () => void;
@@ -62,31 +49,18 @@ interface ExperimentState {
   duplicateTrack: (id: string) => void;
   removeTrack: (id: string) => void;
   setTrackColor: (id: string, color: TrackColor) => void;
-  create: (trackId: string, kind: BlockKind, start: number, length: number) => void;
+  create: (trackId: string, kind: string, start: number, length: number) => void;
   move: (id: string, trackId: string, start: number) => void;
-  resize: (id: string, length: number) => void;
-  setSpan: (
-    id: string,
-    start: number,
-    length: number,
-    fades?: { fadeIn?: number; fadeOut?: number },
-  ) => void;
+  resize: (id: string, length: number) => boolean;
+  setSpan: (id: string, start: number, length: number) => boolean;
   duplicateBlock: (id: string) => void;
   remove: (id: string) => void;
   clear: () => void;
   select: (id: string | null) => void;
-  setKind: (kind: BlockKind) => void;
-  setBlockKind: (id: string, kind: BlockKind) => void;
+  setKind: (kind: string) => void;
+  setBlockKind: (id: string, kind: string) => void;
   setCooperativeSkip: (id: string, value: boolean) => void;
-  setFadeIn: (id: string, value: number) => void;
-  setFadeOut: (id: string, value: number) => void;
-  setDuration: (id: string, value: number) => void;
-  setDurationUnit: (id: string, unit: DurationUnit) => void;
-  setSyncBeatsToCellSpan: (id: string, value: boolean) => void;
-  setRectValue: (id: string, field: "x" | "y" | "w" | "h", value: number) => void;
-  setRectUnit: (id: string, unit: RectUnit, span: number) => void;
-  setRectColor: (id: string, color: Vec3) => void;
-  setAdditionInput: (id: string, field: "a" | "b", value: number) => void;
+  editBlockData: (id: string, update: (data: unknown) => unknown) => void;
   addSlot: (trackId: string | null) => void;
   renameSlot: (id: string, name: string) => void;
   removeSlot: (id: string) => void;
@@ -117,6 +91,7 @@ interface ExperimentState {
   ) => void;
   setGridColumns: (value: number) => void;
   setGridRows: (value: number) => void;
+  setStageSpan: (value: number) => void;
   setWorkspace: (id: WorkspaceId) => void;
 }
 
@@ -142,8 +117,7 @@ function applySpan(
   block: Placement,
   start: number,
   length: number,
-  fades?: { fadeIn?: number; fadeOut?: number },
-): void {
+): boolean {
   if (
     !canPlace(
       state.tracks,
@@ -153,30 +127,19 @@ function applySpan(
       block.id,
     )
   ) {
-    return;
+    return false;
   }
   block.start = start;
   block.length = length;
-  if (isDurationPlacement(block) && block.syncBeatsToCellSpan) {
-    block.duration = length;
+  const definition = blockDefinition(block.kind);
+  if (definition.onLengthChange !== undefined) {
+    block.data = definition.onLengthChange(block.data, length);
   }
-  if (isMediaPlacement(block)) {
-    const clamped = clampFadesToLength(
-      fades?.fadeIn ?? block.fadeIn,
-      fades?.fadeOut ?? block.fadeOut,
-      length,
-    );
-    block.fadeIn = clamped.fadeIn;
-    block.fadeOut = clamped.fadeOut;
-  }
+  return true;
 }
 
 function clampGridSize(value: number): number {
   return Math.min(MAX_GRID_SIZE, Math.max(MIN_GRID_SIZE, Math.round(value)));
-}
-
-function clampColorChannel(value: number): number {
-  return Math.min(255, Math.max(0, Math.round(value)));
 }
 
 let nextId = 1;
@@ -193,6 +156,7 @@ export const useExperimentStore = create<ExperimentState>()(
     loops: [],
     gridColumns: DEFAULT_GRID_COLUMNS,
     gridRows: DEFAULT_GRID_ROWS,
+    stageSpan: 0,
     selectedKind: "dialogue",
     selectedId: null,
     workspace: "staging",
@@ -309,43 +273,12 @@ export const useExperimentStore = create<ExperimentState>()(
       set((state) => {
         const id = `placement-${nextId}`;
         const base = { id, trackId, start, length, cooperativeSkip: false };
-        const candidate: Placement =
-          kind === "dialogue"
-            ? { ...base, kind }
-            : isMediaKind(kind)
-              ? {
-                  ...base,
-                  kind,
-                  duration: length,
-                  durationUnit: "beats",
-                  syncBeatsToCellSpan: false,
-                  fadeIn: 0,
-                  fadeOut: 0,
-                }
-              : kind === "rectangle"
-                ? {
-                    ...base,
-                    kind,
-                    duration: length,
-                    durationUnit: "beats",
-                    syncBeatsToCellSpan: false,
-                    ...DEFAULT_RECT_GEOMETRY,
-                    color: DEFAULT_RECT_COLOR,
-                  }
-                : kind === "addition"
-                  ? {
-                      ...base,
-                      kind,
-                      inputA: 0,
-                      inputB: 0,
-                    }
-                : {
-                    ...base,
-                    kind,
-                    duration: length,
-                    durationUnit: "beats",
-                    syncBeatsToCellSpan: false,
-                  };
+        const definition = blockDefinition(kind);
+        const candidate: Placement = {
+          ...base,
+          kind,
+          data: definition.createData(length),
+        };
         if (
           !canPlace(state.tracks, state.blocks, candidate, allLoops(state.loops))
         ) {
@@ -373,18 +306,24 @@ export const useExperimentStore = create<ExperimentState>()(
           block.start = start;
         });
       }),
-    resize: (id, length) =>
+    resize: (id, length) => {
+      let applied = false;
       set((state) => {
-        editBlock(state, id, (block) =>
-          applySpan(state, block, block.start, length),
-        );
-      }),
-    setSpan: (id, start, length, fades) =>
+        editBlock(state, id, (block) => {
+          applied = applySpan(state, block, block.start, length);
+        });
+      });
+      return applied;
+    },
+    setSpan: (id, start, length) => {
+      let applied = false;
       set((state) => {
-        editBlock(state, id, (block) =>
-          applySpan(state, block, start, length, fades),
-        );
-      }),
+        editBlock(state, id, (block) => {
+          applied = applySpan(state, block, start, length);
+        });
+      });
+      return applied;
+    },
     duplicateBlock: (id) =>
       set((state) => {
         const source = state.blocks.find((block) => block.id === id);
@@ -433,9 +372,34 @@ export const useExperimentStore = create<ExperimentState>()(
       }),
     setBlockKind: (id, kind) =>
       set((state) => {
-        state.blocks = state.blocks.map((block) =>
-          block.id === id ? convertPlacementKind(block, kind) : block,
-        );
+        state.blocks = state.blocks.map((block) => {
+          if (block.id !== id) {
+            return block;
+          }
+          if (block.kind === kind) {
+            return block;
+          }
+          const source = blockDefinition(block.kind);
+          const definition = blockDefinition(kind);
+          const carry = source.carryOver?.(block.data) ?? {};
+          const data = definition.convertFrom(carry, block.length);
+          const retainedBindings: Partial<Record<string, string>> = {};
+          for (const property of definition.slotProperties) {
+            const slotId = block.slotBindings?.[property.key];
+            if (slotId !== undefined) {
+              retainedBindings[property.key] = slotId;
+            }
+          }
+          const { slotBindings: _previousBindings, ...rest } = block;
+          return {
+            ...rest,
+            kind,
+            data,
+            ...(Object.keys(retainedBindings).length === 0
+              ? {}
+              : { slotBindings: retainedBindings }),
+          };
+        });
       }),
     setCooperativeSkip: (id, value) =>
       set((state) => {
@@ -443,114 +407,10 @@ export const useExperimentStore = create<ExperimentState>()(
           block.cooperativeSkip = value;
         });
       }),
-    setFadeIn: (id, value) =>
+    editBlockData: (id, update) =>
       set((state) => {
         editBlock(state, id, (block) => {
-          if (!isMediaPlacement(block)) {
-            return;
-          }
-          const fades = clampFadesToLength(value, block.fadeOut, block.length);
-          block.fadeIn = fades.fadeIn;
-          block.fadeOut = fades.fadeOut;
-        });
-      }),
-    setFadeOut: (id, value) =>
-      set((state) => {
-        editBlock(state, id, (block) => {
-          if (!isMediaPlacement(block)) {
-            return;
-          }
-          const fades = clampFadesToLength(block.fadeIn, value, block.length);
-          block.fadeIn = fades.fadeIn;
-          block.fadeOut = fades.fadeOut;
-        });
-      }),
-    setDuration: (id, value) =>
-      set((state) => {
-        editBlock(state, id, (block) => {
-          if (
-            !isDurationPlacement(block) ||
-            block.syncBeatsToCellSpan ||
-            !Number.isFinite(value) ||
-            value <= 0
-          ) {
-            return;
-          }
-          block.duration = value;
-        });
-      }),
-    setDurationUnit: (id, unit) =>
-      set((state) => {
-        editBlock(state, id, (block) => {
-          if (
-            !isDurationPlacement(block) ||
-            block.syncBeatsToCellSpan ||
-            block.durationUnit === unit
-          ) {
-            return;
-          }
-          block.duration = convertDuration(
-            block.duration,
-            block.durationUnit,
-            unit,
-            state.bpm,
-          );
-          block.durationUnit = unit;
-        });
-      }),
-    setSyncBeatsToCellSpan: (id, value) =>
-      set((state) => {
-        editBlock(state, id, (block) => {
-          if (!isDurationPlacement(block)) {
-            return;
-          }
-          block.syncBeatsToCellSpan = value;
-          if (value) {
-            block.durationUnit = "beats";
-            block.duration = block.length;
-          }
-        });
-      }),
-    setRectValue: (id, field, value) =>
-      set((state) => {
-        editBlock(state, id, (block) => {
-          if (!isRectanglePlacement(block) || !Number.isFinite(value)) {
-            return;
-          }
-          if (field === "x" || field === "y") {
-            if (value >= 0) {
-              block[field] = value;
-            }
-          } else if (value > 0) {
-            block[field] = value;
-          }
-        });
-      }),
-    setRectUnit: (id, unit, span) =>
-      set((state) => {
-        editBlock(state, id, (block) => {
-          if (!isRectanglePlacement(block) || block.rectUnit === unit) {
-            return;
-          }
-          const converted = convertRectUnit(block, unit, span);
-          block.x = converted.x;
-          block.y = converted.y;
-          block.w = converted.w;
-          block.h = converted.h;
-          block.rectUnit = unit;
-        });
-      }),
-    setRectColor: (id, color) =>
-      set((state) => {
-        editBlock(state, id, (block) => {
-          if (!isRectanglePlacement(block) || !color.every(Number.isFinite)) {
-            return;
-          }
-          block.color = [
-            clampColorChannel(color[0]),
-            clampColorChannel(color[1]),
-            clampColorChannel(color[2]),
-          ];
+          block.data = update(block.data);
         });
       }),
     addSlot: (trackId) =>
@@ -636,7 +496,7 @@ export const useExperimentStore = create<ExperimentState>()(
     setSlotBinding: (id, key, slotId) =>
       set((state) => {
         editBlock(state, id, (block) => {
-          if (!SLOT_CAPABLE_PROPERTIES[block.kind].some((property) => property.key === key)) {
+          if (!blockDefinition(block.kind).slotProperties.some((property) => property.key === key)) {
             return;
           }
           if (slotId === null) {
@@ -658,21 +518,6 @@ export const useExperimentStore = create<ExperimentState>()(
           block.slotBindings ??= {};
           block.slotBindings[key] = slotId;
         });
-      }),
-    setAdditionInput: (id, field, value) =>
-      set((state) => {
-        const block = state.blocks.find((candidate) => candidate.id === id);
-        if (block === undefined || block.kind !== "addition") {
-          return;
-        }
-        if (!Number.isFinite(value)) {
-          return;
-        }
-        if (field === "a") {
-          block.inputA = value;
-        } else {
-          block.inputB = value;
-        }
       }),
     setBpm: (value) =>
       set((state) => {
@@ -751,6 +596,12 @@ export const useExperimentStore = create<ExperimentState>()(
       set((state) => {
         if (Number.isFinite(value)) {
           state.gridRows = clampGridSize(value);
+        }
+      }),
+    setStageSpan: (value) =>
+      set((state) => {
+        if (Number.isFinite(value)) {
+          state.stageSpan = value;
         }
       }),
     setWorkspace: (id) =>

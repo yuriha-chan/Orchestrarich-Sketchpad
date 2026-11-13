@@ -80,6 +80,7 @@ body {
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 600;
+  background: var(--block-color);
   color: #ffffff;
   cursor: pointer;
   opacity: 0.75;
@@ -89,34 +90,6 @@ body {
   opacity: 1;
   outline: 2px solid #0f172a;
   outline-offset: 2px;
-}
-
-.palette-dialogue {
-  background: #2563eb;
-}
-
-.palette-camera {
-  background: #7c3aed;
-}
-
-.palette-sound {
-  background: #059669;
-}
-
-.palette-animation {
-  background: #ea580c;
-}
-
-.palette-wait {
-  background: #475569;
-}
-
-.palette-rectangle {
-  background: #db2777;
-}
-
-.palette-addition {
-  background: #0891b2;
 }
 
 .toolbar-actions {
@@ -243,20 +216,42 @@ body {
   gap: 6px;
 }
 
-.rect-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 10px;
+.block-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
-.rect-fields .inspector-field {
-  min-width: 0;
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
 }
 
-.rect-fields .inspector-field select,
-.rect-fields .inspector-field .inspector-number {
+.panel-section .inspector-field select,
+.panel-section .inspector-field .inspector-number {
   width: 100%;
   min-width: 0;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.panel-connector {
+  width: 2px;
+  height: 10px;
+  margin: 0 auto;
+  background: #cbd5e1;
 }
 
 .rect-color {
@@ -915,6 +910,7 @@ body {
   border-radius: 6px;
   padding: 0 10px;
   overflow: hidden;
+  background: var(--block-color);
   color: #ffffff;
   font-size: 12px;
   font-weight: 600;
@@ -943,41 +939,6 @@ body {
 
 .block.is-preview.is-invalid {
   outline-color: #dc2626;
-}
-
-.block-dialogue {
-  --block-color: #2563eb;
-  background: var(--block-color);
-}
-
-.block-camera {
-  --block-color: #7c3aed;
-  background: var(--block-color);
-}
-
-.block-sound {
-  --block-color: #059669;
-  background: var(--block-color);
-}
-
-.block-animation {
-  --block-color: #ea580c;
-  background: var(--block-color);
-}
-
-.block-wait {
-  --block-color: #475569;
-  background: var(--block-color);
-}
-
-.block-rectangle {
-  --block-color: #db2777;
-  background: var(--block-color);
-}
-
-.block-addition {
-  --block-color: #0891b2;
-  background: var(--block-color);
 }
 
 .block-label {
@@ -1463,6 +1424,16 @@ body {
 
 .block-phase-boundary.is-editable:hover {
   background-color: rgb(255 255 255 / 0.2);
+}
+
+.block.is-locked .block-phase-boundary.is-editable {
+  pointer-events: none;
+  cursor: default;
+}
+
+.block.is-locked .block-phase-boundary.is-editable:hover {
+  background-color: transparent;
+  background-image: linear-gradient(90deg, transparent 4px, rgb(255 255 255 / 0.8) 4px 6px, transparent 6px);
 }
 
 .toolbar-actions button.is-active {

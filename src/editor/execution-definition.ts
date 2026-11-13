@@ -1,5 +1,10 @@
 import type { BlockDefinition } from "../core/execution/timeline-runner.ts";
-import { isMediaPlacement, mediaPhases, phaseBlockId, type Placement } from "./model";
+import type { Placement } from "./model";
+import { blockDefinition } from "./builtin-blocks";
+
+export function phaseBlockId(placementId: string, index: number): string {
+  return `${placementId}~${index}`;
+}
 
 export interface PhaseDefinition {
   readonly index: number;
@@ -23,14 +28,16 @@ export function isMultiPhase(
 }
 
 export function compilePlacement(placement: Placement): ExecutionDefinition {
+  const phases = blockDefinition(placement.kind).phases?.(
+    placement.data,
+    placement.length,
+  );
   return {
     placement,
-    structure: isMediaPlacement(placement)
-      ? {
-          type: "multi-phase",
-          phases: mediaPhases(placement.fadeIn, placement.fadeOut, placement.length),
-        }
-      : { type: "single" },
+    structure:
+      phases === undefined
+        ? { type: "single" }
+        : { type: "multi-phase", phases },
   };
 }
 

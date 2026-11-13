@@ -1,46 +1,18 @@
 import { create } from "zustand";
-import type { RectUnit, Vec3 } from "./model";
 
-export interface DialogueView {
-  readonly kind: "dialogue";
+export type StageLayer = "screen" | "card";
+
+export interface StageItem {
   readonly id: string;
-  readonly label: string;
-  readonly text: string;
-  readonly confirm: () => void;
+  readonly kind: string;
+  readonly layer: StageLayer;
+  readonly payload: unknown;
 }
-
-export interface AnimationView {
-  readonly kind: "animation";
-  readonly id: string;
-  readonly label: string;
-  readonly durationMs: number;
-  readonly fadeInFraction: number;
-  readonly fadeOutFraction: number;
-  readonly playback: AnimationPlayback;
-}
-
-export interface AnimationPlayback {
-  readonly positionMs: number;
-  readonly playing: boolean;
-}
-
-export interface RectangleView {
-  readonly kind: "rectangle";
-  readonly id: string;
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-  readonly unit: RectUnit;
-  readonly color: Vec3;
-}
-
-export type StageItem = DialogueView | AnimationView | RectangleView;
 
 export interface StageActions {
   readonly add: (item: StageItem) => void;
   readonly remove: (id: string) => void;
-  readonly setAnimationPlayback: (id: string, playback: AnimationPlayback) => void;
+  readonly update: (id: string, payload: unknown) => void;
 }
 
 interface StageState extends StageActions {
@@ -54,10 +26,10 @@ export function createStageStore() {
     remove: (id) => set((state) => ({
       items: state.items.filter((item) => item.id !== id),
     })),
-    setAnimationPlayback: (id, playback) => set((state) => ({
-      items: state.items.map((item) => item.id === id && item.kind === "animation"
-        ? { ...item, playback }
-        : item),
+    update: (id, payload) => set((state) => ({
+      items: state.items.map((item) =>
+        item.id === id ? { ...item, payload } : item,
+      ),
     })),
   }));
 }

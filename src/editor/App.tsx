@@ -15,17 +15,11 @@ import type {
 } from "react";
 import {
   AudioLines,
-  Calculator,
   Check,
-  Clapperboard,
-  Clock,
   Copy,
   Eraser,
-  Grid2x2,
   Grid3x3,
-  Hourglass,
   LayoutGrid,
-  MessageSquare,
   Monitor,
   MonitorPlay,
   Palette,
@@ -36,37 +30,24 @@ import {
   RotateCcw,
   SkipForward,
   SlidersHorizontal,
-  Square,
   Trash,
   TriangleAlert,
-  Video,
-  Volume2,
   X,
-  type LucideIcon,
 } from "lucide-react";
-import type {
-  BlockKind,
-  Placement,
-  Track,
-  Vec3,
-} from "./model";
+import type { Placement, Track } from "./model";
 import {
-  BLOCK_KINDS,
-  BLOCK_LABELS,
   MAX_BPM,
   MAX_GRID_SIZE,
   MIN_BPM,
   MIN_GRID_SIZE,
-  SLOT_CAPABLE_PROPERTIES,
   TRACK_COLORS,
-  boundSlotProperties,
   canPlace,
-  isDurationPlacement,
-  isMediaPlacement,
 } from "./model";
-import { generateDotGradientSVG } from "./dot-gradient";
-import { dragFadeBoundary, fadeBoundaries } from "./fade-editing";
-import type { FadeBoundary } from "./fade-editing";
+import { BLOCK_DEFINITIONS, blockDefinition, boundSlotProperties } from "./builtin-blocks";
+import type { FadeHandles } from "./block-definition";
+import { PropertyNumber, slotDisplayName } from "./blocks/panel-widgets";
+import { BlockPanel } from "./blocks/block-panel";
+import { dragFadeBoundary } from "./blocks/media-data";
 import { useExperimentStore } from "./store";
 import { allLoops, blockLoopEdges, boundaryGapPaths, maxLoopDepth, type LoopNode } from "./loops";
 import { loopLevelColor } from "./loop-colors";
@@ -141,26 +122,7 @@ const STATE_RANK: Record<BlockState, number> = {
 
 const FADE_HANDLE_PX = 10;
 
-const KIND_ICONS: Record<BlockKind, LucideIcon> = {
-  dialogue: MessageSquare,
-  camera: Video,
-  sound: Volume2,
-  animation: Clapperboard,
-  wait: Hourglass,
-  rectangle: Square,
-  addition: Calculator,
-};
-
-function BlockKindIcon({
-  kind,
-  size = 14,
-}: {
-  readonly kind: BlockKind;
-  readonly size?: number;
-}) {
-  const Icon = KIND_ICONS[kind];
-  return <Icon size={size} aria-hidden="true" />;
-}
+type FadeBoundaryKind = "fadeIn" | "fadeOut" | "shared";
 
 interface DragState {
   readonly pointerId: number;
@@ -172,13 +134,13 @@ interface DragState {
   readonly fadeIn: number;
   readonly fadeOut: number;
   readonly trackId: string;
-  readonly boundary?: FadeBoundary;
+  readonly boundaryKind?: FadeBoundaryKind;
 }
 
 interface CreationState {
   readonly pointerId: number;
   readonly trackId: string;
-  readonly kind: BlockKind;
+  readonly kind: string;
   readonly anchor: number;
   readonly current: number;
 }
@@ -268,8 +230,7 @@ export function App() {
   const setCooperativeSkip = useExperimentStore(
     (state) => state.setCooperativeSkip,
   );
-  const setFadeIn = useExperimentStore((state) => state.setFadeIn);
-  const setFadeOut = useExperimentStore((state) => state.setFadeOut);
+  const editBlockData = useExperimentStore((state) => state.editBlockData);
   const bpm = useExperimentStore((state) => state.bpm);
   const setBpm = useExperimentStore((state) => state.setBpm);
   const addLoopForBlock = useExperimentStore((state) => state.addLoopForBlock);
@@ -280,17 +241,8 @@ export function App() {
   const gridRows = useExperimentStore((state) => state.gridRows);
   const setGridColumns = useExperimentStore((state) => state.setGridColumns);
   const setGridRows = useExperimentStore((state) => state.setGridRows);
-  const setRectUnit = useExperimentStore((state) => state.setRectUnit);
-  const setDuration = useExperimentStore((state) => state.setDuration);
-  const setDurationUnit = useExperimentStore((state) => state.setDurationUnit);
-  const setSyncBeatsToCellSpan = useExperimentStore(
-    (state) => state.setSyncBeatsToCellSpan,
-  );
-  const setRectValue = useExperimentStore((state) => state.setRectValue);
-  const setRectColor = useExperimentStore((state) => state.setRectColor);
-  const setAdditionInput = useExperimentStore(
-    (state) => state.setAdditionInput,
-  );
+  const stageSpan = useExperimentStore((state) => state.stageSpan);
+  const setStageSpan = useExperimentStore((state) => state.setStageSpan);
   const workspace = useExperimentStore((state) => state.workspace);
   const setWorkspace = useExperimentStore((state) => state.setWorkspace);
   const [creation, setCreation] = useState<CreationState | null>(null);
@@ -301,7 +253,6 @@ export function App() {
   const [loopDrag, setLoopDrag] = useState<LoopDragState | null>(null);
   const [run, setRun] = useState<RunState | null>(null);
   const [activity, setActivity] = useState<string | null>(null);
-  const [stageSpan, setStageSpan] = useState(0);
   const sessionRef = useRef<TimelineSession | null>(null);
   const loopBarRef = useRef<HTMLDivElement | null>(null);
 
@@ -455,14 +406,18 @@ export function App() {
   );
   const blockingLabels = (run?.snapshot.blockingBlockIds ?? []).map((id) => {
     const placement = blocksById[id];
-    return `${BLOCK_LABELS[placement.kind]}@${placement.start}`;
+    return `${blockDefinition(placement.kind).label}@${placement.start}`;
   });
 
   const selected = blocks.find((block) => block.id === selectedId) ?? null;
+  const selectedDefinition =
+    selected === null ? null : blockDefinition(selected.kind);
   const menuBlock =
     menu?.kind === "block"
       ? (blocks.find((block) => block.id === menu.blockId) ?? null)
       : null;
+  const menuBlockDefinition =
+    menuBlock === null ? null : blockDefinition(menuBlock.kind);
   const menuTrack =
     menu?.kind === "track"
       ? (tracks.find((track) => track.id === menu.trackId) ?? null)
@@ -471,18 +426,6 @@ export function App() {
     menu?.kind === "loop"
       ? (loopRegions.find((node) => node.id === menu.loopId) ?? null)
       : null;
-  const selectedDuration =
-    selected && isDurationPlacement(selected)
-      ? roundTo(
-          selected.syncBeatsToCellSpan ? selected.length : selected.duration,
-          3,
-        )
-      : 0;
-  const selectedRect = selected?.kind === "rectangle" ? selected : null;
-  const selectedAddition = selected?.kind === "addition" ? selected : null;
-  const rectMax = selectedRect?.rectUnit === "pixels" ? 4096 : 512;
-  const rectMinSize = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
-  const rectStep = selectedRect?.rectUnit === "pixels" ? 1 : 0.25;
 
   const rows = useMemo(() => timelineRows(tracks, slots), [tracks, slots]);
   const wires = useMemo(
@@ -891,6 +834,9 @@ export function App() {
   const previewRowIndex = creation
     ? trackRowIndex(rows, creation.trackId)
     : -1;
+  const previewDefinition = creation
+    ? blockDefinition(creation.kind)
+    : null;
   const previewValid =
     creation !== null &&
     canPlace(tracks, blocks, {
@@ -941,19 +887,23 @@ export function App() {
       <header className="toolbar">
         {isStaging ? (
           <div className="palette" role="group" aria-label="Block kinds">
-            {BLOCK_KINDS.map((kind) => (
-              <button
-                type="button"
-                key={kind}
-                className={`palette-button palette-${kind}${kind === selectedKind ? " is-active" : ""}`}
-                aria-pressed={kind === selectedKind}
-                disabled={!editable}
-                onClick={() => setKind(kind)}
-              >
-                <BlockKindIcon kind={kind} />
-                {BLOCK_LABELS[kind]}
-              </button>
-            ))}
+            {BLOCK_DEFINITIONS.map((definition) => {
+              const Icon = definition.icon;
+              return (
+                <button
+                  type="button"
+                  key={definition.kind}
+                  className={`palette-button${definition.kind === selectedKind ? " is-active" : ""}`}
+                  style={{ "--block-color": definition.color } as CSSProperties}
+                  aria-pressed={definition.kind === selectedKind}
+                  disabled={!editable}
+                  onClick={() => setKind(definition.kind)}
+                >
+                  <Icon size={14} aria-hidden="true" />
+                  {definition.label}
+                </button>
+              );
+            })}
           </div>
         ) : null}
         <div className="transport">
@@ -1328,9 +1278,9 @@ export function App() {
                           onContextMenu={(event) => openBlockContextMenu(event, block)}
                         />
                       ))}
-                      {creation && previewSpan ? (
+                      {creation && previewSpan && previewDefinition ? (
                         <div
-                          className={`block block-${creation.kind} is-preview${previewValid ? "" : " is-invalid"}`}
+                          className={`block is-preview${previewValid ? "" : " is-invalid"}`}
                           style={{
                             left: previewSpan.left,
                             top:
@@ -1342,12 +1292,16 @@ export function App() {
                               ) + BLOCK_INSET,
                             width: previewSpan.width,
                             height: TRACK_HEIGHT - 2 * BLOCK_INSET,
-                          }}
+                            "--block-color": previewDefinition.color,
+                          } as CSSProperties}
                         >
                           <span className="block-label">
-                            <BlockKindIcon kind={creation.kind} size={12} />
+                            {(() => {
+                              const Icon = previewDefinition.icon;
+                              return <Icon size={12} aria-hidden="true" />;
+                            })()}
                             <span className="block-label-text">
-                              {BLOCK_LABELS[creation.kind]}
+                              {previewDefinition.label}
                             </span>
                           </span>
                         </div>
@@ -1391,9 +1345,12 @@ export function App() {
             {selected ? (
               <div className="inspector-body">
                 <div className="inspector-summary">
-                  <span className={`inspector-swatch palette-${selected.kind}`} />
+                  <span
+                    className="inspector-swatch"
+                    style={{ background: selectedDefinition?.color }}
+                  />
                   <span>
-                    {BLOCK_LABELS[selected.kind]} on{" "}
+                    {selectedDefinition?.label} on{" "}
                     {tracks.find((track) => track.id === selected.trackId)?.label ??
                       selected.trackId}
                   </span>
@@ -1404,12 +1361,12 @@ export function App() {
                     value={selected.kind}
                     disabled={!editable}
                     onChange={(event) =>
-                      setBlockKind(selected.id, event.target.value as BlockKind)
+                      setBlockKind(selected.id, event.target.value)
                     }
                   >
-                    {BLOCK_KINDS.map((kind) => (
-                      <option key={kind} value={kind}>
-                        {BLOCK_LABELS[kind]}
+                    {BLOCK_DEFINITIONS.map((definition) => (
+                      <option key={definition.kind} value={definition.kind}>
+                        {definition.label}
                       </option>
                     ))}
                   </select>
@@ -1418,356 +1375,17 @@ export function App() {
                   t={selected.start}–{selected.start + selected.length} ·{" "}
                   {selected.length} {selected.length === 1 ? "cell" : "cells"}
                 </p>
-                {selected.kind === "dialogue" ? (
-                  <p className="inspector-note">
-                    Dialogue completes with the OK button.
-                  </p>
-                ) : selected.kind === "addition" ? (
-                  <p className="inspector-note">
-                    The addition computes instantly; its output is assigned
-                    when the block ends.
-                  </p>
-                ) : (
-                  <>
-                    <div className="inspector-field">
-                      <span>Duration</span>
-                      <div className="duration-control">
-                        <PropertyNumber
-                          key={`duration-${selected.id}-${selected.durationUnit}`}
-                          value={selectedDuration}
-                          min={selected.durationUnit === "beats" ? 0.25 : 0.05}
-                          max={selected.durationUnit === "beats" ? 256 : 120}
-                          step={selected.durationUnit === "beats" ? 0.25 : 0.05}
-                          ariaLabel="Duration"
-                          disabled={!editable || selected.syncBeatsToCellSpan}
-                          onCommit={(value) => setDuration(selected.id, value)}
-                        />
-                        <div
-                          className="unit-toggle"
-                          role="group"
-                          aria-label="Duration unit"
-                        >
-                          <button
-                            type="button"
-                            className={
-                              selected.durationUnit === "beats"
-                                ? "is-active"
-                                : ""
-                            }
-                            aria-pressed={selected.durationUnit === "beats"}
-                            disabled={!editable || selected.syncBeatsToCellSpan}
-                            onClick={() =>
-                              setDurationUnit(selected.id, "beats")
-                            }
-                          >
-                            <AudioLines size={12} aria-hidden="true" />
-                            Beats
-                          </button>
-                          <button
-                            type="button"
-                            className={
-                              selected.durationUnit === "seconds"
-                                ? "is-active"
-                                : ""
-                            }
-                            aria-pressed={selected.durationUnit === "seconds"}
-                            disabled={!editable || selected.syncBeatsToCellSpan}
-                            onClick={() =>
-                              setDurationUnit(selected.id, "seconds")
-                            }
-                          >
-                            <Clock size={12} aria-hidden="true" />
-                            Seconds
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                    <label className="inspector-check">
-                      <input
-                        type="checkbox"
-                        checked={selected.syncBeatsToCellSpan}
-                        disabled={!editable}
-                        onChange={(event) =>
-                          setSyncBeatsToCellSpan(
-                            selected.id,
-                            event.target.checked,
-                          )
-                        }
-                      />
-                      Sync beats to cell span
-                    </label>
-                    {selectedAddition ? (
-                      <>
-                        <div className="rect-fields">
-                          <SlotPropertyField
-                            placementId={selectedAddition.id}
-                            field="a"
-                            label="A"
-                            value={selectedAddition.inputA}
-                            min={-1000000}
-                            max={1000000}
-                            step={1}
-                            valueKey="number"
-                            boundSlotId={selectedAddition.slotBindings?.a}
-                            trackId={selectedAddition.trackId}
-                            slots={slots}
-                            tracks={tracks}
-                            editable={editable}
-                            ariaLabel="Addition input A"
-                            onCommit={(next) =>
-                              setAdditionInput(selectedAddition.id, "a", next)
-                            }
-                          />
-                          <SlotPropertyField
-                            placementId={selectedAddition.id}
-                            field="b"
-                            label="B"
-                            value={selectedAddition.inputB}
-                            min={-1000000}
-                            max={1000000}
-                            step={1}
-                            valueKey="number"
-                            boundSlotId={selectedAddition.slotBindings?.b}
-                            trackId={selectedAddition.trackId}
-                            slots={slots}
-                            tracks={tracks}
-                            editable={editable}
-                            ariaLabel="Addition input B"
-                            onCommit={(next) =>
-                              setAdditionInput(selectedAddition.id, "b", next)
-                            }
-                          />
-                        </div>
-                        {SLOT_CAPABLE_PROPERTIES.addition
-                          .filter(
-                            (property) => property.direction === "output",
-                          )
-                          .map((property) => (
-                            <OutputSlotField
-                              key={property.key}
-                              placementId={selectedAddition.id}
-                              field={property.key}
-                              label={`${property.label} slot`}
-                              trackId={selectedAddition.trackId}
-                              boundSlotId={
-                                selectedAddition.slotBindings?.[property.key]
-                              }
-                              slots={slots}
-                              tracks={tracks}
-                              editable={editable}
-                            />
-                          ))}
-                      </>
-                    ) : null}
-                    {selectedRect ? (
-                      <>
-                        <div className="rect-fields">
-                          <SlotPropertyField
-                            placementId={selectedRect.id}
-                            field="x"
-                            label="X"
-                            value={selectedRect.x}
-                            min={0}
-                            max={rectMax}
-                            step={rectStep}
-                            valueKey={selectedRect.rectUnit}
-                            boundSlotId={selectedRect.slotBindings?.x}
-                            trackId={selectedRect.trackId}
-                            slots={slots}
-                            tracks={tracks}
-                            editable={editable}
-                            ariaLabel="Rectangle x"
-                            onCommit={(next) =>
-                              setRectValue(selectedRect.id, "x", next)
-                            }
-                          />
-                          <SlotPropertyField
-                            placementId={selectedRect.id}
-                            field="y"
-                            label="Y"
-                            value={selectedRect.y}
-                            min={0}
-                            max={rectMax}
-                            step={rectStep}
-                            valueKey={selectedRect.rectUnit}
-                            boundSlotId={selectedRect.slotBindings?.y}
-                            trackId={selectedRect.trackId}
-                            slots={slots}
-                            tracks={tracks}
-                            editable={editable}
-                            ariaLabel="Rectangle y"
-                            onCommit={(next) =>
-                              setRectValue(selectedRect.id, "y", next)
-                            }
-                          />
-                          <SlotPropertyField
-                            placementId={selectedRect.id}
-                            field="w"
-                            label="Width"
-                            value={selectedRect.w}
-                            min={rectMinSize}
-                            max={rectMax}
-                            step={rectStep}
-                            valueKey={selectedRect.rectUnit}
-                            boundSlotId={selectedRect.slotBindings?.w}
-                            trackId={selectedRect.trackId}
-                            slots={slots}
-                            tracks={tracks}
-                            editable={editable}
-                            ariaLabel="Rectangle width"
-                            onCommit={(next) =>
-                              setRectValue(selectedRect.id, "w", next)
-                            }
-                          />
-                          <SlotPropertyField
-                            placementId={selectedRect.id}
-                            field="h"
-                            label="Height"
-                            value={selectedRect.h}
-                            min={rectMinSize}
-                            max={rectMax}
-                            step={rectStep}
-                            valueKey={selectedRect.rectUnit}
-                            boundSlotId={selectedRect.slotBindings?.h}
-                            trackId={selectedRect.trackId}
-                            slots={slots}
-                            tracks={tracks}
-                            editable={editable}
-                            ariaLabel="Rectangle height"
-                            onCommit={(next) =>
-                              setRectValue(selectedRect.id, "h", next)
-                            }
-                          />
-                        </div>
-                        <div className="inspector-field">
-                          <span>Units</span>
-                          <div
-                            className="unit-toggle"
-                            role="group"
-                            aria-label="Rectangle units"
-                          >
-                            <button
-                              type="button"
-                              className={
-                                selectedRect.rectUnit === "span"
-                                  ? "is-active"
-                                  : ""
-                              }
-                              aria-pressed={selectedRect.rectUnit === "span"}
-                              disabled={!editable || stageSpan <= 0}
-                              onClick={() =>
-                                setRectUnit(selectedRect.id, "span", stageSpan)
-                              }
-                            >
-                              <Grid2x2 size={12} aria-hidden="true" />
-                              Span
-                            </button>
-                            <button
-                              type="button"
-                              className={
-                                selectedRect.rectUnit === "pixels"
-                                  ? "is-active"
-                                  : ""
-                              }
-                              aria-pressed={selectedRect.rectUnit === "pixels"}
-                              disabled={!editable || stageSpan <= 0}
-                              onClick={() =>
-                                setRectUnit(selectedRect.id, "pixels", stageSpan)
-                              }
-                            >
-                              <Monitor size={12} aria-hidden="true" />
-                              Pixels
-                            </button>
-                          </div>
-                        </div>
-                        <div className="inspector-field">
-                          <span>Color</span>
-                          <div className="rect-color">
-                            <span
-                              className="rect-color-swatch"
-                              style={{
-                                background: `rgb(${selectedRect.color[0]}, ${selectedRect.color[1]}, ${selectedRect.color[2]})`,
-                              }}
-                              aria-hidden="true"
-                            />
-                            <div className="rect-color-fields">
-                              {(["R", "G", "B"] as const).map((label, index) => (
-                                <label key={label} className="inspector-field">
-                                  <span>{label}</span>
-                                  <PropertyNumber
-                                    key={`color-${selectedRect.id}-${index}`}
-                                    value={selectedRect.color[index]}
-                                    min={0}
-                                    max={255}
-                                    step={1}
-                                    ariaLabel={`Rectangle ${label}`}
-                                    disabled={!editable}
-                                    onCommit={(value) => {
-                                      const next: Vec3 = [...selectedRect.color];
-                                      next[index] = value;
-                                      setRectColor(selectedRect.id, next);
-                                    }}
-                                  />
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                        <p className="inspector-note">
-                          Span units follow the stage grid ({gridColumns} ×{" "}
-                          {gridRows}); pixels stay fixed when the stage resizes.
-                        </p>
-                      </>
-                    ) : null}
-                    {isMediaPlacement(selected) ? (
-                      <>
-                        <label className="inspector-field">
-                          <span>Fade in</span>
-                          <PropertyNumber
-                            key={`fade-in-${selected.id}`}
-                            value={selected.fadeIn}
-                            min={0}
-                            max={selected.length}
-                            step={1}
-                            ariaLabel="Fade in"
-                            disabled={!editable}
-                            onCommit={(value) => setFadeIn(selected.id, value)}
-                          />
-                        </label>
-                        <label className="inspector-field">
-                          <span>Fade out</span>
-                          <PropertyNumber
-                            key={`fade-out-${selected.id}`}
-                            value={selected.fadeOut}
-                            min={0}
-                            max={selected.length}
-                            step={1}
-                            ariaLabel="Fade out"
-                            disabled={!editable}
-                            onCommit={(value) => setFadeOut(selected.id, value)}
-                          />
-                        </label>
-                        <p className="inspector-note">
-                          Fades are measured in cells and add barriers at their
-                          boundaries. Right-drag a media block's edge inward to
-                          set the fade, or outward to extend the block and fade
-                          the new region.
-                        </p>
-                      </>
-                    ) : null}
-                  </>
-                )}
-                <label className="inspector-check">
-                  <input
-                    type="checkbox"
-                    checked={selected.cooperativeSkip}
-                    disabled={!editable}
-                    onChange={(event) =>
-                      setCooperativeSkip(selected.id, event.target.checked)
+                {selectedDefinition === null ? null : (
+                  <BlockPanel
+                    definition={selectedDefinition}
+                    block={selected}
+                    editable={editable}
+                    update={(change) => editBlockData(selected.id, change)}
+                    setCooperativeSkip={(value) =>
+                      setCooperativeSkip(selected.id, value)
                     }
                   />
-                  Cooperative skip
-                </label>
+                )}
                 {editable ? null : (
                   <p className="inspector-note">
                     Read-only while the timeline is loaded. Reset to edit.
@@ -1799,11 +1417,11 @@ export function App() {
         </div>
         <span className="status-count">{blocks.length} blocks</span>
       </footer>
-      {menu?.kind === "block" && menuBlock ? (
+      {menu?.kind === "block" && menuBlock && menuBlockDefinition ? (
         <div
           className="context-menu"
           role="menu"
-          aria-label={`Actions for ${BLOCK_LABELS[menuBlock.kind]} at ${menuBlock.start}`}
+          aria-label={`Actions for ${menuBlockDefinition.label} at ${menuBlock.start}`}
           style={{
             left: clamp(menu.x, 8, window.innerWidth - 228),
             top: clamp(menu.y, 8, window.innerHeight - 180),
@@ -1812,8 +1430,8 @@ export function App() {
           onContextMenu={(event) => event.preventDefault()}
         >
           <div className="context-menu-title">
-            <BlockKindIcon kind={menuBlock.kind} size={12} />
-            {BLOCK_LABELS[menuBlock.kind]} at t={menuBlock.start}–
+            <menuBlockDefinition.icon size={12} aria-hidden="true" />
+            {menuBlockDefinition.label} at t={menuBlock.start}–
             {menuBlock.start + menuBlock.length}
           </div>
           <div className="context-menu-separator" role="separator" />
@@ -2067,7 +1685,8 @@ function SlotParameterPopup({
     });
   }, [blockRect, anchorX]);
 
-  const properties = SLOT_CAPABLE_PROPERTIES[block.kind];
+  const definition = blockDefinition(block.kind);
+  const properties = definition.slotProperties;
   const sameTrack = slotTrackId === null || slotTrackId === block.trackId;
 
   return (
@@ -2077,7 +1696,7 @@ function SlotParameterPopup({
       data-parameter-popup=""
       data-block-id={block.id}
       role="group"
-      aria-label={`Bind ${slotName} to ${BLOCK_LABELS[block.kind]}`}
+      aria-label={`Bind ${slotName} to ${definition.label}`}
       style={{ left: position.left, top: position.top }}
     >
       <div className="parameter-popup-caption">
@@ -2652,164 +2271,6 @@ function SlotRow({
   );
 }
 
-function SlotPropertyField({
-  placementId,
-  field,
-  label,
-  value,
-  min,
-  max,
-  step,
-  valueKey,
-  boundSlotId,
-  trackId,
-  slots,
-  tracks,
-  editable,
-  ariaLabel,
-  onCommit,
-}: {
-  placementId: string;
-  field: string;
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  valueKey: string;
-  boundSlotId: string | undefined;
-  trackId: string;
-  slots: readonly NumericSlot[];
-  tracks: readonly Track[];
-  editable: boolean;
-  ariaLabel: string;
-  onCommit: (value: number) => void;
-}) {
-  const setSlotBinding = useExperimentStore((state) => state.setSlotBinding);
-  const { local, shared } = slotChoices(slots, tracks, trackId);
-  const missingBound =
-    boundSlotId !== undefined &&
-    ![...local, ...shared].some(({ slot }) => slot.id === boundSlotId);
-
-  return (
-    <div className="inspector-field">
-      <label htmlFor={`property-${placementId}-${field}-source`}>
-        {label}
-      </label>
-      <select
-        id={`property-${placementId}-${field}-source`}
-        className="rect-source"
-        aria-label={`${ariaLabel} source`}
-        value={boundSlotId ?? ""}
-        disabled={!editable}
-        onChange={(event) => {
-          const next = event.target.value;
-          setSlotBinding(placementId, field, next === "" ? null : next);
-        }}
-      >
-        <option value="">Number</option>
-        {local.length > 0 ? (
-          <optgroup label="Track slots">
-            {local.map(({ slot, name }) => (
-              <option key={slot.id} value={slot.id}>
-                {name}
-              </option>
-            ))}
-          </optgroup>
-        ) : null}
-        {shared.length > 0 ? (
-          <optgroup label="Shared slots">
-            {shared.map(({ slot, name }) => (
-              <option key={slot.id} value={slot.id}>
-                {name}
-              </option>
-            ))}
-          </optgroup>
-        ) : null}
-        {missingBound ? (
-          <option value={boundSlotId}>{`${boundSlotId} (unavailable)`}</option>
-        ) : null}
-      </select>
-      <PropertyNumber
-        key={`property-${field}-${placementId}-${valueKey}`}
-        value={roundTo(value, 3)}
-        min={min}
-        max={max}
-        step={step}
-        ariaLabel={ariaLabel}
-        disabled={!editable || boundSlotId !== undefined}
-        onCommit={onCommit}
-      />
-    </div>
-  );
-}
-
-function OutputSlotField({
-  placementId,
-  field,
-  label,
-  trackId,
-  boundSlotId,
-  slots,
-  tracks,
-  editable,
-}: {
-  placementId: string;
-  field: string;
-  label: string;
-  trackId: string;
-  boundSlotId: string | undefined;
-  slots: readonly NumericSlot[];
-  tracks: readonly Track[];
-  editable: boolean;
-}) {
-  const setSlotBinding = useExperimentStore((state) => state.setSlotBinding);
-  const { local, shared } = slotChoices(slots, tracks, trackId);
-  const missingBound =
-    boundSlotId !== undefined &&
-    ![...local, ...shared].some(({ slot }) => slot.id === boundSlotId);
-
-  return (
-    <div className="inspector-field">
-      <label htmlFor={`property-${placementId}-${field}-output`}>{label}</label>
-      <select
-        id={`property-${placementId}-${field}-output`}
-        className="rect-source"
-        aria-label={`${label} slot`}
-        value={boundSlotId ?? ""}
-        disabled={!editable}
-        onChange={(event) => {
-          const next = event.target.value;
-          setSlotBinding(placementId, field, next === "" ? null : next);
-        }}
-      >
-        <option value="">None</option>
-        {local.length > 0 ? (
-          <optgroup label="Track slots">
-            {local.map(({ slot, name }) => (
-              <option key={slot.id} value={slot.id}>
-                {name}
-              </option>
-            ))}
-          </optgroup>
-        ) : null}
-        {shared.length > 0 ? (
-          <optgroup label="Shared slots">
-            {shared.map(({ slot, name }) => (
-              <option key={slot.id} value={slot.id}>
-                {name}
-              </option>
-            ))}
-          </optgroup>
-        ) : null}
-        {missingBound ? (
-          <option value={boundSlotId}>{`${boundSlotId} (unavailable)`}</option>
-        ) : null}
-      </select>
-    </div>
-  );
-}
-
 function BlockView({
   block,
   rows,
@@ -2837,16 +2298,28 @@ function BlockView({
   const resize = useExperimentStore((store) => store.resize);
   const setSpan = useExperimentStore((store) => store.setSpan);
   const select = useExperimentStore((store) => store.select);
+  const editBlockData = useExperimentStore((store) => store.editBlockData);
   const drag = useRef<DragState | null>(null);
   const suppressEdgeMenu = useRef(false);
   const [dragging, setDragging] = useState(false);
 
   const trackIndex = trackRowIndex(rows, block.trackId);
-  const isMedia = isMediaPlacement(block);
+  const definition = blockDefinition(block.kind);
+  const updateData = (change: (data: unknown) => unknown) =>
+    editBlockData(block.id, change);
+  const currentBlock = () =>
+    useExperimentStore.getState().blocks.find((candidate) => candidate.id === block.id) ??
+    block;
+  const currentHandles = () =>
+    definition.fadeHandles?.(currentBlock(), updateData) ?? null;
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button === 2) {
-      if (!editable || !isMedia) {
+      if (!editable) {
+        return;
+      }
+      const handles = definition.fadeHandles?.(block, updateData) ?? null;
+      if (handles === null) {
         return;
       }
       const rect = event.currentTarget.getBoundingClientRect();
@@ -2871,8 +2344,8 @@ function BlockView({
         originY: event.clientY,
         start: block.start,
         length: block.length,
-        fadeIn: block.fadeIn,
-        fadeOut: block.fadeOut,
+        fadeIn: handles.fadeIn,
+        fadeOut: handles.fadeOut,
         trackId: block.trackId,
       };
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -2890,9 +2363,17 @@ function BlockView({
     }
     const target = event.target as HTMLElement;
     const handle = target.dataset.handle;
-    const boundary = isMedia
-      ? fadeBoundaries(block).find((phase) => phase.boundary === target.dataset.boundary)?.boundary
-      : undefined;
+    const handles = definition.fadeHandles?.(block, updateData) ?? null;
+    const boundaryIndex =
+      handles === null ? undefined : Number(target.dataset.boundary);
+    const boundaryOffset =
+      boundaryIndex === undefined || Number.isNaN(boundaryIndex)
+        ? undefined
+        : definition.phaseBoundaries?.(block)[boundaryIndex];
+    const boundaryKind =
+      handles !== null && boundaryOffset !== undefined
+        ? fadeBoundaryKind(handles, boundaryOffset, block.length)
+        : undefined;
     drag.current = {
       pointerId: event.pointerId,
       mode:
@@ -2905,10 +2386,10 @@ function BlockView({
       originY: event.clientY,
       start: block.start,
       length: block.length,
-      fadeIn: isMedia ? block.fadeIn : 0,
-      fadeOut: isMedia ? block.fadeOut : 0,
+      fadeIn: handles?.fadeIn ?? 0,
+      fadeOut: handles?.fadeOut ?? 0,
       trackId: block.trackId,
-      boundary,
+      boundaryKind,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     setDragging(true);
@@ -2929,13 +2410,30 @@ function BlockView({
       current.originX - rowsRect.left,
       event.clientX - rowsRect.left,
     );
-    if (current.boundary !== undefined) {
-      const origin = current.boundary === "fadeOut"
-        ? current.length - current.fadeOut
+    if (current.boundaryKind !== undefined) {
+      const handles = currentHandles();
+      if (handles === null) {
+        return;
+      }
+      const length = current.length;
+      const origin = current.boundaryKind === "fadeOut"
+        ? length - current.fadeOut
         : current.fadeIn;
-      setSpan(block.id, current.start, current.length, dragFadeBoundary(
-        current.boundary, origin + delta, current.length, current.fadeIn, current.fadeOut,
-      ));
+      const fades = dragFadeBoundary(
+        current.boundaryKind,
+        origin + delta,
+        length,
+        current.fadeIn,
+        current.fadeOut,
+      );
+      if (current.boundaryKind === "fadeIn") {
+        handles.setFadeIn(fades.fadeIn);
+      } else if (current.boundaryKind === "fadeOut") {
+        handles.setFadeOut(fades.fadeOut);
+      } else {
+        handles.setFadeIn(fades.fadeIn);
+        handles.setFadeOut(fades.fadeOut);
+      }
       return;
     }
     if (current.mode === "resizeStart") {
@@ -2947,27 +2445,27 @@ function BlockView({
     if (current.mode === "fadeIn" || current.mode === "fadeOut") {
       if (current.mode === "fadeIn") {
         if (delta >= 0) {
-          setSpan(block.id, current.start, current.length, { fadeIn: delta });
+          currentHandles()?.setFadeIn(delta);
         } else {
           const start = Math.max(0, current.start + delta);
           const extra = current.start - start;
-          setSpan(block.id, start, current.length + extra, {
-            fadeIn: current.fadeIn + extra,
-          });
+          if (setSpan(block.id, start, current.length + extra)) {
+            currentHandles()?.setFadeIn(current.fadeIn + extra);
+          }
         }
         return;
       }
       if (delta <= 0) {
-        setSpan(block.id, current.start, current.length, { fadeOut: -delta });
+        currentHandles()?.setFadeOut(-delta);
       } else {
         const length = Math.min(
           current.length + delta,
           Math.max(current.length, columnCount - current.start),
         );
         const extra = length - current.length;
-        setSpan(block.id, current.start, length, {
-          fadeOut: current.fadeOut + extra,
-        });
+        if (setSpan(block.id, current.start, length)) {
+          currentHandles()?.setFadeOut(current.fadeOut + extra);
+        }
       }
       return;
     }
@@ -3014,8 +2512,7 @@ function BlockView({
   );
   const className = [
     "block",
-    `block-${block.kind}`,
-    isMedia ? "is-media" : "",
+    definition.fadeHandles !== undefined ? "is-media" : "",
     selected ? "is-selected" : "",
     dragging ? "is-dragging" : "",
     state ? `is-${state}` : "",
@@ -3036,13 +2533,15 @@ function BlockView({
     onContextMenu(event);
   };
 
-  const fadeTitle = isMedia
-    ? `Fade in ${block.fadeIn}, fade out ${block.fadeOut} (cells)`
-    : "";
+  const handles = definition.fadeHandles?.(block, updateData) ?? null;
+  const fadeTitle = handles === null
+    ? ""
+    : `Fade in ${handles.fadeIn}, fade out ${handles.fadeOut} (cells)`;
   const title =
     [block.cooperativeSkip ? "Cooperative skip" : "", fadeTitle]
       .filter(Boolean)
       .join(" · ") || undefined;
+  const Icon = definition.icon;
 
   return (
     <div
@@ -3053,7 +2552,8 @@ function BlockView({
         top: rowTop(rows, trackIndex, TRACK_HEIGHT, SLOT_HEIGHT) + BLOCK_INSET,
         width: span.width,
         height: TRACK_HEIGHT - 2 * BLOCK_INSET,
-      }}
+        "--block-color": definition.color,
+      } as CSSProperties}
       title={title}
       onContextMenu={handleContextMenu}
       onPointerDown={handlePointerDown}
@@ -3061,49 +2561,10 @@ function BlockView({
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
     >
-      {isMedia ? (
-        <>
-          {block.fadeIn > 0 ? (
-            <FadeSurface
-              className="block-fade block-fade-in"
-              cells={block.fadeIn}
-              length={block.length}
-              blockWidth={span.width}
-              inward
-            />
-          ) : null}
-          {block.fadeOut > 0 ? (
-            <FadeSurface
-              className="block-fade block-fade-out"
-              cells={block.fadeOut}
-              length={block.length}
-              blockWidth={span.width}
-              inward={false}
-            />
-          ) : null}
-          <span
-            className="block-body-surface"
-            style={{
-              left: `${block.fadeIn / block.length * 100}%`,
-              width: `${(block.length - block.fadeIn - block.fadeOut) / block.length * 100}%`,
-            }}
-            aria-hidden="true"
-          />
-          {fadeBoundaries(block).map((phase) => (
-              <span
-                key={phase.boundary}
-                className={`block-phase-boundary${editable ? " is-editable" : ""}`}
-                data-boundary={phase.boundary}
-                style={{ left: `${(phase.offset / block.length) * 100}%` }}
-                title="Drag to move phase boundary"
-                aria-hidden="true"
-              />
-            ))}
-        </>
-      ) : null}
+      {definition.renderBlock?.(block, span.width) ?? null}
       <span className="block-label">
-        <BlockKindIcon kind={block.kind} size={12} />
-        <span className="block-label-text">{BLOCK_LABELS[block.kind]}</span>
+        <Icon size={12} aria-hidden="true" />
+        <span className="block-label-text">{definition.label}</span>
       </span>
       {editable ? (
         <>
@@ -3131,115 +2592,6 @@ function RowTiles({ layout }: { layout: TimelineLayout }) {
       ))}
     </span>
   );
-}
-
-function FadeSurface({ className, cells, length, blockWidth, inward }: {
-  className: string;
-  cells: number;
-  length: number;
-  blockWidth: number;
-  inward: boolean;
-}) {
-  const maskImage = useMemo(() => {
-    const width = blockWidth * cells / length;
-    const svg = generateDotGradientSVG(
-      Math.ceil(width / 6) * 6,
-      TRACK_HEIGHT - 2 * BLOCK_INSET,
-      6,
-      inward ? 0.25 : 4.5, inward ? 4.5 : 0.25);
-    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-  }, [cells, length, blockWidth, inward]);
-  return <span className={className} style={{ width: `${cells / length * 100}%`, maskImage }} aria-hidden="true" />;
-}
-
-function PropertyNumber({
-  value,
-  min,
-  max,
-  step = 1,
-  disabled,
-  ariaLabel,
-  onCommit,
-}: {
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  disabled: boolean;
-  ariaLabel?: string;
-  onCommit: (value: number) => void;
-}) {
-  const [draft, setDraft] = useState(String(value));
-
-  useLayoutEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  const commit = () => {
-    const parsed = Number.parseFloat(draft);
-    if (!Number.isFinite(parsed)) {
-      setDraft(String(value));
-      return;
-    }
-    onCommit(clamp(parsed, min, max));
-    setDraft(String(value));
-  };
-
-  return (
-    <input
-      type="number"
-      className="inspector-number"
-      aria-label={ariaLabel}
-      value={draft}
-      min={min}
-      max={max}
-      step={step}
-      disabled={disabled}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          commit();
-          event.currentTarget.blur();
-        }
-      }}
-    />
-  );
-}
-
-function slotChoices(
-  slots: readonly NumericSlot[],
-  tracks: readonly Track[],
-  trackId: string,
-): {
-  local: { slot: NumericSlot; name: string }[];
-  shared: { slot: NumericSlot; name: string }[];
-} {
-  const available = slots
-    .map((slot, index) => ({ slot, name: slotDisplayName(slot, index, tracks) }))
-    .filter(({ slot }) => slot.trackId === null || slot.trackId === trackId);
-  return {
-    local: available.filter(({ slot }) => slot.trackId !== null),
-    shared: available.filter(({ slot }) => slot.trackId === null),
-  };
-}
-
-function slotDisplayName(
-  slot: NumericSlot,
-  index: number,
-  tracks: readonly Track[],
-): string {
-  const configured = slot.name?.trim();
-  if (configured !== undefined && configured !== "") {
-    return configured;
-  }
-  if (slot.trackId === null) {
-    return `Shared slot ${index + 1}`;
-  }
-  const track = tracks.find((candidate) => candidate.id === slot.trackId);
-  return track === undefined
-    ? `Slot ${index + 1}`
-    : `Slot ${index + 1} on ${track.label}`;
 }
 
 function formatSlotValidation(
@@ -3326,7 +2678,17 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-function roundTo(value: number, decimals: number): number {
-  const factor = 10 ** decimals;
-  return Math.round(value * factor) / factor;
+function fadeBoundaryKind(
+  handles: FadeHandles,
+  offset: number,
+  length: number,
+): FadeBoundaryKind {
+  if (
+    handles.fadeIn > 0 &&
+    handles.fadeOut > 0 &&
+    handles.fadeIn + handles.fadeOut === length
+  ) {
+    return "shared";
+  }
+  return offset === handles.fadeIn ? "fadeIn" : "fadeOut";
 }

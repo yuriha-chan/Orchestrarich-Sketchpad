@@ -31,9 +31,11 @@ applied before the rectangle reads its inputs.
 
 Slot values can be dragged. Dragging a value pill or a rail dot onto a block
 shows that block's slot-capable parameters; dropping on one binds the property
-to the slot, like the inspector's source selector. The capable parameters are
-per-kind data in `SLOT_CAPABLE_PROPERTIES`; only rectangle geometry is capable
-in the current slice. A track-local slot can bind only within its track.
+to the slot, like the inspector's source selector. Each block definition
+declares its capable parameters in `slotProperties`, looked up through
+`blockDefinition(kind)`; only rectangle geometry and the addition inputs/output
+are capable in the current slice. A track-local slot can bind only within its
+track.
 
 A reference is also drawn on the timeline: a 4 px rail-colored line runs from the
 block's bottom edge down to the slot's row, so a wire never runs along a block
@@ -62,9 +64,9 @@ so the rail shows the block replacing the previous value.
 
 An addition block reads two numeric inputs and outputs their sum. The output is
 defined exactly like an input: it is a slot-capable property with direction
-`output` in the per-kind table, its binding is stored in `slotBindings` under
-that key, and the inspector lists it as a slot selector. The addition has no
-duration; it computes on its start and completes at once. The block does not
+`output` in the addition definition's `slotProperties`, its binding is stored in
+`slotBindings` under that key, and the inspector lists it as a slot selector.
+The addition has no duration; it computes on its start and completes at once. The block does not
 write the slot itself: its execution resolves with the output value, and the
 runner assigns that value to the bound slot when the block reaches its end time.
 Blocks starting at or after the addition's end time therefore read it.

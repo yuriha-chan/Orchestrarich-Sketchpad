@@ -18,7 +18,7 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
   palette, grid, stage, and selection status. Preview hides the grid and the
   editing controls and gives the stage the available space. The workspace is
   UI state; the document, selection, and running session are shared.
-- Per-kind execution, for observation only:
+- Execution behavior owned by each block definition, for observation only:
   - Dialogue shows a dialog with the text "lazy dog jumps ..." and an OK button
     in the stage below the timeline. Pressing OK completes the block. Dialogue
     has no duration property.
@@ -192,9 +192,10 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     and it is locked while a run is loaded.
 14. Wait is a timed block kind with no stage effect; it only occupies logical
     time. Because the kind is part of the stored document, changing a block's
-    kind keeps a timed block's duration but gives a dialogue that becomes timed
-    the duration of its cell span in beats, and a timed block that becomes a
-    dialogue loses its duration properties.
+    kind goes through the target definition's `convertFrom`: it keeps a timed
+    block's duration but gives a dialogue that becomes timed the duration of its
+    cell span in beats, and a timed block that becomes a dialogue loses its
+    duration properties.
 15. Barrier check times are the distinct block end times plus the loop start
     and end marker times, not every unit cell.
     `barrierSpan(t)` returns the span between the previous check time at or
@@ -259,33 +260,37 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     snapshot) instead of correlated nullable fields. Editing commands with
     an unknown id are a deliberate no-op centralized in `editBlock`. This
     refactor does not change observable behavior.
-24. Media classification and multi-phase structure are independent. The compiler
-    currently builds multi-phase definitions for media placements, but the
-    structural expansion uses `ExecutionStructure` and `isMultiPhase`, not the
-    media-kind predicate. A non-media multi-phase definition is structurally valid;
-    no additional palette kind or phase editor is introduced.
+24. Media classification and multi-phase structure are independent. A block
+    definition exposes optional phases; the media definitions derive them from
+    fade boundaries, but the structural expansion uses `ExecutionStructure` and
+    `isMultiPhase`, not a media-kind predicate. A non-media multi-phase
+    definition is structurally valid; no additional palette kind or phase editor
+    is introduced.
 25. A placement is document data, not an execution instance. Each container start
     allocates a distinct runtime identity referencing its definition. Phases share
     that instance until finalization; dialogue UI callbacks belong to the instance.
     Re-executing the same placement creates another identity. The runner remains
     one-shot; loop scheduling is not implemented by this change.
 26. The block itself modifies UI state; the stage does not derive effects from
-    runner state. Each App owns a stage store containing typed presentation
-    entries: dialogue text and a confirmation callback, or animation label,
-    duration, fade fractions, and playback position/playing state. No entry contains a placement, runner snapshot,
-    or execution definition. Dialogue execution supplies the callback that removes
-    its dialog and resolves its Promise; there is no public `advanceDialogue`
-    session command. Animation execution adds its entry once, and container
-    termination removes it. Reset/disposal also invokes the owned presentation
-    cleanup. Start/finalization telemetry is not a stage rendering input.
+    runner state. Each App owns a stage store containing stage items with an id,
+    a kind, a screen/card layer, and an opaque payload. Each block module owns
+    its payload shape: dialogue text and a confirmation callback, or animation
+    label, duration, fade fractions, and playback position/playing state. No
+    entry contains a placement, runner snapshot, or execution definition.
+    Dialogue execution supplies the callback that removes its dialog and
+    resolves its Promise; there is no public `advanceDialogue` session command.
+    Animation execution adds its entry once, and container termination removes
+    it. Reset/disposal also invokes the owned presentation cleanup.
+    Start/finalization telemetry is not a stage rendering input.
 27. Runtime behavior is polymorphic through `ExecutionInstance`: the session
     invokes phase start, phase termination, and container termination without
     kind-specific effect branches. `TimedExecution` owns timers and skip handling;
     `MediaExecution` extends it to own media initialization, phase playback/hold,
     and presentation termination. An animation presentation adapter supplies fade
     data and stage commands. Sound also uses the media subtype but has no output
-    adapter while its effect remains timer-only. Kind dispatch is confined to the
-     execution factory. Multi-phase structure remains independent of this hierarchy.
+    adapter while its effect remains timer-only. Each definition supplies its own
+    `createExecution`, so there is no kind dispatch in the session. Multi-phase
+    structure remains independent of this hierarchy.
 28. The grid's colored fade surfaces use `src/editor/dot-gradient.ts` as an alpha
     mask image, not a dark dot overlay. Dot radii follow the supplied linear
     interpolation from small dots at the outer edge to overlapping dots at the
@@ -308,9 +313,9 @@ Can the 1-A execution engine drive the 1-B grid so that logical time, blocking b
     Geometry is edited numerically in the inspector for now; a stage drag
     gesture is not introduced.
 
-30. Slot-capable properties are declared as per-kind data in
-    `SLOT_CAPABLE_PROPERTIES`; consumers look up that table instead of
-    branching on block kind. Dragging a slot value pill or a rail dot onto a
+30. Slot-capable properties are declared by each block definition in
+    `slotProperties`; consumers look them up through `blockDefinition(kind)`
+    instead of branching on block kind. Dragging a slot value pill or a rail dot onto a
     block opens a drop-area popup directly above the block with no gap, so the
     pointer can move from the block into the popup without losing it. Each
     capable property is a large drop target in a grid; a property already

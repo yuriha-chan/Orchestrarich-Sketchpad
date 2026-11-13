@@ -1,15 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumericSlot } from "../core/slots/numeric-slots";
-import {
-  DEFAULT_RECT_COLOR,
-  DEFAULT_RECT_GEOMETRY,
-  type AdditionPlacement,
-  type Placement,
-  type RectanglePlacement,
-  type TimedPlacement,
-  type Track,
-} from "./model";
+import type { Placement, Track } from "./model";
 import { outputWires, slotWires, type SlotWireLayout } from "./slot-wires";
 import { buildTimelineLayout } from "./timeline-layout";
 import { timelineRows } from "./timeline-rows";
@@ -35,53 +27,36 @@ const layout: SlotWireLayout = {
   loops: [],
 };
 
-function rectangle(
-  overrides: Partial<RectanglePlacement> & {
-    id: string;
-    trackId: string;
-    start: number;
-  },
-): RectanglePlacement {
+type BlockOverrides = {
+  id: string;
+  trackId: string;
+  start?: number;
+  length?: number;
+  slotBindings?: Partial<Record<string, string>>;
+};
+
+function block(kind: string, overrides: BlockOverrides): Placement {
+  const { start = 0, ...rest } = overrides;
   return {
-    kind: "rectangle",
+    kind,
+    data: {},
+    start,
     length: 1,
     cooperativeSkip: false,
-    duration: 1,
-    durationUnit: "beats",
-    syncBeatsToCellSpan: false,
-    ...DEFAULT_RECT_GEOMETRY,
-    color: DEFAULT_RECT_COLOR,
-    ...overrides,
+    ...rest,
   };
 }
 
-function camera(
-  overrides: Partial<TimedPlacement> & { id: string; trackId: string },
-): TimedPlacement {
-  return {
-    kind: "camera",
-    start: 0,
-    length: 1,
-    cooperativeSkip: false,
-    duration: 1,
-    durationUnit: "beats",
-    syncBeatsToCellSpan: false,
-    ...overrides,
-  };
+function rectangle(overrides: BlockOverrides): Placement {
+  return block("rectangle", overrides);
 }
 
-function addition(
-  overrides: Partial<AdditionPlacement> & { id: string; trackId: string },
-): AdditionPlacement {
-  return {
-    kind: "addition",
-    start: 0,
-    length: 1,
-    cooperativeSkip: false,
-    inputA: 0,
-    inputB: 0,
-    ...overrides,
-  };
+function camera(overrides: BlockOverrides): Placement {
+  return block("camera", overrides);
+}
+
+function addition(overrides: BlockOverrides): Placement {
+  return block("addition", overrides);
 }
 
 describe("slotWires", () => {

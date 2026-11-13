@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { validateNumericSlotReads } from "../core/slots/numeric-slots";
 import { slotReads } from "./execution";
-import { DEFAULT_RECT_COLOR, DEFAULT_TRACKS, TRACK_COLORS, type RectanglePlacement } from "./model";
+import { DEFAULT_TRACKS, TRACK_COLORS, type DurationUnit, type Placement, type Vec3 } from "./model";
+import { DEFAULT_RECT_COLOR, type RectangleData } from "./blocks/rectangle";
+import type { DurationData } from "./blocks/duration-data";
+import type { AdditionData } from "./blocks/addition";
+import { convertRectUnit } from "./stage-geometry";
 import { useExperimentStore } from "./store";
 
 function resetStore(): void {
@@ -41,14 +45,127 @@ function createRectangle(
   return blocks[blocks.length - 1].id;
 }
 
-function rectangle(id: string): RectanglePlacement {
+function rectangle(id: string): Placement<RectangleData> & RectangleData {
   const block = useExperimentStore
     .getState()
     .blocks.find((candidate) => candidate.id === id);
-  if (block === undefined || block.kind !== "rectangle") {
+  if (block === undefined) {
     throw new Error(`rectangle ${id} not found`);
   }
-  return block;
+  return { ...block, data: block.data as RectangleData, ...(block.data as RectangleData) };
+}
+
+function editData(id: string, update: (data: unknown) => unknown): void {
+  useExperimentStore.getState().editBlockData(id, update);
+}
+
+function blockById(id: string): Placement | undefined {
+  return useExperimentStore
+    .getState()
+    .blocks.find((candidate) => candidate.id === id);
+}
+
+function setRectValue(
+  id: string,
+  field: "x" | "y" | "w" | "h",
+  value: number,
+): void {
+  editData(id, (data) => {
+    const current = data as RectangleData;
+    if (!Number.isFinite(value)) {
+      return current;
+    }
+    if (field === "x" || field === "y") {
+      return value < 0 ? current : { ...current, [field]: value };
+    }
+    return value <= 0 ? current : { ...current, [field]: value };
+  });
+}
+
+function setRectUnit(
+  id: string,
+  unit: "span" | "pixels",
+  span: number,
+): void {
+  editData(id, (data) => {
+    const current = data as RectangleData;
+    return current.rectUnit === unit
+      ? current
+      : { ...current, ...convertRectUnit(current, unit, span) };
+  });
+}
+
+function setRectColor(id: string, color: Vec3): void {
+  editData(id, (data) => {
+    const current = data as RectangleData;
+    if (!color.every(Number.isFinite)) {
+      return current;
+    }
+    const channel = (value: number) =>
+      Math.min(255, Math.max(0, Math.round(value)));
+    return {
+      ...current,
+      color: [channel(color[0]), channel(color[1]), channel(color[2])],
+    };
+  });
+}
+
+function setDuration(id: string, value: number): void {
+  editData(id, (data) => {
+    const current = data as DurationData;
+    if (
+      current.syncBeatsToCellSpan ||
+      !Number.isFinite(value) ||
+      value <= 0
+    ) {
+      return current;
+    }
+    return { ...current, duration: value };
+  });
+}
+
+function setDurationUnit(id: string, unit: DurationUnit): void {
+  const bpm = useExperimentStore.getState().bpm;
+  editData(id, (data) => {
+    const current = data as DurationData;
+    if (current.syncBeatsToCellSpan || current.durationUnit === unit) {
+      return current;
+    }
+    const converted =
+      unit === "beats"
+        ? (current.duration * bpm) / 60
+        : (current.duration * 60) / bpm;
+    return { ...current, duration: converted, durationUnit: unit };
+  });
+}
+
+function setSyncBeatsToCellSpan(id: string, value: boolean): void {
+  const block = blockById(id);
+  if (block === undefined) {
+    return;
+  }
+  editData(id, (data) => {
+    const current = data as DurationData;
+    return value
+      ? { ...current, syncBeatsToCellSpan: true, durationUnit: "beats", duration: block.length }
+      : { ...current, syncBeatsToCellSpan: false };
+  });
+}
+
+function setAdditionInput(
+  id: string,
+  field: "a" | "b",
+  value: number,
+): void {
+  editData(id, (data) => {
+    const current = data as { inputA: number; inputB: number };
+    if (!Number.isFinite(value)) {
+      return current;
+    }
+    return field === "a"
+      ? { ...current, inputA: value }
+      : { ...current, inputB: value };
+  });
 }
 
 function slotById(id: string) {
@@ -266,7 +383,7 @@ describe("rectangle slot selection", () => {
 
   it("switches a field back to its previous immediate number", () => {
     const rectangleId = createRectangle();
-    useExperimentStore.getState().setRectValue(rectangleId, "x", 4);
+    setRectValue(rectangleId, "x", 4);
     const slotId = addSlot(null);
 
     useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
@@ -285,7 +402,7 @@ describe("rectangle slot selection", () => {
     useExperimentStore.getState().initializeSlot(slotId, 0, [], 3);
     useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
 
-    useExperimentStore.getState().setRectUnit(rectangleId, "pixels", 20);
+    setRectUnit(rectangleId, "pixels", 20);
 
     expect(slotById(slotId).initializations).toEqual([{ boundary: 0, path: [], value: 3 }]);
     expect(rectangle(rectangleId).slotBindings?.x).toBe(slotId);
@@ -613,7 +730,7 @@ describe("rectangle color", () => {
   it("stores an rgb color", () => {
     const rectangleId = createRectangle();
 
-    useExperimentStore.getState().setRectColor(rectangleId, [12, 34, 56]);
+    setRectColor(rectangleId, [12, 34, 56]);
 
     expect(rectangle(rectangleId).color).toEqual([12, 34, 56]);
   });
@@ -621,7 +738,7 @@ describe("rectangle color", () => {
   it("clamps each channel into 0-255 and rounds it", () => {
     const rectangleId = createRectangle();
 
-    useExperimentStore.getState().setRectColor(rectangleId, [300, -5, 12.6]);
+    setRectColor(rectangleId, [300, -5, 12.6]);
 
     expect(rectangle(rectangleId).color).toEqual([255, 0, 13]);
   });
@@ -629,22 +746,11 @@ describe("rectangle color", () => {
   it("rejects a color with a non-finite channel", () => {
     const rectangleId = createRectangle();
 
-    useExperimentStore
-      .getState()
-      .setRectColor(rectangleId, [Number.NaN, 10, 20]);
+    setRectColor(rectangleId, [Number.NaN, 10, 20]);
 
     expect(rectangle(rectangleId).color).toEqual(DEFAULT_RECT_COLOR);
   });
 
-  it("ignores blocks that are not rectangles", () => {
-    useExperimentStore.getState().create(DEFAULT_TRACKS[0].id, "camera", 3, 1);
-    const cameraId = useExperimentStore.getState().blocks[0].id;
-    const before = useExperimentStore.getState().blocks;
-
-    useExperimentStore.getState().setRectColor(cameraId, [1, 2, 3]);
-
-    expect(useExperimentStore.getState().blocks).toEqual(before);
-  });
 });
 
 describe("addition blocks", () => {
@@ -655,43 +761,35 @@ describe("addition blocks", () => {
       .blocks.find((candidate) => candidate.id === id)!;
 
     expect(block.kind).toBe("addition");
-    if (block.kind !== "addition") {
-      throw new Error("expected an addition");
-    }
-    expect(block.inputA).toBe(0);
-    expect(block.inputB).toBe(0);
+    const data = block.data as AdditionData;
+    expect(data.inputA).toBe(0);
+    expect(data.inputB).toBe(0);
     expect(block.slotBindings).toBeUndefined();
   });
 
-  it("creates an addition without a duration and ignores duration commands", () => {
+  it("creates an addition without duration data", () => {
     const id = createAddition();
-    const store = useExperimentStore.getState();
-    store.setDuration(id, 4);
-    store.setDurationUnit(id, "seconds");
-    store.setSyncBeatsToCellSpan(id, true);
-
     const block = useExperimentStore
       .getState()
       .blocks.find((candidate) => candidate.id === id)!;
-    expect("duration" in block).toBe(false);
-    expect("durationUnit" in block).toBe(false);
-    expect("syncBeatsToCellSpan" in block).toBe(false);
+    const data = block.data as Record<string, unknown>;
+    expect("duration" in data).toBe(false);
+    expect("durationUnit" in data).toBe(false);
+    expect("syncBeatsToCellSpan" in data).toBe(false);
   });
 
   it("stores immediate inputs", () => {
     const id = createAddition();
 
-    useExperimentStore.getState().setAdditionInput(id, "a", 4);
-    useExperimentStore.getState().setAdditionInput(id, "b", 7);
+    setAdditionInput(id, "a", 4);
+    setAdditionInput(id, "b", 7);
 
     const block = useExperimentStore
       .getState()
       .blocks.find((candidate) => candidate.id === id)!;
-    if (block.kind !== "addition") {
-      throw new Error("expected an addition");
-    }
-    expect(block.inputA).toBe(4);
-    expect(block.inputB).toBe(7);
+    const data = block.data as AdditionData;
+    expect(data.inputA).toBe(4);
+    expect(data.inputB).toBe(7);
   });
 
   it("binds the output slot like an input property", () => {
@@ -742,15 +840,15 @@ describe("block duplication", () => {
 
   it("copies the block properties and selects the copy", () => {
     const sourceId = createRectangle(trackId, 0);
-    useExperimentStore.getState().setDuration(sourceId, 3);
-    useExperimentStore.getState().setRectValue(sourceId, "w", 5);
+    setDuration(sourceId, 3);
+    setRectValue(sourceId, "w", 5);
 
     useExperimentStore.getState().duplicateBlock(sourceId);
 
     const state = useExperimentStore.getState();
     const copy = state.blocks.find((block) => block.id !== sourceId)!;
     expect(copy.kind).toBe("rectangle");
-    expect(copy).toMatchObject({ duration: 3, w: 5 });
+    expect(copy).toMatchObject({ data: { duration: 3, w: 5 } });
     expect(state.selectedId).toBe(copy.id);
   });
 
@@ -760,9 +858,9 @@ describe("block duplication", () => {
 
     useExperimentStore.getState().duplicateBlock(sourceId);
 
-    const copy = useExperimentStore
-      .getState()
-      .blocks.find((block) => block.id !== sourceId && block.kind === "rectangle")!;
+    const blocks = useExperimentStore.getState().blocks;
+    const copy = blocks[blocks.length - 1];
+    expect(copy.id).not.toBe(sourceId);
     expect(copy.start).toBe(2);
   });
 
@@ -793,14 +891,14 @@ describe("block duplication", () => {
     useExperimentStore.getState().duplicateBlock(sourceId);
     const copyId = useExperimentStore.getState().selectedId!;
 
-    useExperimentStore.getState().setDuration(copyId, 4);
+    setDuration(copyId, 4);
 
     const blocks = useExperimentStore.getState().blocks;
     expect(blocks.find((block) => block.id === copyId)).toMatchObject({
-      duration: 4,
+      data: { duration: 4 },
     });
     expect(blocks.find((block) => block.id === sourceId)).toMatchObject({
-      duration: 1,
+      data: { duration: 1 },
     });
     expect(blockAt(0).id).toBe(sourceId);
   });
@@ -1066,5 +1164,79 @@ describe("gap-keyed slot initializations", () => {
     expect(slotById(slotId).initializations).toEqual([
       { boundary: 3, path: [loopId], value: 7 },
     ]);
+  });
+});
+
+describe("block kind changes", () => {
+  it("keeps only the slot bindings the target kind exposes", () => {
+    const rectangleId = createRectangle(DEFAULT_TRACKS[1].id);
+    const slotId = addSlot(null);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
+    useExperimentStore.getState().setSlotBinding(rectangleId, "y", slotId);
+
+    useExperimentStore.getState().setBlockKind(rectangleId, "camera");
+
+    const block = blockById(rectangleId)!;
+    expect(block.kind).toBe("camera");
+    expect(block.slotBindings).toBeUndefined();
+  });
+
+  it("builds the target kind's data during a change", () => {
+    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "camera", 0, 3);
+
+    const cameraId = useExperimentStore.getState().blocks[0].id;
+    editData(cameraId, (data) => ({
+      ...(data as DurationData),
+      duration: 2,
+      durationUnit: "seconds" as DurationUnit,
+    }));
+
+    useExperimentStore.getState().setBlockKind(cameraId, "rectangle");
+
+    const block = blockById(cameraId)!;
+    expect(block.data).toMatchObject({
+      duration: 2,
+      durationUnit: "seconds",
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      rectUnit: "span",
+    });
+  });
+
+  it("keeps an addition's data when another kind becomes an addition", () => {
+    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "wait", 0, 2);
+
+    const waitId = useExperimentStore.getState().blocks[0].id;
+    useExperimentStore.getState().setBlockKind(waitId, "addition");
+
+    expect(blockById(waitId)!.data).toEqual({ inputA: 0, inputB: 0 });
+  });
+
+  it("resets data that only the previous kind defines", () => {
+    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "rectangle", 0, 2);
+    const rectangleId = useExperimentStore.getState().blocks[0].id;
+    editData(rectangleId, (data) => ({
+      ...(data as RectangleData),
+      x: 4,
+      y: 5,
+      w: 2,
+      h: 2,
+      rectUnit: "pixels",
+      color: [1, 2, 3] as Vec3,
+    }));
+
+    useExperimentStore.getState().setBlockKind(rectangleId, "camera");
+    useExperimentStore.getState().setBlockKind(rectangleId, "rectangle");
+
+    expect(blockById(rectangleId)!.data).toMatchObject({
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      rectUnit: "span",
+      color: DEFAULT_RECT_COLOR,
+    });
   });
 });

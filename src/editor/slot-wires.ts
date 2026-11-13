@@ -1,9 +1,5 @@
-import {
-  SLOT_CAPABLE_PROPERTIES,
-  boundSlotProperties,
-  type Placement,
-  type SlotProperty,
-} from "./model";
+import type { Placement, SlotProperty } from "./model";
+import { blockDefinition, boundSlotProperties } from "./builtin-blocks";
 import { blockLoopEdges, type LoopNode } from "./loops";
 import { rowTop, type TimelineRow } from "./timeline-rows";
 import {
@@ -59,7 +55,7 @@ export function slotWires(
   const columns = new Map<number, PendingBlock[]>();
 
   for (const block of blocks) {
-    const properties = SLOT_CAPABLE_PROPERTIES[block.kind].filter(
+    const properties = blockDefinition(block.kind).slotProperties.filter(
       (property) => property.direction === "input",
     );
     if (properties.length === 0) {
