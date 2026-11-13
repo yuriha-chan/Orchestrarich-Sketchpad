@@ -1,5 +1,5 @@
-import type { BlockDefinition, BlockDefinitionSpec } from "./block-definition";
-import { deriveSlotProperties } from "./block-definition";
+import type { BlockDefinition } from "./block-definition";
+import { packBlockDefinition } from "./block-definition";
 import type {
   BoundSlotProperty,
   Placement,
@@ -13,19 +13,15 @@ import wait from "./blocks/wait";
 import rectangle from "./blocks/rectangle";
 import addition from "./blocks/addition";
 
-const BLOCK_SPECS: readonly BlockDefinitionSpec[] = [
-  dialogue,
-  camera,
-  sound,
-  animation,
-  wait,
-  rectangle,
-  addition,
+export const BLOCK_DEFINITIONS: readonly BlockDefinition[] = [
+  packBlockDefinition(dialogue),
+  packBlockDefinition(camera),
+  packBlockDefinition(sound),
+  packBlockDefinition(animation),
+  packBlockDefinition(wait),
+  packBlockDefinition(rectangle),
+  packBlockDefinition(addition),
 ];
-
-export const BLOCK_DEFINITIONS: readonly BlockDefinition[] = BLOCK_SPECS.map(
-  (spec) => ({ ...spec, slotProperties: deriveSlotProperties(spec.fields) }),
-);
 
 export function blockDefinition(kind: string): BlockDefinition {
   const definition = BLOCK_DEFINITIONS.find((entry) => entry.kind === kind);

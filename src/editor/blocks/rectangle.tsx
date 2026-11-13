@@ -1,18 +1,17 @@
 import { Grid2x2, Monitor, Square } from "lucide-react";
 import type {
   BlockDefinitionSpec,
-  FieldProps,
   NumberLimits,
   StageViewProps,
 } from "../block-definition";
+import { numberInput } from "../block-inputs";
 import { TimedExecution, type ExecutionContext } from "../block-runtime";
 import type { Placement, RectGeometry, RectUnit, Vec3 } from "../model";
 import { convertRectUnit } from "../stage-geometry";
-import { useExperimentStore } from "../store";
 import {
   durationCarry,
+  durationField,
   durationFromCarry,
-  durationSeconds,
   onDurationLengthChange,
   type DurationData,
 } from "./duration-data";
@@ -39,24 +38,25 @@ export interface RectanglePayload {
   readonly color: Vec3;
 }
 
+const duration = durationField<RectangleData>();
+
 class RectangleExecution extends TimedExecution {
   constructor(block: Placement<RectangleData>, context: ExecutionContext) {
     super(
       block,
       context,
-      durationSeconds(block.data, block.length, context.bpm) * 1000,
+      duration.resolve(block.data, { length: block.length, bpm: context.bpm }) * 1000,
     );
     const data = block.data;
-    const bindings = block.slotBindings;
     context.stage.add({
       id: this.id,
       kind: "rectangle",
       layer: "screen",
       payload: {
-        x: bindings?.x === undefined ? data.x : context.readSlot(bindings.x),
-        y: bindings?.y === undefined ? data.y : context.readSlot(bindings.y),
-        w: bindings?.w === undefined ? data.w : context.readSlot(bindings.w),
-        h: bindings?.h === undefined ? data.h : context.readSlot(bindings.h),
+        x: xInput.resolve(block, context.readSlot),
+        y: yInput.resolve(block, context.readSlot),
+        w: wInput.resolve(block, context.readSlot),
+        h: hInput.resolve(block, context.readSlot),
         unit: data.rectUnit,
         color: data.color,
       } satisfies RectanglePayload,
@@ -89,48 +89,15 @@ function RectangleStage({ view }: StageViewProps<RectanglePayload>) {
   );
 }
 
-function RectUnitsField({ block, editable, update }: FieldProps<RectangleData>) {
-  const stageSpan = useExperimentStore((state) => state.stageSpan);
-  const data = block.data;
-  return (
-    <div className="inspector-field">
-      <span>Units</span>
-      <div className="unit-toggle" role="group" aria-label="Rectangle units">
-        <button
-          type="button"
-          className={data.rectUnit === "span" ? "is-active" : ""}
-          aria-pressed={data.rectUnit === "span"}
-          disabled={!editable || stageSpan <= 0}
-          onClick={() =>
-            update((current) =>
-              current.rectUnit === "span" || stageSpan <= 0
-                ? current
-                : { ...current, ...convertRectUnit(current, "span", stageSpan) },
-            )
-          }
-        >
-          <Grid2x2 size={12} aria-hidden="true" />
-          Span
-        </button>
-        <button
-          type="button"
-          className={data.rectUnit === "pixels" ? "is-active" : ""}
-          aria-pressed={data.rectUnit === "pixels"}
-          disabled={!editable || stageSpan <= 0}
-          onClick={() =>
-            update((current) =>
-              current.rectUnit === "pixels" || stageSpan <= 0
-                ? current
-                : { ...current, ...convertRectUnit(current, "pixels", stageSpan) },
-            )
-          }
-        >
-          <Monitor size={12} aria-hidden="true" />
-          Pixels
-        </button>
-      </div>
-    </div>
-  );
+function chooseRectUnit(
+  data: RectangleData,
+  unit: RectUnit,
+  stageSpan: number,
+): RectangleData {
+  if (data.rectUnit === unit || stageSpan <= 0) {
+    return data;
+  }
+  return { ...data, ...convertRectUnit(data, unit, stageSpan) };
 }
 
 function geometryLimits(data: RectangleData, minimumSpan: number): NumberLimits {
@@ -167,64 +134,72 @@ function commitColor(data: RectangleData, color: Vec3): RectangleData {
   };
 }
 
+const xInput = numberInput<RectangleData>({
+  kind: "number",
+  section: "input",
+  key: "x",
+  label: "X",
+  slot: true,
+  min: 0,
+  max: 512,
+  step: 0.25,
+  value: (data) => data.x,
+  commit: (data, value) => commitGeometry(data, "x", value),
+  limits: (data) => geometryLimits(data, 0),
+});
+
+const yInput = numberInput<RectangleData>({
+  kind: "number",
+  section: "input",
+  key: "y",
+  label: "Y",
+  slot: true,
+  min: 0,
+  max: 512,
+  step: 0.25,
+  value: (data) => data.y,
+  commit: (data, value) => commitGeometry(data, "y", value),
+  limits: (data) => geometryLimits(data, 0),
+});
+
+const wInput = numberInput<RectangleData>({
+  kind: "number",
+  section: "input",
+  key: "w",
+  label: "Width",
+  slot: true,
+  min: 0.25,
+  max: 512,
+  step: 0.25,
+  value: (data) => data.w,
+  commit: (data, value) => commitGeometry(data, "w", value),
+  limits: (data) => geometryLimits(data, 0.25),
+});
+
+const hInput = numberInput<RectangleData>({
+  kind: "number",
+  section: "input",
+  key: "h",
+  label: "Height",
+  slot: true,
+  min: 0.25,
+  max: 512,
+  step: 0.25,
+  value: (data) => data.h,
+  commit: (data, value) => commitGeometry(data, "h", value),
+  limits: (data) => geometryLimits(data, 0.25),
+});
+
 const rectangle: BlockDefinitionSpec<RectangleData, RectanglePayload> = {
   kind: "rectangle",
   label: "Rectangle",
   color: "#db2777",
   icon: Square,
   fields: [
-    {
-      kind: "number",
-      section: "input",
-      key: "x",
-      label: "X",
-      slot: true,
-      min: 0,
-      max: 512,
-      step: 0.25,
-      value: (data) => data.x,
-      commit: (data, value) => commitGeometry(data, "x", value),
-      limits: (data) => geometryLimits(data, 0),
-    },
-    {
-      kind: "number",
-      section: "input",
-      key: "y",
-      label: "Y",
-      slot: true,
-      min: 0,
-      max: 512,
-      step: 0.25,
-      value: (data) => data.y,
-      commit: (data, value) => commitGeometry(data, "y", value),
-      limits: (data) => geometryLimits(data, 0),
-    },
-    {
-      kind: "number",
-      section: "input",
-      key: "w",
-      label: "Width",
-      slot: true,
-      min: 0.25,
-      max: 512,
-      step: 0.25,
-      value: (data) => data.w,
-      commit: (data, value) => commitGeometry(data, "w", value),
-      limits: (data) => geometryLimits(data, 0.25),
-    },
-    {
-      kind: "number",
-      section: "input",
-      key: "h",
-      label: "Height",
-      slot: true,
-      min: 0.25,
-      max: 512,
-      step: 0.25,
-      value: (data) => data.h,
-      commit: (data, value) => commitGeometry(data, "h", value),
-      limits: (data) => geometryLimits(data, 0.25),
-    },
+    xInput,
+    yInput,
+    wInput,
+    hInput,
     {
       kind: "color",
       section: "block",
@@ -233,13 +208,30 @@ const rectangle: BlockDefinitionSpec<RectangleData, RectanglePayload> = {
       value: (data) => data.color,
       commit: commitColor,
     },
-    { kind: "duration", section: "block", key: "duration", label: "Duration" },
+    duration,
     {
-      kind: "custom",
+      kind: "choice",
       section: "block",
       key: "units",
       label: "Units",
-      render: RectUnitsField,
+      value: (data) => data.rectUnit,
+      enabled: (context) => context.stageSpan > 0,
+      choices: [
+        {
+          value: "span",
+          label: "Span",
+          icon: Grid2x2,
+          commit: (data, context) =>
+            chooseRectUnit(data, "span", context.stageSpan),
+        },
+        {
+          value: "pixels",
+          label: "Pixels",
+          icon: Monitor,
+          commit: (data, context) =>
+            chooseRectUnit(data, "pixels", context.stageSpan),
+        },
+      ],
     },
     {
       kind: "note",

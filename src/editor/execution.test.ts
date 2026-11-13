@@ -689,6 +689,62 @@ describe("TimelineSession", () => {
     expect(run.snapshot()?.time).toBe(1);
   });
 
+  it("runs a beat duration at 90 BPM", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "sfx",
+          trackId: DEFAULT_TRACKS[2].id,
+          kind: "sound",
+          length: 1,
+          duration: 3,
+          durationUnit: "beats",
+        }),
+      ],
+      90,
+    );
+
+    run.session.start();
+
+    await vi.advanceTimersByTimeAsync(1999);
+
+    expect(run.blockState("sfx~0")).toBe("running");
+    expect(run.snapshot()?.time).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(run.blockState("sfx~0")).toBe("completed");
+    expect(run.snapshot()?.time).toBe(1);
+  });
+
+  it("uses the sync-to-span duration instead of the authored stored value", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "sfx",
+          trackId: DEFAULT_TRACKS[2].id,
+          kind: "sound",
+          length: 3,
+          duration: 5,
+          durationUnit: "beats",
+          syncBeatsToCellSpan: true,
+        }),
+      ],
+      90,
+    );
+
+    run.session.start();
+
+    await vi.advanceTimersByTimeAsync(1999);
+
+    expect(run.blockState("sfx~0")).toBe("running");
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(run.blockState("sfx~0")).toBe("completed");
+    expect(run.snapshot()?.time).toBe(3);
+  });
+
   it("runs a wait block for its duration", async () => {
     const run = setup([
       placement({

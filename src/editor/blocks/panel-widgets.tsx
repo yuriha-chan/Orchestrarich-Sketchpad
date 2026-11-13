@@ -1,11 +1,13 @@
 import { useLayoutEffect, useState } from "react";
 import { AudioLines, Clock } from "lucide-react";
 import type { NumericSlot } from "../../core/slots/numeric-slots";
+import type {
+  DurationPanelField,
+  EntryContext,
+  FadesPanelField,
+} from "../block-definition";
 import type { DurationUnit, Placement, Track, Vec3 } from "../model";
-import { convertDuration } from "../model";
 import { useExperimentStore } from "../store";
-import type { DurationData } from "./duration-data";
-import { clampFadesToLength, type MediaData } from "./media-data";
 
 export function PropertyNumber({
   value,
@@ -62,38 +64,24 @@ export function PropertyNumber({
   );
 }
 
-export function DurationFields<T extends DurationData>({
+export function DurationFields<T>({
+  field,
   block,
+  context,
   editable,
   update,
 }: {
+  field: DurationPanelField<T>;
   block: Placement<T>;
+  context: EntryContext;
   editable: boolean;
   update: (change: (data: T) => T) => void;
 }) {
-  const bpm = useExperimentStore((state) => state.bpm);
-  const data = block.data;
-  const unit = data.durationUnit;
-  const synced = data.syncBeatsToCellSpan;
-  const value = roundTo(synced ? block.length : data.duration, 3);
+  const { value, unit, synced, limits } = field.read(block.data, context);
 
   const setUnit = (next: DurationUnit) => {
-    if (!editable || synced || data.durationUnit === next) {
-      return;
-    }
     update((current) =>
-      current.syncBeatsToCellSpan || current.durationUnit === next
-        ? current
-        : ({
-            ...current,
-            duration: convertDuration(
-              current.duration,
-              current.durationUnit,
-              next,
-              bpm,
-            ),
-            durationUnit: next,
-          } as T),
+      field.commit(current, { kind: "unit", unit: next }, context),
     );
   };
 
@@ -104,22 +92,17 @@ export function DurationFields<T extends DurationData>({
         <div className="duration-control">
           <PropertyNumber
             key={`duration-${block.id}-${unit}`}
-            value={value}
-            min={unit === "beats" ? 0.25 : 0.05}
-            max={unit === "beats" ? 256 : 120}
-            step={unit === "beats" ? 0.25 : 0.05}
+            value={roundTo(value, 3)}
+            min={limits.min}
+            max={limits.max}
+            step={limits.step}
             ariaLabel="Duration"
             disabled={!editable || synced}
-            onCommit={(next) => {
-              if (!Number.isFinite(next) || next <= 0) {
-                return;
-              }
+            onCommit={(next) =>
               update((current) =>
-                current.syncBeatsToCellSpan
-                  ? current
-                  : ({ ...current, duration: next } as T),
-              );
-            }}
+                field.commit(current, { kind: "value", value: next }, context),
+              )
+            }
           />
           <div className="unit-toggle" role="group" aria-label="Duration unit">
             <button
@@ -152,14 +135,11 @@ export function DurationFields<T extends DurationData>({
           disabled={!editable}
           onChange={(event) =>
             update((current) =>
-              event.target.checked
-                ? ({
-                    ...current,
-                    syncBeatsToCellSpan: true,
-                    durationUnit: "beats",
-                    duration: block.length,
-                  } as T)
-                : ({ ...current, syncBeatsToCellSpan: false } as T),
+              field.commit(
+                current,
+                { kind: "sync", enabled: event.target.checked },
+                context,
+              ),
             )
           }
         />
@@ -169,33 +149,36 @@ export function DurationFields<T extends DurationData>({
   );
 }
 
-export function FadeFields<T extends MediaData>({
+export function FadeFields<T>({
+  field,
   block,
+  context,
   editable,
   update,
 }: {
+  field: FadesPanelField<T>;
   block: Placement<T>;
+  context: EntryContext;
   editable: boolean;
   update: (change: (data: T) => T) => void;
 }) {
-  const data = block.data;
+  const { fadeIn, fadeOut } = field.read(block.data);
   return (
     <>
       <label className="inspector-field">
         <span>Fade in</span>
         <PropertyNumber
           key={`fade-in-${block.id}`}
-          value={data.fadeIn}
+          value={fadeIn}
           min={0}
           max={block.length}
           step={1}
           ariaLabel="Fade in"
           disabled={!editable}
           onCommit={(value) =>
-            update((current) => {
-              const fades = clampFadesToLength(value, current.fadeOut, block.length);
-              return { ...current, ...fades };
-            })
+            update((current) =>
+              field.commit(current, { kind: "fadeIn", value }, context),
+            )
           }
         />
       </label>
@@ -203,17 +186,16 @@ export function FadeFields<T extends MediaData>({
         <span>Fade out</span>
         <PropertyNumber
           key={`fade-out-${block.id}`}
-          value={data.fadeOut}
+          value={fadeOut}
           min={0}
           max={block.length}
           step={1}
           ariaLabel="Fade out"
           disabled={!editable}
           onCommit={(value) =>
-            update((current) => {
-              const fades = clampFadesToLength(current.fadeIn, value, block.length);
-              return { ...current, ...fades };
-            })
+            update((current) =>
+              field.commit(current, { kind: "fadeOut", value }, context),
+            )
           }
         />
       </label>

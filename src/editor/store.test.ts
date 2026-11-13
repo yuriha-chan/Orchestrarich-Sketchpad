@@ -2,14 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { validateNumericSlotReads } from "../core/slots/numeric-slots";
 import { slotReads } from "./execution";
-import { DEFAULT_TRACKS, TRACK_COLORS, type DurationUnit, type Placement, type Vec3 } from "./model";
+import { DEFAULT_BPM, DEFAULT_TRACKS, TRACK_COLORS, type DurationUnit, type Placement, type Vec3 } from "./model";
 import { DEFAULT_RECT_COLOR, type RectangleData } from "./blocks/rectangle";
-import type { DurationData } from "./blocks/duration-data";
+import { editDuration, type DurationData } from "./blocks/duration-data";
 import type { AdditionData } from "./blocks/addition";
 import type { MediaData } from "./blocks/media-data";
-import type { FadeData } from "./block-definition";
+import type { EntryContext, FadeData } from "./block-definition";
 import { blockDefinition } from "./builtin-blocks";
-import { convertRectUnit } from "./stage-geometry";
 import { useExperimentStore } from "./store";
 
 function resetStore(): void {
@@ -19,6 +18,7 @@ function resetStore(): void {
     slots: [],
     selectedId: null,
     loops: [],
+    bpm: DEFAULT_BPM,
   });
 }
 
@@ -68,21 +68,36 @@ function blockById(id: string): Placement | undefined {
     .blocks.find((candidate) => candidate.id === id);
 }
 
+function entryContext(block: Placement, stageSpan = 0): EntryContext {
+  return {
+    length: block.length,
+    bpm: useExperimentStore.getState().bpm,
+    stageSpan,
+  };
+}
+
+function requiredBlock(id: string): Placement {
+  const block = blockById(id);
+  if (block === undefined) throw new Error(`Block ${id} not found`);
+  return block;
+}
+
 function setRectValue(
   id: string,
   field: "x" | "y" | "w" | "h",
   value: number,
 ): void {
-  editData(id, (data) => {
-    const current = data as RectangleData;
-    if (!Number.isFinite(value)) {
-      return current;
-    }
-    if (field === "x" || field === "y") {
-      return value < 0 ? current : { ...current, [field]: value };
-    }
-    return value <= 0 ? current : { ...current, [field]: value };
-  });
+  const block = requiredBlock(id);
+  const declaration = blockDefinition(block.kind).fields.find(
+    (candidate) =>
+      candidate.kind === "number" &&
+      candidate.section === "input" &&
+      candidate.key === field,
+  );
+  if (declaration?.kind !== "number") {
+    throw new Error(`Missing numeric input "${field}" on ${block.kind}`);
+  }
+  editData(id, (data) => declaration.commit(data, value));
 }
 
 function setRectUnit(
@@ -90,69 +105,42 @@ function setRectUnit(
   unit: "span" | "pixels",
   span: number,
 ): void {
-  editData(id, (data) => {
-    const current = data as RectangleData;
-    return current.rectUnit === unit
-      ? current
-      : { ...current, ...convertRectUnit(current, unit, span) };
-  });
+  const block = requiredBlock(id);
+  const field = blockDefinition(block.kind).fields.find(
+    (candidate) => candidate.kind === "choice" && candidate.key === "units",
+  );
+  if (field?.kind !== "choice") {
+    throw new Error(`Missing unit choice on ${block.kind}`);
+  }
+  const choice = field.choices.find((candidate) => candidate.value === unit);
+  if (choice === undefined) {
+    throw new Error(`Missing ${unit} choice on ${block.kind}`);
+  }
+  editData(id, (data) => choice.commit(data, entryContext(block, span)));
 }
 
 function setRectColor(id: string, color: Vec3): void {
-  editData(id, (data) => {
-    const current = data as RectangleData;
-    if (!color.every(Number.isFinite)) {
-      return current;
-    }
-    const channel = (value: number) =>
-      Math.min(255, Math.max(0, Math.round(value)));
-    return {
-      ...current,
-      color: [channel(color[0]), channel(color[1]), channel(color[2])],
-    };
-  });
+  const block = requiredBlock(id);
+  const field = blockDefinition(block.kind).fields.find(
+    (candidate) => candidate.kind === "color" && candidate.key === "color",
+  );
+  if (field?.kind !== "color") {
+    throw new Error(`Missing color field on ${block.kind}`);
+  }
+  editData(id, (data) => field.commit(data, color));
 }
 
 function setDuration(id: string, value: number): void {
-  editData(id, (data) => {
-    const current = data as DurationData;
-    if (
-      current.syncBeatsToCellSpan ||
-      !Number.isFinite(value) ||
-      value <= 0
-    ) {
-      return current;
-    }
-    return { ...current, duration: value };
-  });
-}
-
-function setDurationUnit(id: string, unit: DurationUnit): void {
-  const bpm = useExperimentStore.getState().bpm;
-  editData(id, (data) => {
-    const current = data as DurationData;
-    if (current.syncBeatsToCellSpan || current.durationUnit === unit) {
-      return current;
-    }
-    const converted =
-      unit === "beats"
-        ? (current.duration * bpm) / 60
-        : (current.duration * 60) / bpm;
-    return { ...current, duration: converted, durationUnit: unit };
-  });
-}
-
-function setSyncBeatsToCellSpan(id: string, value: boolean): void {
-  const block = blockById(id);
-  if (block === undefined) {
-    return;
+  const block = requiredBlock(id);
+  const field = blockDefinition(block.kind).fields.find(
+    (candidate) => candidate.kind === "duration",
+  );
+  if (field?.kind !== "duration") {
+    throw new Error(`Missing duration field on ${block.kind}`);
   }
-  editData(id, (data) => {
-    const current = data as DurationData;
-    return value
-      ? { ...current, syncBeatsToCellSpan: true, durationUnit: "beats", duration: block.length }
-      : { ...current, syncBeatsToCellSpan: false };
-  });
+  editData(id, (data) =>
+    field.commit(data, { kind: "value", value }, entryContext(block)),
+  );
 }
 
 function setAdditionInput(
@@ -160,15 +148,17 @@ function setAdditionInput(
   field: "a" | "b",
   value: number,
 ): void {
-  editData(id, (data) => {
-    const current = data as { inputA: number; inputB: number };
-    if (!Number.isFinite(value)) {
-      return current;
-    }
-    return field === "a"
-      ? { ...current, inputA: value }
-      : { ...current, inputB: value };
-  });
+  const block = requiredBlock(id);
+  const declaration = blockDefinition(block.kind).fields.find(
+    (candidate) =>
+      candidate.kind === "number" &&
+      candidate.section === "input" &&
+      candidate.key === field,
+  );
+  if (declaration?.kind !== "number") {
+    throw new Error(`Missing numeric input "${field}" on ${block.kind}`);
+  }
+  editData(id, (data) => declaration.commit(data, value));
 }
 
 function createAnimation(
@@ -974,6 +964,251 @@ describe("media span transactions", () => {
 
     expect(applied).toBe(false);
     expect(blockById(id)).toEqual(before);
+  });
+});
+
+describe("duration edits", () => {
+  it("converts stored beats to seconds at 90 BPM", () => {
+    useExperimentStore.getState().setBpm(90);
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 6,
+      durationUnit: "beats",
+      fadeIn: 1,
+      fadeOut: 1,
+    }));
+    const block = animationBlock(id);
+
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "unit", unit: "seconds" },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 4,
+      durationUnit: "seconds",
+      syncBeatsToCellSpan: false,
+      fadeIn: 1,
+      fadeOut: 1,
+    });
+  });
+
+  it("converts stored seconds to beats at 90 BPM", () => {
+    useExperimentStore.getState().setBpm(90);
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 4,
+      durationUnit: "seconds",
+      fadeIn: 2,
+      fadeOut: 1,
+    }));
+    const block = animationBlock(id);
+
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "unit", unit: "beats" },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 6,
+      durationUnit: "beats",
+      syncBeatsToCellSpan: false,
+      fadeIn: 2,
+      fadeOut: 1,
+    });
+  });
+
+  it("leaves the stored value unchanged when the unit does not change", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 6,
+      durationUnit: "seconds",
+      fadeIn: 1,
+      fadeOut: 2,
+    }));
+    const block = animationBlock(id);
+
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "unit", unit: "seconds" },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 6,
+      durationUnit: "seconds",
+      syncBeatsToCellSpan: false,
+      fadeIn: 1,
+      fadeOut: 2,
+    });
+  });
+
+  it("accepts a finite positive value and preserves unit and unrelated fields", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 1,
+      durationUnit: "seconds",
+      fadeIn: 2,
+      fadeOut: 1,
+    }));
+    const block = animationBlock(id);
+
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "value", value: 2.5 },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 2.5,
+      durationUnit: "seconds",
+      syncBeatsToCellSpan: false,
+      fadeIn: 2,
+      fadeOut: 1,
+    });
+  });
+
+  it("rejects zero, negative and non-finite values", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 3,
+      durationUnit: "seconds",
+      fadeIn: 1,
+      fadeOut: 1,
+    }));
+    const block = animationBlock(id);
+
+    for (const value of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+      editData(id, (data) =>
+        editDuration(
+          data as MediaData,
+          { kind: "value", value },
+          { length: block.length, bpm: useExperimentStore.getState().bpm },
+        ),
+      );
+    }
+
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 3,
+      durationUnit: "seconds",
+      syncBeatsToCellSpan: false,
+      fadeIn: 1,
+      fadeOut: 1,
+    });
+  });
+
+  it("enables sync at the block length in beats", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 5);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 2,
+      durationUnit: "seconds",
+      fadeIn: 2,
+      fadeOut: 1,
+    }));
+    const block = animationBlock(id);
+
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "sync", enabled: true },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 5,
+      durationUnit: "beats",
+      syncBeatsToCellSpan: true,
+      fadeIn: 2,
+      fadeOut: 1,
+    });
+  });
+
+  it("blocks value and unit edits while synced", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 5);
+    const block = animationBlock(id);
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "sync", enabled: true },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "value", value: 9 },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "unit", unit: "seconds" },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 5,
+      durationUnit: "beats",
+      syncBeatsToCellSpan: true,
+    });
+  });
+
+  it("retains the stored beats value when sync is disabled and accepts later edits", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    const block = animationBlock(id);
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "sync", enabled: true },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "sync", enabled: false },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 4,
+      durationUnit: "beats",
+      syncBeatsToCellSpan: false,
+    });
+
+    editData(id, (data) =>
+      editDuration(
+        data as MediaData,
+        { kind: "value", value: 3 },
+        { length: block.length, bpm: useExperimentStore.getState().bpm },
+      ),
+    );
+    expect(animationBlock(id).data).toMatchObject({
+      duration: 3,
+      durationUnit: "beats",
+      syncBeatsToCellSpan: false,
+    });
   });
 });
 

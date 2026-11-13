@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import type {
   BlockDefinition,
+  EntryContext,
   PanelField,
   PanelSection,
 } from "../block-definition";
@@ -18,8 +19,9 @@ import {
 export interface BlockPanelProps {
   readonly definition: BlockDefinition;
   readonly block: Placement;
+  readonly context: EntryContext;
   readonly editable: boolean;
-  readonly update: (change: (data: any) => any) => void;
+  readonly update: (change: (data: unknown) => unknown) => void;
   readonly setCooperativeSkip: (value: boolean) => void;
 }
 
@@ -32,6 +34,7 @@ const SECTION_LABELS: Record<PanelSection, string> = {
 export function BlockPanel({
   definition,
   block,
+  context,
   editable,
   update,
   setCooperativeSkip,
@@ -54,6 +57,7 @@ export function BlockPanel({
                 key={field.key}
                 field={field}
                 block={block}
+                context={context}
                 editable={editable}
                 update={update}
               />
@@ -79,13 +83,15 @@ export function BlockPanel({
 function FieldView({
   field,
   block,
+  context,
   editable,
   update,
 }: {
-  field: PanelField<any>;
+  field: PanelField<unknown>;
   block: Placement;
+  context: EntryContext;
   editable: boolean;
-  update: (change: (data: any) => any) => void;
+  update: (change: (data: unknown) => unknown) => void;
 }) {
   switch (field.kind) {
     case "number": {
@@ -142,9 +148,54 @@ function FieldView({
         />
       );
     case "duration":
-      return <DurationFields block={block} editable={editable} update={update} />;
+      return (
+        <DurationFields
+          field={field}
+          block={block}
+          context={context}
+          editable={editable}
+          update={update}
+        />
+      );
     case "fades":
-      return <FadeFields block={block} editable={editable} update={update} />;
+      return (
+        <FadeFields
+          field={field}
+          block={block}
+          context={context}
+          editable={editable}
+          update={update}
+        />
+      );
+    case "choice": {
+      const selected = field.value(block.data);
+      const enabled = field.enabled(context);
+      return (
+        <div className="inspector-field">
+          <span>{field.label}</span>
+          <div className="unit-toggle" role="group" aria-label={field.label}>
+            {field.choices.map((choice) => {
+              const Icon = choice.icon;
+              return (
+                <button
+                  key={choice.value}
+                  type="button"
+                  className={choice.value === selected ? "is-active" : ""}
+                  aria-pressed={choice.value === selected}
+                  disabled={!editable || !enabled}
+                  onClick={() =>
+                    update((data) => choice.commit(data, context))
+                  }
+                >
+                  <Icon size={12} aria-hidden="true" />
+                  {choice.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
     case "output":
       return (
         <OutputSlotField

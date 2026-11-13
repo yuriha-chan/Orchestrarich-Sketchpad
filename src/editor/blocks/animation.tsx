@@ -7,7 +7,7 @@ import {
 } from "../block-runtime";
 import type { Placement } from "../model";
 import type { StageActions } from "../stage-state";
-import { durationSeconds } from "./duration-data";
+import { durationField } from "./duration-data";
 import {
   fadeBoundaries,
   mediaCarry,
@@ -17,7 +17,7 @@ import {
   type MediaData,
 } from "./media-data";
 import { mediaRenderBlock } from "./media-block";
-import { mediaFadeHandles } from "./media-fades";
+import { fadesField, mediaFadeHandles } from "./media-fades";
 
 export interface AnimationPlayback {
   readonly positionMs: number;
@@ -127,14 +127,16 @@ function AnimationStage({ view }: StageViewProps<AnimationPayload>) {
   );
 }
 
+const duration = durationField<MediaData>();
+
 const animation: BlockDefinitionSpec<MediaData, AnimationPayload> = {
   kind: "animation",
   label: "Animation",
   color: "#ea580c",
   icon: Clapperboard,
   fields: [
-    { kind: "duration", section: "block", key: "duration", label: "Duration" },
-    { kind: "fades", section: "block", key: "fades", label: "Fades" },
+    duration,
+    fadesField<MediaData>(),
   ],
   createData: (length) => ({
     duration: length,
@@ -160,7 +162,7 @@ const animation: BlockDefinitionSpec<MediaData, AnimationPayload> = {
     new MediaExecution(
       block,
       context,
-      durationSeconds(block.data, block.length, context.bpm) * 1000,
+      duration.resolve(block.data, { length: block.length, bpm: context.bpm }) * 1000,
       new AnimationPresentation(block, context.stage),
     ),
 };

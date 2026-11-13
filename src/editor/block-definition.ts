@@ -8,7 +8,7 @@ import type {
 } from "./model";
 import type { ExecutionContext, ExecutionInstance } from "./block-runtime";
 
-export interface FieldProps<T = any> {
+export interface FieldProps<T = unknown> {
   readonly block: Placement<T>;
   readonly editable: boolean;
   readonly update: (change: (data: T) => T) => void;
@@ -47,14 +47,46 @@ export interface ColorPanelField<T> extends PanelFieldBase {
   readonly commit: (data: T, value: Vec3) => T;
 }
 
+export interface EntryContext {
+  readonly length: number;
+  readonly bpm: number;
+  readonly stageSpan: number;
+}
+
 export interface DurationPanelField<T> extends PanelFieldBase {
   readonly kind: "duration";
   readonly section: "block";
+  readonly read: (
+    data: T,
+    context: EntryContext,
+  ) => {
+    value: number;
+    unit: DurationUnit;
+    synced: boolean;
+    limits: NumberLimits;
+  };
+  readonly commit: (data: T, edit: DurationEdit, context: EntryContext) => T;
+  readonly resolve: (data: T, context: Pick<EntryContext, "length" | "bpm">) => number;
 }
 
 export interface FadesPanelField<T> extends PanelFieldBase {
   readonly kind: "fades";
   readonly section: "block";
+  readonly read: (data: T) => FadeData;
+  readonly commit: (data: T, edit: FadeEdit, context: EntryContext) => T;
+}
+
+export interface ChoicePanelField<T> extends PanelFieldBase {
+  readonly kind: "choice";
+  readonly section: "input" | "block";
+  readonly value: (data: T) => string;
+  readonly enabled: (context: EntryContext) => boolean;
+  readonly choices: readonly {
+    readonly value: string;
+    readonly label: string;
+    readonly icon: LucideIcon;
+    readonly commit: (data: T, context: EntryContext) => T;
+  }[];
 }
 
 export interface OutputPanelField<T> extends PanelFieldBase {
@@ -79,6 +111,7 @@ export type PanelField<T> =
   | ColorPanelField<T>
   | DurationPanelField<T>
   | FadesPanelField<T>
+  | ChoicePanelField<T>
   | OutputPanelField<T>
   | NotePanelField<T>
   | CustomPanelField<T>;
@@ -89,10 +122,19 @@ export interface DurationData {
   syncBeatsToCellSpan: boolean;
 }
 
+export type DurationEdit =
+  | { kind: "value"; value: number }
+  | { kind: "unit"; unit: DurationUnit }
+  | { kind: "sync"; enabled: boolean };
+
 export interface FadeData {
   fadeIn: number;
   fadeOut: number;
 }
+
+export type FadeEdit =
+  | { kind: "fadeIn" | "fadeOut"; value: number }
+  | { kind: "pair"; value: FadeData };
 
 export interface CarryOver {
   readonly duration?: DurationData;
@@ -131,7 +173,7 @@ export function deriveSlotProperties<T>(
   return properties;
 }
 
-export interface StageViewProps<T = any> {
+export interface StageViewProps<T = unknown> {
   readonly view: { readonly id: string; readonly payload: T };
 }
 
@@ -149,7 +191,7 @@ export interface PhaseSpan {
   readonly length: number;
 }
 
-export interface BlockDefinition<T = any, S = any> {
+export interface BlockDefinition<T = unknown, S = unknown> {
   readonly kind: string;
   readonly label: string;
   readonly color: string;
@@ -174,7 +216,16 @@ export interface BlockDefinition<T = any, S = any> {
   ) => ExecutionInstance;
 }
 
-export type BlockDefinitionSpec<T = any, S = any> = Omit<
+export type BlockDefinitionSpec<T = unknown, S = unknown> = Omit<
   BlockDefinition<T, S>,
   "slotProperties"
 >;
+
+export function packBlockDefinition<T, S>(
+  spec: BlockDefinitionSpec<T, S>,
+): BlockDefinition<unknown, unknown> {
+  return {
+    ...spec,
+    slotProperties: deriveSlotProperties(spec.fields),
+  } as unknown as BlockDefinition<unknown, unknown>;
+}

@@ -1,7 +1,7 @@
 import { Volume2 } from "lucide-react";
 import type { BlockDefinitionSpec } from "../block-definition";
 import { MediaExecution } from "../block-runtime";
-import { durationSeconds } from "./duration-data";
+import { durationField } from "./duration-data";
 import {
   fadeBoundaries,
   mediaCarry,
@@ -11,7 +11,9 @@ import {
   type MediaData,
 } from "./media-data";
 import { mediaRenderBlock } from "./media-block";
-import { mediaFadeHandles } from "./media-fades";
+import { fadesField, mediaFadeHandles } from "./media-fades";
+
+const duration = durationField<MediaData>();
 
 const sound: BlockDefinitionSpec<MediaData> = {
   kind: "sound",
@@ -19,8 +21,8 @@ const sound: BlockDefinitionSpec<MediaData> = {
   color: "#059669",
   icon: Volume2,
   fields: [
-    { kind: "duration", section: "block", key: "duration", label: "Duration" },
-    { kind: "fades", section: "block", key: "fades", label: "Fades" },
+    duration,
+    fadesField<MediaData>(),
   ],
   createData: (length) => ({
     duration: length,
@@ -45,7 +47,7 @@ const sound: BlockDefinitionSpec<MediaData> = {
     new MediaExecution(
       block,
       context,
-      durationSeconds(block.data, block.length, context.bpm) * 1000,
+      duration.resolve(block.data, { length: block.length, bpm: context.bpm }) * 1000,
     ),
 };
 

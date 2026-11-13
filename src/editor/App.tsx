@@ -1380,6 +1380,7 @@ export function App() {
                   <BlockPanel
                     definition={selectedDefinition}
                     block={selected}
+                    context={{ length: selected.length, bpm, stageSpan }}
                     editable={editable}
                     update={(change) => editBlockData(selected.id, change)}
                     setCooperativeSkip={(value) =>

@@ -23,8 +23,10 @@
   Phase A's lifecycle contract and closure checkpoint are recorded in
   `docs/phase-a-lifecycle.md`. Counsel identified no necessary User question at
   closure; the implementation preserves historical snapshots on resource disposal
-  and does not claim rollback of arbitrary throwing-factory effects. Type/input
-  and phase remedies remain for their scheduled increments.
+  and does not claim rollback of arbitrary throwing-factory effects. Phase C's
+  typed-input checkpoint is in `docs/phase-c-inputs.md`; Counsel identified no
+  necessary User question in the supplied scope. Lead audited the connections
+  and preserved units/slot semantics; phase-anchor questions remain bounded to D.
 
 ## Test review: lifecycle and observable ordering
 
