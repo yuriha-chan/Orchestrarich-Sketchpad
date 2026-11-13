@@ -1,5 +1,32 @@
 # Consultation Ledger
 
+## Test review: lifecycle and observable ordering
+
+- Affected work: lifecycle review and the runner state update notification test.
+  The User authorized adjusting that test; runtime repairs remain outside scope.
+- User guidance: "some tests are indeed implicit contract, other test are
+  implementation coincidence, or in gray area. Some case may require my
+  judgement." Preserve that distinction rather than weakening all exact tests.
+- Decision 1: `timeline-runner.test.ts:1369-1399` requires termination of a
+  same-time peer whose start callback never ran. User: "in that case B's
+  termination should not be called, but generally the spec does not specify the
+  order of exection. so \"A starting fails -> B does not terminate\" test is wrong
+  technically". An unstarted peer must not receive termination; a test must not
+  assume A starts before B to assert that outcome. Observe whether execution
+  actually began rather than prescribe an unspecified cross-block order.
+  Core/session incompatibility remains R1 in code-review.md; no repair authorized.
+- Decision 2: use the comprehensible term "runner state update notification",
+  not "snapshot notification". User: "exact number and sequence of invocations
+  is indeed volatile. so check for at least on invocation for barrier logic time
+  in order, early-finishing block and blocking block updates at different timings
+  etc." The existing test now requires an update at each observed barrier logical
+  time, separately timed completion/blocking updates, and ordered logical-time
+  progress, without an exact callback count. General cross-block execution order
+  is unspecified; time-start before reads and termination before next starts
+  remain established, distinct partial-order constraints. Runner code unchanged.
+- Evidence and narrower test classifications: `docs/test-review.md`, T2/T3.
+  Both questions have User answers; the lifecycle test and runtime are unchanged.
+
 ## Phase structure and execution identity
 
 - Governing User corrections: "Animation should not be stopped for the phase boundary";

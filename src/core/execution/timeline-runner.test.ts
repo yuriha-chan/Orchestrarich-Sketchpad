@@ -205,28 +205,85 @@ describe("TimelineRunner column barrier", () => {
     ).toBe(true);
   });
 
-  it("notifies subscribers at stable barrier states only", async () => {
+  it("notifies runner state updates as blocks finish and barriers advance in order", async () => {
     const { runner, resolve } = createRunner(createTimeline());
     const snapshots: TimelineSnapshot[] = [];
+    let checkedUpdates = 0;
+
+    const expectUpdate = (
+      time: number,
+      phase: TimelineSnapshot["phase"],
+      states: Readonly<Record<string, BlockSnapshot["state"]>>,
+      blockingBlockIds: readonly string[],
+    ): void => {
+      const updates = snapshots.slice(checkedUpdates).map((snapshot) => ({
+        time: snapshot.time,
+        phase: snapshot.phase,
+        states: Object.fromEntries(
+          snapshot.blocks.map((block) => [block.id, block.state]),
+        ),
+        blockingBlockIds: new Set(snapshot.blockingBlockIds),
+      }));
+
+      expect(updates).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          time,
+          phase,
+          states: expect.objectContaining(states),
+          blockingBlockIds: new Set(blockingBlockIds),
+        }),
+      ]));
+      checkedUpdates = snapshots.length;
+    };
 
     runner.subscribe((snapshot) => snapshots.push(snapshot));
     runner.start();
+    await flush();
+    expectUpdate(0, "running", {
+      "click-wait": "running",
+      animation: "running",
+      sfx: "running",
+      "next-line": "pending",
+    }, ["click-wait", "animation", "sfx"]);
+
     resolve("animation");
+    await flush();
+    expectUpdate(0, "running", {
+      animation: "completed",
+      "click-wait": "running",
+      sfx: "running",
+      "next-line": "pending",
+    }, ["click-wait", "sfx"]);
+
     resolve("sfx");
+    await flush();
+    expectUpdate(0, "running", {
+      animation: "completed",
+      sfx: "completed",
+      "click-wait": "running",
+      "next-line": "pending",
+    }, ["click-wait"]);
+
     resolve("click-wait");
     await flush();
+    expectUpdate(1, "running", {
+      animation: "completed",
+      sfx: "completed",
+      "click-wait": "completed",
+      "next-line": "running",
+    }, ["next-line"]);
+
     resolve("next-line");
     await flush();
+    expectUpdate(2, "finished", {
+      animation: "completed",
+      sfx: "completed",
+      "click-wait": "completed",
+      "next-line": "completed",
+    }, []);
 
-    expect(
-      snapshots.map((snapshot) => [snapshot.phase, snapshot.time]),
-    ).toEqual([
-      ["running", 0],
-      ["running", 0],
-      ["running", 0],
-      ["running", 1],
-      ["finished", 2],
-    ]);
+    const notifiedTimes = snapshots.map((snapshot) => snapshot.time);
+    expect(notifiedTimes).toEqual([...notifiedTimes].sort((a, b) => a - b));
   });
 
   it("calls onBlockStart once per block", async () => {
