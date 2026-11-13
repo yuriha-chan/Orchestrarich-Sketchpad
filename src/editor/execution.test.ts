@@ -13,6 +13,7 @@ import type {
 } from "./model";
 import { DEFAULT_TRACKS } from "./model";
 import { createStageStore } from "./stage-state";
+import { blockDefinition } from "./builtin-blocks";
 import { MediaExecution, TimedExecution } from "./block-runtime";
 import { DEFAULT_RECT_COLOR } from "./blocks/rectangle";
 import type { DialoguePayload } from "./blocks/dialogue";
@@ -122,6 +123,28 @@ function numericSlot(
   initializations: { boundary: number; path: string[]; value: number }[] = [],
 ): NumericSlot {
   return { id, trackId, initializations };
+}
+
+interface Deferred {
+  readonly promise: Promise<void>;
+  resolve: () => void;
+  reject: (error?: unknown) => void;
+}
+
+function deferred(): Deferred {
+  let resolve!: () => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+interface ContinuationSpy {
+  readonly mock: {
+    readonly results: readonly { readonly value: unknown }[];
+  };
 }
 
 function setup(
@@ -352,6 +375,7 @@ describe("TimelineSession", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -792,7 +816,284 @@ describe("TimelineSession", () => {
     expect(run.stage.getState().items.map((item) => item.kind)).toEqual(["dialogue", "animation"]);
     run.session.dispose();
     expect(run.stage.getState().items).toEqual([]);
-    expect(run.finalizedInstances).toEqual(run.startedInstances);
+    expect(new Set(run.finalizedInstances)).toEqual(
+      new Set(run.startedInstances),
+    );
+    expect(run.finalizedInstances).toHaveLength(run.startedInstances.length);
+  });
+
+  it("fails cleanly when a registered factory throws before allocation", () => {
+    const run = setup([
+      placement({ id: "gate", kind: "wait", trackId: DEFAULT_TRACKS[1].id }),
+      placement({ id: "peer", kind: "wait", trackId: DEFAULT_TRACKS[2].id }),
+    ]);
+    const definition = blockDefinition("wait");
+    const createExecution = definition.createExecution.bind(definition);
+    vi.spyOn(definition, "createExecution").mockImplementation((context, block) => {
+      if (block.id === "gate") {
+        throw new Error("factory failed");
+      }
+      return createExecution(context, block);
+    });
+
+    expect(() => run.session.start()).not.toThrow();
+
+    const startedIds = new Set(
+      run.startedInstances.map((instance) => instance.placement.id),
+    );
+    expect(run.session.snapshot.phase).toBe("failed");
+    expect(new Set(run.finalizedInstances)).toEqual(
+      new Set(run.startedInstances),
+    );
+    expect(run.finalizedInstances).toHaveLength(run.startedInstances.length);
+    expect(run.session.snapshot.blocks.find((block) => block.id === "gate")?.state).toBe(
+      "failed",
+    );
+    if (!startedIds.has("peer")) {
+      expect(run.session.snapshot.blocks.find((block) => block.id === "peer")?.state).toBe(
+        "pending",
+      );
+    }
+  });
+
+  it("fails cleanly when an allocated instance's phase start throws", () => {
+    const run = setup([
+      placement({ id: "gate", kind: "wait", trackId: DEFAULT_TRACKS[1].id }),
+      placement({ id: "peer", kind: "wait", trackId: DEFAULT_TRACKS[2].id }),
+    ]);
+    const definition = blockDefinition("wait");
+    const createExecution = definition.createExecution.bind(definition);
+    vi.spyOn(definition, "createExecution").mockImplementation((context, block) => {
+      const instance = createExecution(context, block);
+      if (block.id === "gate") {
+        vi.spyOn(instance, "startPhase").mockImplementation(() => {
+          throw new Error("phase failed");
+        });
+      }
+      return instance;
+    });
+
+    expect(() => run.session.start()).not.toThrow();
+
+    const startedIds = new Set(
+      run.startedInstances.map((instance) => instance.placement.id),
+    );
+    expect(run.session.snapshot.phase).toBe("failed");
+    expect(new Set(run.finalizedInstances)).toEqual(
+      new Set(run.startedInstances),
+    );
+    expect(run.finalizedInstances).toHaveLength(run.startedInstances.length);
+    expect(run.session.snapshot.blocks.find((block) => block.id === "gate")?.state).toBe(
+      "failed",
+    );
+    if (!startedIds.has("peer")) {
+      expect(run.session.snapshot.blocks.find((block) => block.id === "peer")?.state).toBe(
+        "pending",
+      );
+    }
+  });
+
+  it("ignores a pending skip rejection after disposal", async () => {
+    const run = setup([
+      placement({ id: "gate", kind: "wait", trackId: DEFAULT_TRACKS[2].id }),
+    ]);
+    const definition = blockDefinition("wait");
+    const createExecution = definition.createExecution.bind(definition);
+    const skip = deferred();
+    vi.spyOn(definition, "createExecution").mockImplementation((context, block) => {
+      const instance = createExecution(context, block);
+      vi.spyOn(instance, "startPhase").mockImplementation(() => ({
+        execution: new Promise<void>(() => {}),
+        skip: () => skip.promise,
+      }));
+      return instance;
+    });
+
+    run.session.start();
+    const skipCatch = vi.spyOn(skip.promise, "catch");
+    run.session.requestSkip();
+    expect(skipCatch.mock.results).toHaveLength(1);
+    const continuationErrors: unknown[] = [];
+    for (const result of skipCatch.mock.results) {
+      void (result.value as Promise<unknown>).catch((error) =>
+        continuationErrors.push(error)
+      );
+    }
+    run.session.dispose();
+    skip.reject(new Error("late skip"));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(continuationErrors).toEqual([]);
+    expect(run.session.snapshot.phase).toBe("running");
+    expect(run.finalized).toEqual(["gate"]);
+  });
+
+  it("finalizes once and does not start a phase when disposed from onExecutionStart", () => {
+    const stage = createStageStore();
+    const finalized: ExecutionInstance[] = [];
+    let instance: ExecutionInstance | undefined;
+    let phaseStarted = false;
+    let session: TimelineSession;
+    session = new TimelineSession(
+      DEFAULT_TRACKS,
+      [
+        placement({
+          id: "clip",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "animation",
+        }),
+      ],
+      [],
+      120,
+      stage.getState(),
+      {
+        onExecutionStart: (created) => {
+          instance = created;
+          const startPhase = created.startPhase.bind(created);
+          vi.spyOn(created, "startPhase").mockImplementation((block) => {
+            phaseStarted = true;
+            return startPhase(block);
+          });
+          session.dispose();
+        },
+        onFinalize: (finalizedInstance) => finalized.push(finalizedInstance),
+      },
+    );
+
+    expect(() => session.start()).not.toThrow();
+
+    expect(instance).toBeDefined();
+    expect(phaseStarted).toBe(false);
+    expect(
+      finalized.filter((candidate) => candidate === instance),
+    ).toHaveLength(1);
+    expect(stage.getState().items).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not continue an instant addition disposed before its settlement", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "add",
+          kind: "addition",
+          start: 0,
+          length: 1,
+          inputA: 2,
+          inputB: 3,
+          slotBindings: { out: "sum" },
+        }),
+        placement({
+          id: "reader",
+          kind: "rectangle",
+          trackId: DEFAULT_TRACKS[1].id,
+          start: 1,
+          length: 1,
+          duration: 1,
+          slotBindings: { x: "sum" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("sum", null)],
+    );
+    const definition = blockDefinition("addition");
+    const createExecution = definition.createExecution.bind(definition);
+    const thenSpies: ContinuationSpy[] = [];
+    vi.spyOn(definition, "createExecution").mockImplementation((context, block) => {
+      const instance = createExecution(context, block);
+      const startPhase = instance.startPhase.bind(instance);
+      vi.spyOn(instance, "startPhase").mockImplementation((snapshot) => {
+        const result = startPhase(snapshot);
+        thenSpies.push(vi.spyOn(result.execution, "then"));
+        return result;
+      });
+      return instance;
+    });
+
+    run.session.start();
+    const notifiedAtDispose = run.snapshot();
+    const liveAtDispose = run.session.snapshot;
+    run.session.dispose();
+    expect(run.snapshot()).toEqual(notifiedAtDispose);
+    expect(run.session.snapshot).toEqual(liveAtDispose);
+
+    const continuations = thenSpies.flatMap((spy) =>
+      spy.mock.results.map((result) => result.value as Promise<unknown>),
+    );
+    expect(continuations).toHaveLength(1);
+    const continuationErrors: unknown[] = [];
+    for (const continuation of continuations) {
+      void continuation.catch((error) => continuationErrors.push(error));
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(continuationErrors).toEqual([]);
+    expect(run.session.snapshot).toEqual(liveAtDispose);
+    expect(run.snapshot()).toEqual(notifiedAtDispose);
+    expect(run.startedInstances).toHaveLength(1);
+    expect(run.startedInstances[0]?.placement.id).toBe("add");
+    expect(run.finalized).toEqual(["add"]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("finalizes an animation whose completed phase waits at a barrier when another block fails", async () => {
+    const run = setup([
+      placement({
+        id: "clip",
+        trackId: DEFAULT_TRACKS[1].id,
+        kind: "animation",
+        start: 0,
+        length: 4,
+        duration: 4,
+        fadeIn: 1,
+        fadeOut: 1,
+      }),
+      placement({
+        id: "gate",
+        trackId: DEFAULT_TRACKS[2].id,
+        kind: "wait",
+        start: 0,
+        length: 1,
+        duration: 1,
+      }),
+    ]);
+    const definition = blockDefinition("wait");
+    const createExecution = definition.createExecution.bind(definition);
+    const gateExecution = deferred();
+    vi.spyOn(definition, "createExecution").mockImplementation((context, block) => {
+      const instance = createExecution(context, block);
+      if (block.id === "gate") {
+        vi.spyOn(instance, "startPhase").mockReturnValue({
+          execution: gateExecution.promise,
+        });
+      }
+      return instance;
+    });
+
+    run.session.start();
+    const clip = run.startedInstances.find(
+      (instance) => instance.placement.id === "clip",
+    )!;
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(run.blockState("clip~0")).toBe("completed");
+    expect(run.stage.getState().items.some((item) => item.id === clip.id)).toBe(true);
+
+    gateExecution.reject(new Error("gate failed"));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(run.session.snapshot.phase).toBe("failed");
+    expect(run.stage.getState().items).toEqual([]);
+    expect(
+      run.finalized.filter((id) => id === "clip"),
+    ).toHaveLength(1);
+    expect(
+      run.finalized.filter((id) => id === "gate"),
+    ).toHaveLength(1);
   });
 
   it("allocates different execution identities for the same placement", async () => {

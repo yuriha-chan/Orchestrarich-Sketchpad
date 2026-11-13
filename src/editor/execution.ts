@@ -37,6 +37,10 @@ export interface TimelineSessionOptions {
 
 export const LOOP_ITERATIONS = 3;
 
+type ExecutionAllocation =
+  | { readonly state: "allocating"; readonly instance?: never }
+  | { readonly state: "active"; readonly instance: ExecutionInstance };
+
 function toLoopDefinition(loop: LoopNode): LoopDefinition {
   return {
     start: loop.start,
@@ -88,7 +92,7 @@ export class TimelineSession {
   private readonly runner: TimelineRunner;
   private readonly unsubscribe: () => void;
   private readonly definitionByBlockId: Readonly<Record<string, ExecutionDefinition>>;
-  private readonly activeExecutions = new Map<ExecutionDefinition, ExecutionInstance>();
+  private readonly activeExecutions = new Map<ExecutionDefinition, ExecutionAllocation>();
   private readonly options: TimelineSessionOptions;
   private readonly bpm: number;
   private readonly placements: readonly Placement[];
@@ -158,8 +162,10 @@ export class TimelineSession {
     );
     this.unsubscribe = this.runner.subscribe((snapshot) => {
       if (snapshot.phase === "failed") {
-        for (const instance of this.activeExecutions.values()) {
-          this.finalizeInstance(instance);
+        for (const allocation of this.activeExecutions.values()) {
+          if (allocation.state === "active") {
+            this.finalizeInstance(allocation.instance);
+          }
         }
         this.activeExecutions.clear();
       }
@@ -205,9 +211,12 @@ export class TimelineSession {
   }
 
   dispose(): void {
+    this.runner.dispose();
     this.unsubscribe();
-    for (const instance of this.activeExecutions.values()) {
-      this.finalizeInstance(instance);
+    for (const allocation of this.activeExecutions.values()) {
+      if (allocation.state === "active") {
+        this.finalizeInstance(allocation.instance);
+      }
     }
     this.activeExecutions.clear();
   }
@@ -274,10 +283,11 @@ export class TimelineSession {
     return value;
   }
 
-  private startBlock(block: BlockSnapshot): BlockStartResult {
+  private startBlock(block: BlockSnapshot): BlockStartResult | undefined {
     const definition = this.definitionByBlockId[block.id];
     const placement = definition.placement;
     if (block.start === placement.start) {
+      this.activeExecutions.set(definition, { state: "allocating" });
       const instance = blockDefinition(placement.kind).createExecution(
         {
           bpm: this.bpm,
@@ -288,16 +298,24 @@ export class TimelineSession {
         },
         placement,
       );
-      this.activeExecutions.set(definition, instance);
+      this.activeExecutions.set(definition, { state: "active", instance });
       this.options.onExecutionStart?.(instance);
+      if (this.runner.isDisposed) return;
+      return instance.startPhase(block);
     }
-    return this.activeExecutions.get(definition)!.startPhase(block);
+    const allocation = this.activeExecutions.get(definition)!;
+    return allocation.instance!.startPhase(block);
   }
 
   private terminateBlock(block: BlockSnapshot, outputs: BlockOutputs): void {
     const definition = this.definitionByBlockId[block.id];
     const placement = definition.placement;
-    const instance = this.activeExecutions.get(definition)!;
+    const allocation = this.activeExecutions.get(definition)!;
+    if (allocation.state === "allocating") {
+      this.activeExecutions.delete(definition);
+      return;
+    }
+    const instance = allocation.instance;
     instance.terminatePhase(block);
     if (block.end === placement.start + placement.length) {
       if (block.state === "completed") {

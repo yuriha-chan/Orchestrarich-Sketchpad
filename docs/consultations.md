@@ -1,5 +1,31 @@
 # Consultation Ledger
 
+## Repair schedule and block/input boundaries
+
+- Affected work: the approved plan for bugs, M1-M5, test corrections, block
+  relocation/isolation and unit-bearing inputs.
+- Proposed sequence: `docs/refactoring-schedule.md`. Full independent checkpoint
+  package: `docs/consultation-refactoring-schedule.md`.
+- Established direction: block definitions are not editor-owned; panels derive
+  from semantic input specifications; stored units affect runtime behavior.
+- Design checkpoints: lifecycle cancellation and typed input/registry operations.
+  Lead owns internal mechanisms and type representation; these do not inherently
+  require the User to select an implementation. Public stop-state changes, if
+  needed, require a concrete behavioral question. Unsettled visible phase anchors
+  block only the affected R7 work. Existing order/notification decisions are closed.
+- The User approved execution, added M5, authorized phase-completion commits and
+  continuation, and requested extensive Senior Programmer delegation. Later
+  questions do not block unrelated
+  established increments. No new unit-policy decision is needed to preserve the
+  current behavior and grouping.
+- Status: Counsel checkpoint completed. The schedule separates behavioral decision
+  gates from Lead-owned design checkpoints and records requirement provenance.
+  Phase A's lifecycle contract and closure checkpoint are recorded in
+  `docs/phase-a-lifecycle.md`. Counsel identified no necessary User question at
+  closure; the implementation preserves historical snapshots on resource disposal
+  and does not claim rollback of arbitrary throwing-factory effects. Type/input
+  and phase remedies remain for their scheduled increments.
+
 ## Test review: lifecycle and observable ordering
 
 - Affected work: lifecycle review and the runner state update notification test.

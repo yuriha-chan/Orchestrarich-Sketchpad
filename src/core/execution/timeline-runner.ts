@@ -188,6 +188,7 @@ export class TimelineRunner {
   private currentTime = 0;
   private currentPhase: TimelinePhase = "idle";
   private pumping = false;
+  private disposed = false;
   private lastTimeStart: number | undefined;
 
   constructor(
@@ -222,6 +223,10 @@ export class TimelineRunner {
     return this.currentPhase;
   }
 
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
   barrierSpan(time: number = this.currentTime): BarrierSpan {
     let start = 0;
     let end = 0;
@@ -239,6 +244,9 @@ export class TimelineRunner {
   }
 
   start(): void {
+    if (this.disposed) {
+      throw new Error("Disposed timeline cannot start");
+    }
     if (this.currentPhase !== "idle") {
       throw new Error(`Timeline cannot start in phase "${this.currentPhase}"`);
     }
@@ -247,9 +255,18 @@ export class TimelineRunner {
     this.pump();
   }
 
+  dispose(): void {
+    this.disposed = true;
+    this.listeners.clear();
+    for (const placement of this.placements) {
+      placement.skipHandler = undefined;
+    }
+  }
+
   requestSkip(): void {
+    if (this.disposed) return;
     for (const placement of this.runningPlacements()) {
-      if (this.currentPhase !== "running") {
+      if (this.disposed || this.currentPhase !== "running") {
         break;
       }
       this.deliverSkip(placement, "user");
@@ -365,6 +382,7 @@ export class TimelineRunner {
         frame.iteration += 1;
         this.resetBlocksInside(frame.loop);
         this.options.onLoopRepeat?.(frame.loop, frame.loop.end, frame.loop.start);
+        if (this.disposed) return;
         this.currentTime = frame.loop.start;
         this.lastTimeStart = undefined;
         return;
@@ -418,7 +436,7 @@ export class TimelineRunner {
     generation: number,
     outputs: BlockOutputs,
   ): void {
-    if (this.currentPhase !== "running") {
+    if (this.disposed || this.currentPhase !== "running") {
       return;
     }
     if (placement.generation !== generation) {
@@ -434,7 +452,7 @@ export class TimelineRunner {
   }
 
   private failBlock(placement: BlockExecution, generation: number): void {
-    if (this.currentPhase !== "running") {
+    if (this.disposed || this.currentPhase !== "running") {
       return;
     }
     if (placement.generation !== generation) {
@@ -455,11 +473,11 @@ export class TimelineRunner {
   private autoSkipIfCooperative(): void {
     let firedAny = true;
 
-    while (firedAny && this.currentPhase === "running") {
+    while (firedAny && !this.disposed && this.currentPhase === "running") {
       firedAny = false;
 
       for (const placement of this.placements) {
-        if (this.currentPhase !== "running") {
+        if (this.disposed || this.currentPhase !== "running") {
           break;
         }
         if (placement.state !== "running") {
@@ -494,6 +512,7 @@ export class TimelineRunner {
 
   private terminateEndingAt(end: number): void {
     for (const placement of this.placements) {
+      if (this.disposed) break;
       if (placement.end !== end) {
         continue;
       }
@@ -506,6 +525,7 @@ export class TimelineRunner {
 
   private terminateRunning(): void {
     for (const placement of this.placements) {
+      if (this.disposed) break;
       if (placement.state !== "running" && placement.state !== "failed") {
         continue;
       }
@@ -524,7 +544,7 @@ export class TimelineRunner {
 
     this.pumping = true;
     try {
-      while (this.currentPhase === "running") {
+      while (!this.disposed && this.currentPhase === "running") {
         this.enterLoopsAtCurrentTime();
 
         if (
@@ -535,6 +555,8 @@ export class TimelineRunner {
           this.options.onTimeStart?.(this.currentTime);
         }
 
+        if (this.disposed) break;
+
         const due = this.placements.filter(
           (placement) =>
             placement.start === this.currentTime &&
@@ -542,22 +564,20 @@ export class TimelineRunner {
         );
 
         for (const placement of due) {
-          placement.state = "running";
-        }
-        for (const placement of due) {
-          if (this.currentPhase !== "running") {
+          if (this.disposed || this.currentPhase !== "running") {
             break;
           }
+          placement.state = "running";
           this.invokeBlockStart(placement);
         }
 
-        if (this.currentPhase !== "running") {
+        if (this.disposed || this.currentPhase !== "running") {
           break;
         }
 
         this.autoSkipIfCooperative();
 
-        if (this.currentPhase !== "running") {
+        if (this.disposed || this.currentPhase !== "running") {
           break;
         }
         if (this.currentTime >= this.horizon) {
@@ -570,7 +590,7 @@ export class TimelineRunner {
 
         this.terminateEndingAt(this.currentTime + 1);
 
-        if (this.currentPhase !== "running") {
+        if (this.disposed || this.currentPhase !== "running") {
           break;
         }
         this.advanceFrom(this.currentTime + 1);
@@ -582,6 +602,7 @@ export class TimelineRunner {
   }
 
   private notify(): void {
+    if (this.disposed) return;
     const snapshot = this.snapshot();
     for (const listener of this.listeners) {
       listener(snapshot);

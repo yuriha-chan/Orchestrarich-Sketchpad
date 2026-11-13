@@ -1337,26 +1337,29 @@ describe("TimelineRunner promise execution", () => {
     ]);
   });
 
-  it("ignores a rejection after the block has completed", async () => {
-    let execution: Deferred | undefined;
+  it("ignores a skip rejection delivered after the block has completed", async () => {
+    const execution = deferred();
+    const skip = deferred();
     const runner = new TimelineRunner(
       {
         tracks: [{ id: "a", blocks: [{ id: "a0", start: 0, length: 1 }] }],
       },
       {
-        onBlockStart: () => {
-          execution = deferred();
-          return { execution: execution.promise };
-        },
+        onBlockStart: () => ({
+          execution: execution.promise,
+          skip: () => skip.promise,
+        }),
       },
     );
 
     runner.start();
-    execution!.resolve();
+    runner.requestSkip();
+    execution.resolve();
     await flush();
     expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(1);
 
-    execution!.reject(new Error("late"));
+    skip.reject(new Error("late skip"));
     await flush();
 
     expect(runner.phase).toBe("finished");
@@ -1423,7 +1426,7 @@ describe("TimelineRunner failure", () => {
     expect(runner.time).toBe(0);
   });
 
-  it("stops starting the remaining blocks when a start callback fails", () => {
+  it("stops startup and terminates only callbacks that were invoked", () => {
     const started: string[] = [];
     const terminated: string[] = [];
 
@@ -1450,8 +1453,23 @@ describe("TimelineRunner failure", () => {
 
     runner.start();
 
-    expect(started).toEqual(["a0"]);
-    expect(terminated).toEqual(["a0", "b0"]);
+    const invoked = new Set(started);
+    const invocationCounts = new Map<string, number>();
+    const terminationCounts = new Map<string, number>();
+    for (const id of started) {
+      invocationCounts.set(id, (invocationCounts.get(id) ?? 0) + 1);
+    }
+    for (const id of terminated) {
+      terminationCounts.set(id, (terminationCounts.get(id) ?? 0) + 1);
+    }
+
+    expect(invoked.has("a0")).toBe(true);
+    expect(terminationCounts).toEqual(invocationCounts);
+    for (const block of runner.snapshot().blocks) {
+      if (!invoked.has(block.id)) {
+        expect(block.state).toBe("pending");
+      }
+    }
     expect(runner.phase).toBe("failed");
     expect(runner.time).toBe(0);
   });
@@ -1480,6 +1498,190 @@ describe("TimelineRunner lifecycle", () => {
     runner.start();
 
     expect(() => runner.start()).toThrow(/cannot start/i);
+  });
+});
+
+describe("TimelineRunner disposal", () => {
+  it("rejects a later start and tolerates repeated disposal", () => {
+    const started: string[] = [];
+    const { runner } = createRunner(
+      { tracks: [{ id: "a", blocks: [{ id: "a0", start: 0, length: 1 }] }] },
+      {
+        onStart: (block) => started.push(block.id),
+      },
+    );
+
+    runner.dispose();
+    expect(() => runner.dispose()).not.toThrow();
+    expect(() => runner.start()).toThrow();
+    expect(started).toEqual([]);
+    expect(runner.phase).toBe("idle");
+    expect(runner.time).toBe(0);
+  });
+
+  it("freezes the running snapshot and ignores queued completion, future starts, and termination", async () => {
+    const started: string[] = [];
+    const terminated: string[] = [];
+    const notifications: TimelineSnapshot[] = [];
+    const { runner, resolve } = createRunner(
+      {
+        tracks: [
+          {
+            id: "a",
+            blocks: [
+              { id: "a0", start: 0, length: 1 },
+              { id: "a1", start: 1, length: 1 },
+            ],
+          },
+        ],
+      },
+      {
+        onStart: (block) => started.push(block.id),
+        onTerminate: (block) => terminated.push(block.id),
+      },
+    );
+
+    runner.subscribe((snapshot) => notifications.push(snapshot));
+    runner.start();
+    const snapshotAtStart = runner.snapshot();
+
+    resolve("a0");
+    runner.dispose();
+    expect(() => runner.dispose()).not.toThrow();
+    expect(runner.snapshot()).toEqual(snapshotAtStart);
+    const notificationsAtDispose = notifications.length;
+
+    await flush();
+
+    expect(runner.snapshot()).toEqual(snapshotAtStart);
+    expect(runner.phase).toBe("running");
+    expect(started).toEqual(["a0"]);
+    expect(terminated).toEqual([]);
+    expect(notifications.length).toBe(notificationsAtDispose);
+  });
+
+  it("ignores pending skip rejection and later skip requests after disposal", async () => {
+    const skip = deferred();
+    const skipped: SkipReason[] = [];
+    const terminated: string[] = [];
+    const notifications: TimelineSnapshot[] = [];
+    const { runner } = createRunner(
+      { tracks: [{ id: "a", blocks: [{ id: "a0", start: 0, length: 1 }] }] },
+      {
+        onSkip: (_block, reason) => {
+          skipped.push(reason);
+          return skip.promise;
+        },
+        onTerminate: (block) => terminated.push(block.id),
+      },
+    );
+
+    runner.subscribe((snapshot) => notifications.push(snapshot));
+    runner.start();
+    runner.requestSkip();
+    expect(skipped).toEqual(["user"]);
+    const snapshotAtDispose = runner.snapshot();
+
+    runner.dispose();
+    const notificationsAtDispose = notifications.length;
+    expect(runner.snapshot()).toEqual(snapshotAtDispose);
+
+    runner.requestSkip();
+    expect(skipped).toEqual(["user"]);
+    expect(notifications.length).toBe(notificationsAtDispose);
+
+    skip.reject(new Error("late skip"));
+    await flush();
+
+    expect(runner.snapshot()).toEqual(snapshotAtDispose);
+    expect(runner.phase).toBe("running");
+    expect(terminated).toEqual([]);
+    expect(notifications.length).toBe(notificationsAtDispose);
+  });
+
+  it("stops the pump when a start callback disposes synchronously", async () => {
+    const started: string[] = [];
+    const terminated: string[] = [];
+    const notifications: TimelineSnapshot[] = [];
+    let firstStarted: string | undefined;
+    let runner: TimelineRunner;
+    const created = createRunner(
+      {
+        tracks: [
+          {
+            id: "a",
+            blocks: [
+              { id: "a0", start: 0, length: 1 },
+              { id: "later", start: 1, length: 1 },
+            ],
+          },
+          {
+            id: "b",
+            blocks: [{ id: "b0", start: 0, length: 1 }],
+          },
+        ],
+      },
+      {
+        onStart: (block) => {
+          started.push(block.id);
+          if (firstStarted === undefined) {
+            firstStarted = block.id;
+            runner.dispose();
+          }
+        },
+        onTerminate: (block) => terminated.push(block.id),
+      },
+    );
+    runner = created.runner;
+    runner.subscribe((snapshot) => notifications.push(snapshot));
+
+    runner.start();
+    const snapshotAtDispose = runner.snapshot();
+    const notificationsAtDispose = notifications.length;
+
+    expect(firstStarted).toBeDefined();
+    created.resolve(firstStarted!);
+    await flush();
+
+    expect(started).toEqual([firstStarted]);
+    expect(runner.snapshot()).toEqual(snapshotAtDispose);
+    expect(runner.phase).toBe("running");
+    expect(terminated).toEqual([]);
+    expect(notifications.length).toBe(notificationsAtDispose);
+  });
+
+  it("freezes at the loop repeat snapshot when disposed from onLoopRepeat", async () => {
+    const started: string[] = [];
+    let snapshotAtDispose: TimelineSnapshot | undefined;
+    let runner: TimelineRunner;
+    const created = createRunner(
+      {
+        tracks: [{ id: "a", blocks: [{ id: "a0", start: 1, length: 2 }] }],
+        loops: [{ start: 1, end: 3, iterations: 2 }],
+      },
+      {
+        onStart: (block) => started.push(block.id),
+        onLoopRepeat: () => {
+          snapshotAtDispose = runner.snapshot();
+          runner.dispose();
+        },
+      },
+    );
+    runner = created.runner;
+
+    runner.start();
+    created.resolve("a0");
+    await flush();
+
+    expect(snapshotAtDispose).toBeDefined();
+    expect(started).toEqual(["a0"]);
+    expect(runner.snapshot()).toEqual(snapshotAtDispose);
+    expect(runner.phase).toBe("running");
+
+    await flush();
+
+    expect(started).toEqual(["a0"]);
+    expect(runner.snapshot()).toEqual(snapshotAtDispose);
   });
 });
 
