@@ -137,6 +137,22 @@ export function cellAtX(layout: TimelineLayout, x: number): number {
   return last;
 }
 
+export function boundaryAtX(layout: TimelineLayout, x: number): number {
+  const cellCount = layout.cellLefts.length;
+
+  if (x < 0) {
+    return 0;
+  }
+
+  if (x >= layout.width) {
+    return cellCount;
+  }
+
+  return layout.segments.find(
+    (segment) => x >= segment.left && x < segment.left + segment.width,
+  )!.time;
+}
+
 export function cellDelta(
   layout: TimelineLayout,
   fromX: number,

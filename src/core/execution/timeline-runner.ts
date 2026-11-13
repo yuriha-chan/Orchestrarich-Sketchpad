@@ -33,6 +33,24 @@ export interface BarrierSpan {
   readonly end: number;
 }
 
+export function validateBlockLoopSpan(
+  block: { readonly id: string; readonly start: number; readonly end: number },
+  loops: readonly { readonly start: number; readonly end: number }[],
+): void {
+  for (const loop of loops) {
+    if (block.start >= loop.end || block.end <= loop.start) {
+      continue;
+    }
+    if (block.start >= loop.start && block.end <= loop.end) {
+      continue;
+    }
+    if (block.start <= loop.start && block.end >= loop.end) {
+      throw new Error(`Block ${block.id} contains loop ${loop.start}-${loop.end}`);
+    }
+    throw new Error(`Block ${block.id} overlaps loop ${loop.start}-${loop.end}`);
+  }
+}
+
 export interface BlockSnapshot {
   readonly id: string;
   readonly trackId: string;
@@ -323,24 +341,7 @@ export class TimelineRunner {
 
   private validateBlocksAgainstLoops(): void {
     for (const placement of this.placements) {
-      for (const loop of this.loops) {
-        const intersects =
-          placement.start < loop.end && placement.end > loop.start;
-        if (!intersects) {
-          continue;
-        }
-        if (placement.start >= loop.start && placement.end <= loop.end) {
-          continue;
-        }
-        if (placement.start <= loop.start && placement.end >= loop.end) {
-          throw new Error(
-            `Block ${placement.id} contains loop ${loop.start}-${loop.end}`,
-          );
-        }
-        throw new Error(
-          `Block ${placement.id} overlaps loop ${loop.start}-${loop.end}`,
-        );
-      }
+      validateBlockLoopSpan(placement, this.loops);
     }
   }
 

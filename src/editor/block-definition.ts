@@ -140,6 +140,7 @@ export interface FadeHandles {
   readonly fadeOut: number;
   setFadeIn(value: number): void;
   setFadeOut(value: number): void;
+  setFades(fades: FadeData): void;
 }
 
 export interface PhaseSpan {

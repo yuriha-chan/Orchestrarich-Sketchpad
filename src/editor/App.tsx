@@ -64,6 +64,7 @@ import {
   barrierRect,
   blockSpan,
   boundary,
+  boundaryAtX,
   buildTimelineLayout,
   cellAtX,
   cellDelta,
@@ -809,7 +810,7 @@ export function App() {
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
-    const time = cellAtX(layout, event.clientX - rect.left);
+    const time = boundaryAtX(layout, event.clientX - rect.left);
     if (loopDrag.edge === "start") {
       setLoopBoundary(node.id, "start", clamp(time, 0, node.end - 1));
     } else {
@@ -1790,6 +1791,7 @@ function TrackLabel({
             aria-label={`Name for ${track.label}`}
             placeholder={track.label}
             value={draft}
+            disabled={!editable}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
@@ -1803,6 +1805,7 @@ function TrackLabel({
             className="slot-action is-icon"
             aria-label="Save track name"
             title="Save name"
+            disabled={!editable}
           >
             <Check size={12} aria-hidden="true" />
           </button>
@@ -2426,14 +2429,7 @@ function BlockView({
         current.fadeIn,
         current.fadeOut,
       );
-      if (current.boundaryKind === "fadeIn") {
-        handles.setFadeIn(fades.fadeIn);
-      } else if (current.boundaryKind === "fadeOut") {
-        handles.setFadeOut(fades.fadeOut);
-      } else {
-        handles.setFadeIn(fades.fadeIn);
-        handles.setFadeOut(fades.fadeOut);
-      }
+      handles.setFades(fades);
       return;
     }
     if (current.mode === "resizeStart") {

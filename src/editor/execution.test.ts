@@ -159,6 +159,7 @@ function setup(
   const startedInstances: ExecutionInstance[] = [];
   const finalizedInstances: ExecutionInstance[] = [];
   const rectangleXs: number[] = [];
+  const rectangleXsByPlacement = new Map<string, number[]>();
   let snapshot: TimelineSnapshot | null = null;
   const session = new TimelineSession(DEFAULT_TRACKS, placements, loops, bpm, stage.getState(), {
     slots,
@@ -177,7 +178,11 @@ function setup(
             candidate.layer === "screen" && candidate.id === instance.id,
         );
       if (item !== undefined) {
-        rectangleXs.push((item.payload as RectanglePayload).x);
+        const x = (item.payload as RectanglePayload).x;
+        rectangleXs.push(x);
+        const reads = rectangleXsByPlacement.get(instance.placement.id) ?? [];
+        reads.push(x);
+        rectangleXsByPlacement.set(instance.placement.id, reads);
       }
     },
     onFinalize: (instance) => {
@@ -192,6 +197,7 @@ function setup(
     startedInstances,
     finalizedInstances,
     rectangleXs,
+    rectangleXsByPlacement,
     stage,
     advanceDialogue: (placementId: string) => {
       const instance = [...startedInstances]
@@ -313,6 +319,123 @@ describe("toTimelineDefinition", () => {
         loops: [{ start: 1, end: 2, iterations: 3, loops: [] }],
       },
     ]);
+  });
+});
+
+describe("authored container preflight", () => {
+  const containedLoop: LoopNode[] = [
+    { id: "loop", start: 1, end: 3, children: [] },
+  ];
+
+  const containingAnimation = (fadeIn: number, fadeOut: number): Placement =>
+    placement({
+      id: "clip",
+      trackId: DEFAULT_TRACKS[1].id,
+      kind: "animation",
+      start: 0,
+      length: 4,
+      fadeIn,
+      fadeOut,
+    });
+
+  it("rejects a lowered animation containing a loop without fades", () => {
+    expect(() =>
+      toTimelineDefinition(
+        DEFAULT_TRACKS,
+        [containingAnimation(0, 0)],
+        containedLoop,
+      ),
+    ).toThrow(/contains loop/i);
+  });
+
+  it("rejects a lowered animation containing a loop with fades", () => {
+    expect(() =>
+      toTimelineDefinition(
+        DEFAULT_TRACKS,
+        [containingAnimation(1, 1)],
+        containedLoop,
+      ),
+    ).toThrow(/contains loop/i);
+  });
+
+  it("rejects a session animation containing a loop before stage effects without fades", () => {
+    const stage = createStageStore();
+
+    expect(() =>
+      setup([containingAnimation(0, 0)], 120, stage, [], containedLoop),
+    ).toThrow(/contains loop/i);
+    expect(stage.getState().items).toEqual([]);
+  });
+
+  it("rejects a session animation containing a loop before stage effects with fades", () => {
+    const stage = createStageStore();
+
+    expect(() =>
+      setup([containingAnimation(1, 1)], 120, stage, [], containedLoop),
+    ).toThrow(/contains loop/i);
+    expect(stage.getState().items).toEqual([]);
+  });
+
+  it("allows media inside a loop", () => {
+    const clip = placement({
+      id: "clip",
+      trackId: DEFAULT_TRACKS[1].id,
+      kind: "animation",
+      start: 1,
+      length: 2,
+      fadeIn: 1,
+      fadeOut: 1,
+    });
+    const loops: LoopNode[] = [
+      { id: "loop", start: 0, end: 4, children: [] },
+    ];
+
+    expect(() =>
+      toTimelineDefinition(DEFAULT_TRACKS, [clip], loops),
+    ).not.toThrow();
+    expect(() =>
+      setup([clip], 120, createStageStore(), [], loops),
+    ).not.toThrow();
+  });
+
+  it("allows media disjoint from a loop", () => {
+    const clip = placement({
+      id: "clip",
+      trackId: DEFAULT_TRACKS[1].id,
+      kind: "animation",
+      start: 4,
+      length: 2,
+    });
+    const loops: LoopNode[] = [
+      { id: "loop", start: 0, end: 4, children: [] },
+    ];
+
+    expect(() =>
+      toTimelineDefinition(DEFAULT_TRACKS, [clip], loops),
+    ).not.toThrow();
+    expect(() =>
+      setup([clip], 120, createStageStore(), [], loops),
+    ).not.toThrow();
+  });
+
+  it("allows media spanning exactly the loop", () => {
+    const clip = placement({
+      id: "clip",
+      trackId: DEFAULT_TRACKS[1].id,
+      kind: "animation",
+      start: 0,
+      length: 4,
+    });
+    const loops: LoopNode[] = [
+      { id: "loop", start: 0, end: 4, children: [] },
+    ];
+
+    expect(() =>
+      toTimelineDefinition(DEFAULT_TRACKS, [clip], loops),
+    ).not.toThrow();
+    expect(() =>
+      setup([clip], 120, createStageStore(), [], loops),
+    ).not.toThrow();
   });
 });
 
@@ -1530,7 +1653,7 @@ describe("addition blocks", () => {
     expect(rectangleItem(run, "reader")?.x).toBe(10);
   });
 
-  it("assigns the output at the block's end time", async () => {
+  it("reads an old slot value inside a multi-cell addition and its output at the end", async () => {
     const run = setup(
       [
         placement({
@@ -1543,7 +1666,25 @@ describe("addition blocks", () => {
           slotBindings: { out: "sum" },
         }),
         placement({
+          id: "gate",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "wait",
+          start: 0,
+          length: 1,
+          duration: 1,
+        }),
+        placement({
+          id: "inside",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 1,
+          length: 1,
+          duration: 1,
+          slotBindings: { x: "sum" },
+        }),
+        placement({
           id: "reader",
+          trackId: DEFAULT_TRACKS[1].id,
           kind: "rectangle",
           start: 3,
           length: 1,
@@ -1553,15 +1694,67 @@ describe("addition blocks", () => {
       ],
       120,
       createStageStore(),
-      [numericSlot("sum", null)],
+      [numericSlot("sum", null, [{ boundary: 0, path: [], value: 7 }])],
+    );
+
+    run.session.start();
+
+    expect(run.snapshot()?.time).toBe(0);
+    expect(run.blockState("add")).toBe("running");
+    expect(run.blockState("inside")).toBe("pending");
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(run.blockState("add")).toBe("completed");
+    expect(run.snapshot()?.time).toBe(0);
+    expect(run.blockState("inside")).toBe("pending");
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(run.snapshot()?.time).toBe(1);
+    expect(rectangleItem(run, "inside")?.x).toBe(7);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(run.snapshot()?.time).toBe(3);
+    expect(rectangleItem(run, "reader")?.x).toBe(5);
+    run.session.dispose();
+  });
+
+  it("reads a same-boundary initialization instead of the ending producer output", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "add",
+          kind: "addition",
+          start: 0,
+          length: 2,
+          inputA: 2,
+          inputB: 3,
+          slotBindings: { out: "value" },
+        }),
+        placement({
+          id: "consumer",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 2,
+          length: 1,
+          duration: 1,
+          slotBindings: { x: "value" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [numericSlot("value", null, [{ boundary: 2, path: [], value: 8 }])],
     );
 
     run.session.start();
     await vi.advanceTimersByTimeAsync(0);
 
+    expect(run.snapshot()?.time).toBe(2);
     expect(run.blockState("add")).toBe("completed");
-    expect(run.snapshot()?.time).toBe(3);
-    expect(rectangleItem(run, "reader")?.x).toBe(5);
+    expect(rectangleItem(run, "consumer")?.x).toBe(8);
+    run.session.dispose();
   });
 
   it("rejects a read inside the block's span", () => {
@@ -1683,7 +1876,7 @@ describe("gap-keyed slot initialization execution", () => {
     expect(run.snapshot()?.phase).toBe("finished");
   });
 
-  it("reapplies an initialization in the gap inside the loop start", async () => {
+  it("reapplies an initialization in the gap inside the loop start after an addition writes", async () => {
     const run = setup(
       [
         placement({
@@ -1693,6 +1886,24 @@ describe("gap-keyed slot initialization execution", () => {
           start: 1,
           length: 1,
           slotBindings: { x: "speed" },
+        }),
+        placement({
+          id: "written",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 2,
+          length: 1,
+          slotBindings: { x: "speed" },
+        }),
+        placement({
+          id: "add",
+          trackId: DEFAULT_TRACKS[2].id,
+          kind: "addition",
+          start: 1,
+          length: 1,
+          inputA: 3,
+          inputB: 6,
+          slotBindings: { out: "speed" },
         }),
       ],
       120,
@@ -1707,8 +1918,109 @@ describe("gap-keyed slot initialization execution", () => {
     );
 
     run.session.start();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(run.rectangleXs).toEqual([2, 9, 2, 9, 2, 9]);
+    expect(run.snapshot()?.phase).toBe("finished");
+  });
+
+  it("reapplies an outer initialization at the outer frequency only", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "outer-reader",
+          kind: "rectangle",
+          start: 0,
+          length: 1,
+          slotBindings: { x: "signal" },
+        }),
+        placement({
+          id: "inner-reader",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 1,
+          length: 1,
+          slotBindings: { x: "signal" },
+        }),
+        placement({
+          id: "add",
+          trackId: DEFAULT_TRACKS[2].id,
+          kind: "addition",
+          start: 1,
+          length: 1,
+          inputA: 3,
+          inputB: 4,
+          slotBindings: { out: "signal" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        numericSlot("signal", null, [
+          { boundary: 0, path: ["outer"], value: 1 },
+        ]),
+      ],
+      [
+        {
+          id: "outer",
+          start: 0,
+          end: 6,
+          children: [{ id: "inner", start: 1, end: 3, children: [] }],
+        },
+      ],
+    );
+
+    run.session.start();
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(run.rectangleXsByPlacement.get("outer-reader")).toEqual([1, 1, 1]);
+    expect(run.rectangleXsByPlacement.get("inner-reader")).toEqual([
+      1, 7, 7, 1, 7, 7, 1, 7, 7,
+    ]);
+    expect(run.snapshot()?.phase).toBe("finished");
+  });
+
+  it("applies touching sibling loop gaps in order and reapplies the inside start", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "reader",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          start: 3,
+          length: 1,
+          slotBindings: { x: "value" },
+        }),
+        placement({
+          id: "add",
+          trackId: DEFAULT_TRACKS[2].id,
+          kind: "addition",
+          start: 4,
+          length: 1,
+          inputA: 50,
+          inputB: 49,
+          slotBindings: { out: "value" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        numericSlot("value", null, [
+          { boundary: 3, path: ["left"], value: 30 },
+          { boundary: 3, path: [], value: 10 },
+          { boundary: 3, path: ["right"], value: 20 },
+        ]),
+      ],
+      [
+        { id: "left", start: 0, end: 3, children: [] },
+        { id: "right", start: 3, end: 6, children: [] },
+      ],
+    );
+
+    run.session.start();
     await vi.advanceTimersByTimeAsync(1500);
 
-    expect(run.rectangleXs).toEqual([2, 2, 2]);
+    expect(run.rectangleXs).toEqual([20, 20, 20]);
+    expect(run.snapshot()?.phase).toBe("finished");
   });
 });

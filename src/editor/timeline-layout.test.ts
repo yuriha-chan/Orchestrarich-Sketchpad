@@ -7,6 +7,7 @@ import {
   barrierRect,
   blockSpan,
   boundary,
+  boundaryAtX,
   buildTimelineLayout,
   cellAtX,
   cellDelta,
@@ -166,6 +167,62 @@ describe("cellAtX", () => {
   it("computes drag deltas from the containing cells", () => {
     expect(cellDelta(layout, cellLeft(layout, 0), cellLeft(layout, 2))).toBe(2);
     expect(cellDelta(layout, cellLeft(layout, 2), cellLeft(layout, 1))).toBe(-1);
+  });
+});
+
+describe("boundaryAtX", () => {
+  const layout = layoutFor(4, [
+    [[], ["a"]],
+    [["a"], ["a", "b"]],
+    [["a", "b"]],
+    [["a", "b"], ["a"]],
+    [["a"], []],
+  ]);
+
+  it("maps leading and interior gap runs to their boundary time", () => {
+    expect(boundaryAtX(layout, boundary(layout, 0).left)).toBe(0);
+    expect(boundaryAtX(layout, boundary(layout, 0).right - 1)).toBe(0);
+    expect(boundaryAtX(layout, boundary(layout, 2).left)).toBe(2);
+    expect(boundaryAtX(layout, boundary(layout, 2).right - 1)).toBe(2);
+  });
+
+  it("maps every gap in a contiguous run to the same boundary time", () => {
+    for (const time of [0, 1, 3, 4]) {
+      for (const gap of boundary(layout, time).gaps) {
+        expect(boundaryAtX(layout, gap.left)).toBe(time);
+        expect(boundaryAtX(layout, gap.right - 1)).toBe(time);
+      }
+    }
+  });
+
+  it("maps each cell tile to its start time", () => {
+    expect(boundaryAtX(layout, cellLeft(layout, 0))).toBe(0);
+    expect(boundaryAtX(layout, cellRight(layout, 0) - 1)).toBe(0);
+    expect(boundaryAtX(layout, cellLeft(layout, 2))).toBe(2);
+    expect(boundaryAtX(layout, cellRight(layout, 2) - 1)).toBe(2);
+  });
+
+  it("returns the cell count at the trailing boundary instead of the last cell", () => {
+    expect(boundaryAtX(layout, boundary(layout, 4).left)).toBe(4);
+    expect(boundaryAtX(layout, boundary(layout, 4).right - 1)).toBe(4);
+    expect(boundaryAtX(layout, layout.width - 1)).toBe(4);
+    expect(boundaryAtX(layout, layout.width)).toBe(4);
+    expect(cellAtX(layout, boundary(layout, 4).left)).toBe(3);
+  });
+
+  it("clamps coordinates outside the layout", () => {
+    expect(boundaryAtX(layout, -20)).toBe(0);
+    expect(boundaryAtX(layout, layout.width + 20)).toBe(4);
+  });
+});
+
+describe("boundaryAtX on an empty layout", () => {
+  const layout = buildTimelineLayout(0, uniformGaps);
+
+  it("returns zero", () => {
+    expect(boundaryAtX(layout, 0)).toBe(0);
+    expect(boundaryAtX(layout, -20)).toBe(0);
+    expect(boundaryAtX(layout, 20)).toBe(0);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { FadeHandles } from "../block-definition";
+import type { FadeData, FadeHandles } from "../block-definition";
 import type { Placement } from "../model";
 import { clampFadesToLength, type MediaData } from "./media-data";
 
@@ -21,6 +21,12 @@ export function mediaFadeHandles<T extends MediaData>(
         const fades = clampFadesToLength(current.fadeIn, value, length);
         return { ...current, ...fades };
       });
+    },
+    setFades(fades: FadeData) {
+      update((current) => ({
+        ...current,
+        ...clampFadesToLength(fades.fadeIn, fades.fadeOut, length),
+      }));
     },
   };
 }

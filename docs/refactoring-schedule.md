@@ -54,7 +54,8 @@ gap traversal ownership.
 ## Order and bounded increments
 
 Phase A is complete: see `phase-a-lifecycle.md` for the contract, regression
-coverage, consultation outcome and verification. Phase B is next.
+coverage, consultation outcome and verification. Phase B is complete: see
+`phase-b-repairs.md` and `Implementation_Notes.B4.md`. Phase C is next.
 
 ### A. Execution lifecycle correctness — R1/R2, T1/T3
 

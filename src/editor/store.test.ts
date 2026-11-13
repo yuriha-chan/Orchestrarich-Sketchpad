@@ -6,6 +6,9 @@ import { DEFAULT_TRACKS, TRACK_COLORS, type DurationUnit, type Placement, type V
 import { DEFAULT_RECT_COLOR, type RectangleData } from "./blocks/rectangle";
 import type { DurationData } from "./blocks/duration-data";
 import type { AdditionData } from "./blocks/addition";
+import type { MediaData } from "./blocks/media-data";
+import type { FadeData } from "./block-definition";
+import { blockDefinition } from "./builtin-blocks";
 import { convertRectUnit } from "./stage-geometry";
 import { useExperimentStore } from "./store";
 
@@ -166,6 +169,50 @@ function setAdditionInput(
       ? { ...current, inputA: value }
       : { ...current, inputB: value };
   });
+}
+
+function createAnimation(
+  trackId: string = DEFAULT_TRACKS[1].id,
+  start = 0,
+  length = 4,
+): string {
+  useExperimentStore.getState().create(trackId, "animation", start, length);
+  const blocks = useExperimentStore.getState().blocks;
+  return blocks[blocks.length - 1].id;
+}
+
+function animationBlock(id: string): Placement<MediaData> {
+  const block = blockById(id);
+  if (block === undefined) {
+    throw new Error(`animation ${id} not found`);
+  }
+  return block as Placement<MediaData>;
+}
+
+type PhaseSnapshot = readonly {
+  readonly index: number;
+  readonly offset: number;
+  readonly length: number;
+}[];
+
+function commitFades(id: string, fades: FadeData): readonly PhaseSnapshot[] {
+  const definition = blockDefinition("animation");
+  const snapshots: PhaseSnapshot[] = [];
+  const handles = definition.fadeHandles?.(animationBlock(id), (change) => {
+    useExperimentStore.getState().editBlockData(id, change);
+    const current = animationBlock(id);
+    snapshots.push(definition.phases?.(current.data, current.length) ?? []);
+  }) ?? null;
+  if (handles === null) {
+    throw new Error("animation definition has no fade handles");
+  }
+  handles.setFades(fades);
+  return snapshots;
+}
+
+function animationSnapshot(id: string): Placement<MediaData> {
+  const block = animationBlock(id);
+  return { ...block, data: { ...block.data } };
 }
 
 function slotById(id: string) {
@@ -815,6 +862,118 @@ describe("addition blocks", () => {
       .getState()
       .blocks.find((candidate) => candidate.id === id)!;
     expect(block.slotBindings).toBeUndefined();
+  });
+});
+
+describe("media fade handle edits", () => {
+  it("commits a shared 2/2 boundary as 3/1 in one update", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 2, fadeOut: 2 }));
+
+    const snapshots = commitFades(id, { fadeIn: 3, fadeOut: 1 });
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toEqual([
+      { index: 0, offset: 0, length: 3 },
+      { index: 1, offset: 3, length: 1 },
+    ]);
+    expect(animationBlock(id).data).toMatchObject({ fadeIn: 3, fadeOut: 1 });
+  });
+
+  it("commits a shared 2/2 boundary as 1/3 in one update", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 2, fadeOut: 2 }));
+
+    const snapshots = commitFades(id, { fadeIn: 1, fadeOut: 3 });
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toEqual([
+      { index: 0, offset: 0, length: 1 },
+      { index: 1, offset: 1, length: 3 },
+    ]);
+    expect(animationBlock(id).data).toMatchObject({ fadeIn: 1, fadeOut: 3 });
+  });
+
+  it("commits a pair containing a zero fade in one update", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 2, fadeOut: 2 }));
+
+    const snapshots = commitFades(id, { fadeIn: 0, fadeOut: 2 });
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toEqual([
+      { index: 0, offset: 0, length: 2 },
+      { index: 1, offset: 2, length: 2 },
+    ]);
+    expect(animationBlock(id).data).toMatchObject({ fadeIn: 0, fadeOut: 2 });
+  });
+});
+
+describe("media span transactions", () => {
+  it("updates synced geometry, duration and clamped fades", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 6);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 6,
+      syncBeatsToCellSpan: true,
+      fadeIn: 3,
+      fadeOut: 3,
+    }));
+
+    const applied = useExperimentStore.getState().setSpan(id, 2, 4);
+
+    expect(applied).toBe(true);
+    const block = animationBlock(id);
+    expect(block.start).toBe(2);
+    expect(block.length).toBe(4);
+    expect(block.data).toMatchObject({
+      duration: 4,
+      syncBeatsToCellSpan: true,
+      fadeIn: 2,
+      fadeOut: 2,
+    });
+    expect(
+      blockDefinition("animation").phases?.(block.data, block.length),
+    ).toEqual([
+      { index: 0, offset: 0, length: 2 },
+      { index: 1, offset: 2, length: 2 },
+    ]);
+  });
+
+  it("keeps the whole placement when the span would overlap another block", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 4,
+      fadeIn: 1,
+      fadeOut: 1,
+    }));
+    const before = animationSnapshot(id);
+    createAnimation(DEFAULT_TRACKS[1].id, 6, 2);
+
+    const applied = useExperimentStore.getState().setSpan(id, 4, 4);
+
+    expect(applied).toBe(false);
+    expect(blockById(id)).toEqual(before);
+  });
+
+  it("keeps the whole placement when the span would cut a loop", () => {
+    const id = createAnimation(DEFAULT_TRACKS[2].id, 1, 2);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 2,
+      fadeIn: 1,
+      fadeOut: 1,
+    }));
+    useExperimentStore.getState().addLoopAtCell(0);
+    const loopId = useExperimentStore.getState().loops[0].id;
+    useExperimentStore.getState().setLoopBoundary(loopId, "end", 4);
+    const before = animationSnapshot(id);
+
+    const applied = useExperimentStore.getState().setSpan(id, 3, 2);
+
+    expect(applied).toBe(false);
+    expect(blockById(id)).toEqual(before);
   });
 });
 

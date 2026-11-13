@@ -1,5 +1,6 @@
 import {
   TimelineRunner,
+  validateBlockLoopSpan,
   type BarrierSpan,
   type BlockOutputs,
   type BlockSnapshot,
@@ -19,7 +20,7 @@ import {
 } from "../core/slots/numeric-slots.ts";
 import { type Placement, type Track } from "./model";
 import { blockDefinition, boundSlotProperties } from "./builtin-blocks";
-import { boundaryGapPaths, type LoopNode } from "./loops";
+import { allLoops, boundaryGapPaths, type LoopNode } from "./loops";
 import { liveNumericSlots } from "./slot-gaps";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";
@@ -41,13 +42,50 @@ type ExecutionAllocation =
   | { readonly state: "allocating"; readonly instance?: never }
   | { readonly state: "active"; readonly instance: ExecutionInstance };
 
-function toLoopDefinition(loop: LoopNode): LoopDefinition {
-  return {
-    start: loop.start,
-    end: loop.end,
-    iterations: LOOP_ITERATIONS,
-    loops: loop.children.map(toLoopDefinition),
+function compileTimeline(
+  tracks: readonly Track[],
+  placements: readonly Placement[],
+  loops: readonly LoopNode[],
+): {
+  readonly timeline: TimelineDefinition;
+  readonly definitionByBlockId: Readonly<Record<string, ExecutionDefinition>>;
+  readonly loopPaths: ReadonlyMap<LoopDefinition, readonly string[]>;
+} {
+  const regions = allLoops(loops);
+  for (const placement of placements) {
+    validateBlockLoopSpan({
+      id: placement.id,
+      start: placement.start,
+      end: placement.start + placement.length,
+    }, regions);
+  }
+  const loopPaths = new Map<LoopDefinition, readonly string[]>();
+  const toLoop = (node: LoopNode, ancestors: readonly string[]): LoopDefinition => {
+    const path = [...ancestors, node.id];
+    const definition: LoopDefinition = {
+      start: node.start,
+      end: node.end,
+      iterations: LOOP_ITERATIONS,
+      loops: node.children.map((child) => toLoop(child, path)),
+    };
+    loopPaths.set(definition, path);
+    return definition;
   };
+  const definitions = placements.map(compilePlacement);
+  const byBlock: Record<string, ExecutionDefinition> = {};
+  const timeline: TimelineDefinition = {
+    tracks: tracks.map((track) => ({
+      id: track.id,
+      blocks: definitions
+        .filter(({ placement }) => placement.trackId === track.id)
+        .flatMap((definition) => definitionBlocks(definition).map((block) => {
+          byBlock[block.id] = definition;
+          return block;
+        })),
+    })),
+    loops: loops.map((node) => toLoop(node, [])),
+  };
+  return { timeline, definitionByBlockId: byBlock, loopPaths };
 }
 
 export function toTimelineDefinition(
@@ -55,15 +93,7 @@ export function toTimelineDefinition(
   placements: readonly Placement[],
   loops: readonly LoopNode[],
 ): TimelineDefinition {
-  return {
-    tracks: tracks.map((track) => ({
-      id: track.id,
-      blocks: placements
-        .filter((placement) => placement.trackId === track.id)
-        .flatMap((placement) => definitionBlocks(compilePlacement(placement))),
-    })),
-    loops: loops.map(toLoopDefinition),
-  };
+  return compileTimeline(tracks, placements, loops).timeline;
 }
 
 export function slotReads(placements: readonly Placement[]): NumericSlotRead[] {
@@ -116,41 +146,11 @@ export class TimelineSession {
     this.placements = placements;
     this.loops = loops;
     this.slots = liveNumericSlots(options.slots ?? [], loops);
-    const loopPaths = new Map<LoopDefinition, readonly string[]>();
-    const toLoop = (
-      node: LoopNode,
-      ancestors: readonly string[],
-    ): LoopDefinition => {
-      const path = [...ancestors, node.id];
-      const definition: LoopDefinition = {
-        start: node.start,
-        end: node.end,
-        iterations: LOOP_ITERATIONS,
-        loops: node.children.map((child) => toLoop(child, path)),
-      };
-      loopPaths.set(definition, path);
-      return definition;
-    };
-    const coreLoops = loops.map((node) => toLoop(node, []));
-    this.loopPaths = loopPaths;
-    const definitions = placements.map(compilePlacement);
-    const byBlock: Record<string, ExecutionDefinition> = {};
-    for (const definition of definitions) {
-      for (const block of definitionBlocks(definition)) {
-        byBlock[block.id] = definition;
-      }
-    }
-    this.definitionByBlockId = byBlock;
+    const compiled = compileTimeline(tracks, placements, loops);
+    this.loopPaths = compiled.loopPaths;
+    this.definitionByBlockId = compiled.definitionByBlockId;
     this.runner = new TimelineRunner(
-      {
-        tracks: tracks.map((track) => ({
-          id: track.id,
-          blocks: definitions
-            .filter(({ placement }) => placement.trackId === track.id)
-            .flatMap(definitionBlocks),
-        })),
-        loops: coreLoops,
-      },
+      compiled.timeline,
       {
         onTimeStart: (time) => this.applyTimeStart(time),
         onLoopRepeat: (loop, endTime, startTime) =>
