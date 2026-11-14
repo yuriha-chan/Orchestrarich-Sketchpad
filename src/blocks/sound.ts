@@ -1,6 +1,5 @@
-import { Volume2 } from "lucide-react";
-import type { BlockDefinitionSpec } from "../block-definition";
-import { MediaExecution } from "../block-runtime";
+import type { BlockDefinitionSpec } from "./block-definition";
+import { MediaExecution } from "../core/blocks/runtime.ts";
 import { durationField } from "./duration-data";
 import {
   mediaCarry,
@@ -9,7 +8,6 @@ import {
   onMediaLengthChange,
   type MediaData,
 } from "./media-data";
-import { mediaRenderBlock } from "./media-block";
 import {
   fadesField,
   mediaFadeTitle,
@@ -23,7 +21,7 @@ const sound: BlockDefinitionSpec<MediaData> = {
   kind: "sound",
   label: "Sound",
   color: "#059669",
-  icon: Volume2,
+  icon: "Volume2",
   fields: [
     duration,
     fadesField<MediaData>(),
@@ -37,7 +35,7 @@ const sound: BlockDefinitionSpec<MediaData> = {
   }),
   carryOver: mediaCarry,
   convertFrom: mediaFromCarry,
-  renderBlock: mediaRenderBlock,
+  timelineFades: true,
   timelineClassName: MEDIA_TIMELINE_CLASS,
   timelineTitle: mediaFadeTitle,
   phases: (data, length) => mediaPhases(data.fadeIn, data.fadeOut, length),

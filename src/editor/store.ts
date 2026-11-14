@@ -28,7 +28,7 @@ import {
   type LoopNode,
 } from "./loops";
 import type { WorkspaceId } from "./workspaces";
-import { blockDefinition } from "./builtin-blocks";
+import { blockDefinition } from "../blocks/builtin-blocks";
 import { compilePlacement, phaseOffsets } from "./execution-definition";
 import { initializationPathKey, type NumericSlot } from "../core/slots/numeric-slots";
 

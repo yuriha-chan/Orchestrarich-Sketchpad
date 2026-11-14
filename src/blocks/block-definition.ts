@@ -1,13 +1,10 @@
-import type { ComponentType, ReactNode } from "react";
-import type { LucideIcon } from "lucide-react";
-import type {
-  DurationUnit,
-  LoopRegion,
-  Placement,
-  SlotProperty,
-  Vec3,
-} from "./model";
-import type { ExecutionContext, ExecutionInstance } from "./block-runtime";
+import type { ComponentType } from "react";
+import type { IconName } from "./icon";
+import type { LoopRegion, SlotProperty } from "../core/blocks/contracts.ts";
+import type { DurationUnit } from "../core/blocks/duration.ts";
+import type { Vec3 } from "../core/blocks/geometry.ts";
+import type { Placement } from "../core/blocks/placement.ts";
+import type { ExecutionContext, ExecutionInstance } from "../core/blocks/runtime.ts";
 
 export interface FieldProps<T = unknown> {
   readonly block: Placement<T>;
@@ -85,7 +82,7 @@ export interface ChoicePanelField<T> extends PanelFieldBase {
   readonly choices: readonly {
     readonly value: string;
     readonly label: string;
-    readonly icon: LucideIcon;
+    readonly icon: IconName;
     readonly commit: (data: T, context: EntryContext) => T;
   }[];
 }
@@ -174,10 +171,6 @@ export function deriveSlotProperties<T>(
   return properties;
 }
 
-export interface StageViewProps<T = unknown> {
-  readonly view: { readonly id: string; readonly payload: T };
-}
-
 export interface PhaseSpan {
   readonly index: number;
   readonly offset: number;
@@ -203,18 +196,17 @@ export type TimelineGesture<T> = (
   current: { start: number; length: number },
 ) => TimelineGestureEdit<T>;
 
-export interface BlockDefinition<T = unknown, S = unknown> {
+export interface BlockDefinition<T = unknown> {
   readonly kind: string;
   readonly label: string;
   readonly color: string;
-  readonly icon: LucideIcon;
+  readonly icon: IconName;
   readonly slotProperties: readonly SlotProperty[];
   readonly fields: readonly PanelField<T>[];
   readonly createData: (length: number) => T;
   readonly carryOver?: (data: T) => CarryOver;
   readonly convertFrom: (carry: CarryOver, length: number) => T;
-  readonly renderStage?: ComponentType<StageViewProps<S>>;
-  readonly renderBlock?: (block: Placement<T>, width: number, phasePositions: readonly number[]) => ReactNode;
+  readonly timelineFades?: boolean;
   readonly timelineClassName?: string;
   readonly timelineTitle?: (block: Placement<T>) => string;
   readonly phases?: (data: T, length: number) => readonly PhaseSpan[];
@@ -231,16 +223,16 @@ export interface BlockDefinition<T = unknown, S = unknown> {
   ) => ExecutionInstance;
 }
 
-export type BlockDefinitionSpec<T = unknown, S = unknown> = Omit<
-  BlockDefinition<T, S>,
+export type BlockDefinitionSpec<T = unknown> = Omit<
+  BlockDefinition<T>,
   "slotProperties"
 >;
 
-export function packBlockDefinition<T, S>(
-  spec: BlockDefinitionSpec<T, S>,
-): BlockDefinition<unknown, unknown> {
+export function packBlockDefinition<T>(
+  spec: BlockDefinitionSpec<T>,
+): BlockDefinition<unknown> {
   return {
     ...spec,
     slotProperties: deriveSlotProperties(spec.fields),
-  } as unknown as BlockDefinition<unknown, unknown>;
+  } as unknown as BlockDefinition<unknown>;
 }

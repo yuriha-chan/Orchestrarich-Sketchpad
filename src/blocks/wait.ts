@@ -1,6 +1,5 @@
-import { Hourglass } from "lucide-react";
-import type { BlockDefinitionSpec } from "../block-definition";
-import { TimedExecution } from "../block-runtime";
+import type { BlockDefinitionSpec } from "./block-definition";
+import { TimedExecution } from "../core/blocks/runtime.ts";
 import { durationCarry, durationField, durationFromCarry, onDurationLengthChange, type DurationData } from "./duration-data";
 
 const duration = durationField<DurationData>();
@@ -9,7 +8,7 @@ const wait: BlockDefinitionSpec<DurationData> = {
   kind: "wait",
   label: "Wait",
   color: "#475569",
-  icon: Hourglass,
+  icon: "Hourglass",
   fields: [duration],
   createData: (length) => ({
     duration: length,

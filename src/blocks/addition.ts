@@ -1,9 +1,8 @@
-import { Calculator } from "lucide-react";
-import type { BlockSnapshot, BlockStartResult } from "../../core/execution/timeline-runner.ts";
-import type { BlockDefinitionSpec } from "../block-definition";
-import { numberInput, numberOutput } from "../block-inputs";
-import { ExecutionInstance, type ExecutionContext } from "../block-runtime";
-import type { Placement } from "../model";
+import type { BlockSnapshot, BlockStartResult } from "../core/execution/timeline-runner.ts";
+import type { BlockDefinitionSpec } from "./block-definition";
+import { numberInput, numberOutput } from "./block-inputs";
+import { ExecutionInstance, type ExecutionContext } from "../core/blocks/runtime.ts";
+import type { Placement } from "../core/blocks/placement.ts";
 
 export interface AdditionData {
   inputA: number;
@@ -67,7 +66,7 @@ const addition: BlockDefinitionSpec<AdditionData> = {
   kind: "addition",
   label: "Addition",
   color: "#0891b2",
-  icon: Calculator,
+  icon: "Calculator",
   fields: [
     inputA,
     inputB,

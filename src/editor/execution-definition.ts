@@ -1,6 +1,6 @@
 import type { BlockDefinition } from "../core/execution/timeline-runner.ts";
 import type { Placement } from "./model";
-import { blockDefinition } from "./builtin-blocks";
+import { blockDefinition } from "../blocks/builtin-blocks";
 
 export function phaseBlockId(placementId: string, index: number): string {
   return `${placementId}~${index}`;

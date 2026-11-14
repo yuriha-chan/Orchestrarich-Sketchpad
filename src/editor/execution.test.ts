@@ -13,11 +13,36 @@ import type {
 } from "./model";
 import { DEFAULT_TRACKS } from "./model";
 import { createStageStore } from "./stage-state";
-import { blockDefinition } from "./builtin-blocks";
-import { MediaExecution, TimedExecution } from "./block-runtime";
-import { DEFAULT_RECT_COLOR } from "./blocks/rectangle";
-import type { DialoguePayload } from "./blocks/dialogue";
-import type { RectanglePayload } from "./blocks/rectangle";
+import { blockDefinition } from "../blocks/builtin-blocks";
+import { packBlockDefinition } from "../blocks/block-definition";
+import { numberInput } from "../blocks/block-inputs";
+import { MediaExecution, TimedExecution } from "../core/blocks/runtime.ts";
+import type {
+  StageAnimationCard,
+  StageDialogueCard,
+  StagePrimitive,
+  StageRectangle,
+} from "../core/blocks/presentation.ts";
+import { DEFAULT_RECT_COLOR } from "../blocks/rectangle";
+
+const freshBlockLookup = vi.hoisted(() => ({
+  definition: null as import("../blocks/block-definition").BlockDefinition | null,
+  calls: [] as string[],
+}));
+
+vi.mock("../blocks/builtin-blocks", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../blocks/builtin-blocks")>();
+  return {
+    ...actual,
+    blockDefinition: (kind: string) => {
+      freshBlockLookup.calls.push(kind);
+      if (freshBlockLookup.definition?.kind === kind) {
+        return freshBlockLookup.definition;
+      }
+      return actual.blockDefinition(kind);
+    },
+  };
+});
 
 type PlacementOverrides = Omit<Partial<Placement>, "kind" | "data"> & {
   kind?: string;
@@ -177,8 +202,8 @@ function setup(
           (candidate) =>
             candidate.layer === "screen" && candidate.id === instance.id,
         );
-      if (item !== undefined) {
-        const x = (item.payload as RectanglePayload).x;
+      if (item !== undefined && item.type === "rectangle") {
+        const x = item.x;
         rectangleXs.push(x);
         const reads = rectangleXsByPlacement.get(instance.placement.id) ?? [];
         reads.push(x);
@@ -204,14 +229,28 @@ function setup(
         .reverse()
         .find((instance) => instance.placement.id === placementId)!;
       const dialogue = stage.getState().items.find(
-        (item) => item.id === instance.id,
+        (item): item is StageDialogueCard =>
+          item.id === instance.id && item.type === "dialogue",
       )!;
-      (dialogue.payload as DialoguePayload).confirm();
+      dialogue.confirm();
     },
     snapshot: (): TimelineSnapshot | null => snapshot,
     blockState: (id: string) =>
       snapshot?.blocks.find((block) => block.id === id)?.state,
   };
+}
+
+function stagePrimitive(
+  run: ReturnType<typeof setup>,
+  instanceId: string,
+): StagePrimitive {
+  const item = run.stage.getState().items.find(
+    (candidate) => candidate.id === instanceId,
+  );
+  if (item === undefined) {
+    throw new Error(`No stage primitive "${instanceId}"`);
+  }
+  return item;
 }
 
 function rectangleItem(run: ReturnType<typeof setup>, placementId: string) {
@@ -221,18 +260,12 @@ function rectangleItem(run: ReturnType<typeof setup>, placementId: string) {
   if (instance === undefined) {
     return undefined;
   }
-  const item = run.stage.getState().items.find(
-    (candidate) => candidate.layer === "screen" && candidate.id === instance.id,
+  return run.stage.getState().items.find(
+    (candidate): candidate is StageRectangle =>
+      candidate.layer === "screen" &&
+      candidate.id === instance.id &&
+      candidate.type === "rectangle",
   );
-  if (item === undefined) {
-    return undefined;
-  }
-  return {
-    id: item.id,
-    kind: item.kind,
-    layer: item.layer,
-    ...(item.payload as RectanglePayload),
-  };
 }
 
 describe("toTimelineDefinition", () => {
@@ -579,15 +612,20 @@ describe("TimelineSession", () => {
     expect(run.stage.getState().items).toEqual([]);
   });
 
-  it("passes the rectangle color to its stage view", () => {
+  it("creates a typed rectangle primitive with its authored color", () => {
     const run = setup([
       placement({ id: "rect", kind: "rectangle", color: [12, 34, 56] }),
     ]);
 
     run.session.start();
 
-    expect(rectangleItem(run, "rect")).toMatchObject({
-      kind: "rectangle",
+    const instance = run.startedInstances.find(
+      (started) => started.placement.id === "rect",
+    )!;
+    const rectangle = stagePrimitive(run, instance.id) as StageRectangle;
+    expect(rectangle).toMatchObject({
+      type: "rectangle",
+      layer: "screen",
       color: [12, 34, 56],
     });
   });
@@ -616,10 +654,15 @@ describe("TimelineSession", () => {
       run.stage.getState().items.filter((item) => item.layer === "screen"),
     ).toEqual([
       {
-        kind: "rectangle",
+        type: "rectangle",
         id: rectangle.id,
         layer: "screen",
-        payload: { x: 3, y: 2, w: 1, h: 1, unit: "span", color: DEFAULT_RECT_COLOR },
+        x: 3,
+        y: 2,
+        w: 1,
+        h: 1,
+        unit: "span",
+        color: DEFAULT_RECT_COLOR,
       },
     ]);
 
@@ -636,6 +679,104 @@ describe("TimelineSession", () => {
 
     expect(run.stage.getState().items).toEqual([]);
     expect(run.snapshot()?.time).toBe(1);
+  });
+
+  it("runs a fresh definition through the lookup and generic rectangle API", async () => {
+    interface FreshRectangleData {
+      x: number;
+    }
+    const xInput = numberInput<FreshRectangleData>({
+      kind: "number",
+      section: "input",
+      key: "x",
+      label: "X",
+      slot: true,
+      min: 0,
+      max: 512,
+      step: 0.25,
+      value: (data) => data.x,
+      commit: (data, value) => ({ ...data, x: value }),
+    });
+    const fresh = packBlockDefinition<FreshRectangleData>({
+      kind: "fresh-rectangle",
+      label: "Fresh Rectangle",
+      color: "#123456",
+      icon: "Square",
+      fields: [xInput],
+      createData: () => ({ x: 0 }),
+      convertFrom: () => ({ x: 0 }),
+      createExecution: (context, block) =>
+        new (class extends TimedExecution {
+          constructor() {
+            super(block, context, 1000);
+            context.stage.addRectangle({
+              id: this.id,
+              type: "rectangle",
+              layer: "screen",
+              x: xInput.resolve(block, context.readSlot),
+              y: 2,
+              w: 1,
+              h: 1,
+              unit: "span",
+              color: [12, 34, 56],
+            });
+          }
+
+          override terminate(): void {
+            super.terminate();
+            context.stage.remove(this.id);
+          }
+        })(),
+    });
+    const input = fresh.fields.find((field) => field.kind === "number");
+    if (input === undefined) {
+      throw new Error("Expected the fresh definition's numeric input");
+    }
+    const created = fresh.createData(1);
+    const data = input.commit(created, 4);
+    expect(data).toEqual({ x: 4 });
+    expect(created).toEqual({ x: 0 });
+
+    freshBlockLookup.definition = fresh;
+    freshBlockLookup.calls.length = 0;
+    try {
+      const run = setup([
+        placement({
+          id: "fresh-rectangle",
+          kind: "fresh-rectangle",
+          data,
+        }),
+      ]);
+
+      run.session.start();
+
+      expect(
+        freshBlockLookup.calls.filter((kind) => kind === "fresh-rectangle"),
+      ).not.toHaveLength(0);
+      const instance = run.startedInstances.find(
+        (started) => started.placement.id === "fresh-rectangle",
+      )!;
+      expect(stagePrimitive(run, instance.id)).toMatchObject({
+        type: "rectangle",
+        layer: "screen",
+        x: 4,
+        y: 2,
+        w: 1,
+        h: 1,
+        unit: "span",
+        color: [12, 34, 56],
+      });
+      expect(
+        run.stage.getState().items.filter((item) => item.layer === "screen"),
+      ).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(run.finalized).toEqual(["fresh-rectangle"]);
+      expect(run.stage.getState().items).toEqual([]);
+    } finally {
+      freshBlockLookup.definition = null;
+    }
   });
 
   it("waits at the end barrier for the animation after the dialogue advances", async () => {
@@ -953,15 +1094,13 @@ describe("TimelineSession", () => {
     ]);
     run.session.start();
     const clip = run.startedInstances.find((instance) => instance.placement.id === "clip")!;
-    const presentation = run.stage.getState().items.find((item) => item.id === clip.id)!;
+    const presentation = stagePrimitive(run, clip.id) as StageAnimationCard;
     expect(presentation).toMatchObject({
-      kind: "animation",
+      type: "animation",
       layer: "card",
-      payload: {
-        durationMs: 2000,
-        fadeInFraction: 0.25,
-        fadeOutFraction: 0.25,
-      },
+      durationMs: 2000,
+      fadeInFraction: 0.25,
+      fadeOutFraction: 0.25,
     });
 
     await vi.advanceTimersByTimeAsync(2000);
@@ -969,24 +1108,27 @@ describe("TimelineSession", () => {
     expect(run.blockState("clip~0")).toBe("completed");
     expect(run.blockState("clip~1")).toBe("pending");
     expect(run.finalizedInstances).not.toContain(clip);
-    expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
+    expect(stagePrimitive(run, clip.id)).toMatchObject({
       id: presentation.id,
-      payload: { playback: { positionMs: 500, playing: false } },
+      type: "animation",
+      playback: { positionMs: 500, playing: false },
     });
 
     run.advanceDialogue("gate");
     await vi.advanceTimersByTimeAsync(0);
-    expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
+    expect(stagePrimitive(run, clip.id)).toMatchObject({
       id: presentation.id,
-      payload: { playback: { positionMs: 500, playing: true } },
+      type: "animation",
+      playback: { positionMs: 500, playing: true },
     });
     await vi.advanceTimersByTimeAsync(1500);
     expect(run.snapshot()?.time).toBe(3);
     expect(run.blockState("clip~2")).toBe("completed");
     expect(run.finalizedInstances).not.toContain(clip);
-    expect(run.stage.getState().items.find((item) => item.id === clip.id)).toMatchObject({
+    expect(stagePrimitive(run, clip.id)).toMatchObject({
       id: presentation.id,
-      payload: { playback: { positionMs: 2000, playing: false } },
+      type: "animation",
+      playback: { positionMs: 2000, playing: false },
     });
     expect(run.startedInstances.filter((instance) => instance.placement.id === "clip")).toEqual([clip]);
 
@@ -997,22 +1139,24 @@ describe("TimelineSession", () => {
     run.session.dispose();
   });
 
-  it("dialogue execution writes UI state and owns the confirmation callback", async () => {
+  it("creates a typed dialogue primitive whose confirm resolves execution", async () => {
     const run = setup([placement({ id: "line" })]);
     expect(run.stage.getState().items).toEqual([]);
     run.session.start();
-    const dialogue = run.stage.getState().items[0];
+    const instance = run.startedInstances.find(
+      (started) => started.placement.id === "line",
+    )!;
+    const dialogue = stagePrimitive(run, instance.id) as StageDialogueCard;
     expect(dialogue).toMatchObject({
-      kind: "dialogue",
+      type: "dialogue",
       layer: "card",
-      payload: {
-        text: "lazy dog jumps ...",
-        label: "Dialogue @0",
-      },
+      text: "lazy dog jumps ...",
+      label: "Dialogue @0",
     });
+    expect(typeof dialogue.confirm).toBe("function");
     expect(run.blockState("line")).toBe("running");
 
-    run.advanceDialogue("line");
+    dialogue.confirm();
     expect(run.stage.getState().items).toEqual([]);
     await vi.advanceTimersByTimeAsync(0);
     expect(run.blockState("line")).toBe("completed");
@@ -1025,7 +1169,13 @@ describe("TimelineSession", () => {
       placement({ id: "clip", kind: "animation", trackId: DEFAULT_TRACKS[1].id }),
     ]);
     run.session.start();
-    expect(run.stage.getState().items.map((item) => item.kind)).toEqual(["dialogue", "animation"]);
+    expect(
+      new Set(
+        run.stage
+          .getState()
+          .items.map((item) => stagePrimitive(run, item.id).type),
+      ),
+    ).toEqual(new Set(["dialogue", "animation"]));
     run.session.dispose();
     expect(run.stage.getState().items).toEqual([]);
     expect(new Set(run.finalizedInstances)).toEqual(

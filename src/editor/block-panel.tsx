@@ -4,9 +4,10 @@ import type {
   EntryContext,
   PanelField,
   PanelSection,
-} from "../block-definition";
-import { panelSections } from "../block-definition";
-import type { Placement } from "../model";
+} from "../blocks/block-definition";
+import { panelSections } from "../blocks/block-definition";
+import type { Placement } from "./model";
+import { BlockIcon } from "./icons";
 import {
   ColorField,
   DurationFields,
@@ -175,7 +176,6 @@ function FieldView({
           <span>{field.label}</span>
           <div className="unit-toggle" role="group" aria-label={field.label}>
             {field.choices.map((choice) => {
-              const Icon = choice.icon;
               return (
                 <button
                   key={choice.value}
@@ -187,7 +187,7 @@ function FieldView({
                     update((data) => choice.commit(data, context))
                   }
                 >
-                  <Icon size={12} aria-hidden="true" />
+                  <BlockIcon name={choice.icon} size={12} aria-hidden="true" />
                   {choice.label}
                 </button>
               );

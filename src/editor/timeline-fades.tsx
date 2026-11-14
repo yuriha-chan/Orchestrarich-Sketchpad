@@ -1,23 +1,43 @@
 import { useMemo } from "react";
-import { generateDotGradientSVG } from "../dot-gradient";
-import type { Placement } from "../model";
-import type { MediaData } from "./media-data";
+import type { BlockDefinition, FadeData } from "../blocks/block-definition";
+import { generateDotGradientSVG } from "./dot-gradient";
+import type { Placement } from "./model";
 
 const BLOCK_HEIGHT = 42;
 
-export function mediaRenderBlock(
-  block: Placement<MediaData>,
-  width: number,
-  phasePositions: readonly number[],
-) {
-  const { fadeIn, fadeOut } = block.data;
-  const bodyLength = block.length - fadeIn - fadeOut;
+export function readTimelineFades(
+  definition: BlockDefinition,
+  block: Placement,
+): FadeData {
+  for (const field of definition.fields) {
+    if (field.kind === "fades") {
+      return field.read(block.data);
+    }
+  }
+  throw new Error(
+    `Block "${definition.kind}" enables timeline fades without a fades field`,
+  );
+}
+
+export function TimelineFadeSurface({
+  fades,
+  length,
+  width,
+  phasePositions,
+}: {
+  readonly fades: FadeData;
+  readonly length: number;
+  readonly width: number;
+  readonly phasePositions: readonly number[];
+}) {
+  const { fadeIn, fadeOut } = fades;
+  const bodyLength = length - fadeIn - fadeOut;
   const lastPosition = phasePositions[phasePositions.length - 1];
 
   const fadeInWidth =
-    fadeIn <= 0 ? 0 : fadeIn >= block.length ? width : phasePositions[0];
+    fadeIn <= 0 ? 0 : fadeIn >= length ? width : phasePositions[0];
   const fadeOutLeft =
-    fadeOut <= 0 ? width : fadeOut >= block.length ? 0 : lastPosition;
+    fadeOut <= 0 ? width : fadeOut >= length ? 0 : lastPosition;
   const bodyLeft = bodyLength > 0 ? (fadeIn > 0 ? phasePositions[0] : 0) : 0;
   const bodyRight =
     bodyLength > 0 ? (fadeOut > 0 ? lastPosition : width) : bodyLeft;

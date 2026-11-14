@@ -1,4 +1,28 @@
-export type DurationUnit = "beats" | "seconds";
+import type { Placement } from "../core/blocks/placement.ts";
+import type { LoopRegion } from "../core/blocks/contracts.ts";
+
+export type { Placement, PlacementBase } from "../core/blocks/placement.ts";
+
+export type {
+  BoundSlotProperty,
+  LoopRegion,
+  SlotDirection,
+  SlotProperty,
+} from "../core/blocks/contracts.ts";
+
+export type { DurationUnit } from "../core/blocks/duration.ts";
+export {
+  blockDurationSeconds,
+  beatsToSeconds,
+  secondsToBeats,
+  convertDuration,
+} from "../core/blocks/duration.ts";
+
+export type {
+  RectUnit,
+  RectGeometry,
+  Vec3,
+} from "../core/blocks/geometry.ts";
 
 export interface Track {
   readonly id: string;
@@ -17,45 +41,6 @@ export const TRACK_COLORS = [
 
 export type TrackColor = (typeof TRACK_COLORS)[number];
 
-export type SlotDirection = "input" | "output";
-
-export interface SlotProperty {
-  readonly key: string;
-  readonly label: string;
-  readonly direction: SlotDirection;
-}
-
-export interface PlacementBase {
-  id: string;
-  trackId: string;
-  start: number;
-  length: number;
-  cooperativeSkip: boolean;
-  slotBindings?: Partial<Record<string, string>>;
-}
-
-export type Placement<T = unknown> = PlacementBase & {
-  kind: string;
-  data: T;
-};
-
-export type RectUnit = "span" | "pixels";
-
-export type Vec3 = [number, number, number];
-
-export interface RectGeometry {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  rectUnit: RectUnit;
-}
-
-export interface BoundSlotProperty {
-  readonly key: string;
-  readonly slotId: string;
-}
-
 export const DEFAULT_BPM = 120;
 export const MIN_BPM = 20;
 export const MAX_BPM = 400;
@@ -64,36 +49,6 @@ export const DEFAULT_GRID_COLUMNS = 16;
 export const DEFAULT_GRID_ROWS = 9;
 export const MIN_GRID_SIZE = 1;
 export const MAX_GRID_SIZE = 64;
-
-export function blockDurationSeconds(
-  duration: number,
-  unit: DurationUnit,
-  bpm: number,
-): number {
-  return unit === "beats" ? beatsToSeconds(duration, bpm) : duration;
-}
-
-export function beatsToSeconds(beats: number, bpm: number): number {
-  return (beats * 60) / bpm;
-}
-
-export function secondsToBeats(seconds: number, bpm: number): number {
-  return (seconds * bpm) / 60;
-}
-
-export function convertDuration(
-  value: number,
-  from: DurationUnit,
-  to: DurationUnit,
-  bpm: number,
-): number {
-  if (from === to) {
-    return value;
-  }
-  return from === "beats"
-    ? beatsToSeconds(value, bpm)
-    : secondsToBeats(value, bpm);
-}
 
 export interface PlacementShape {
   readonly trackId: string;
@@ -106,11 +61,6 @@ export const DEFAULT_TRACKS: readonly Track[] = [
   { id: "camera", label: "Camera", color: "#7c3aed" },
   { id: "sound", label: "Sound", color: "#059669" },
 ];
-
-export interface LoopRegion {
-  readonly start: number;
-  readonly end: number;
-}
 
 export function partiallyOverlapsLoop(
   start: number,

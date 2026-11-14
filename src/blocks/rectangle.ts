@@ -1,13 +1,16 @@
-import { Grid2x2, Monitor, Square } from "lucide-react";
 import type {
   BlockDefinitionSpec,
   NumberLimits,
-  StageViewProps,
-} from "../block-definition";
-import { numberInput } from "../block-inputs";
-import { TimedExecution, type ExecutionContext } from "../block-runtime";
-import type { Placement, RectGeometry, RectUnit, Vec3 } from "../model";
-import { convertRectUnit } from "../stage-geometry";
+} from "./block-definition";
+import { numberInput } from "./block-inputs";
+import { TimedExecution, type ExecutionContext } from "../core/blocks/runtime.ts";
+import type { Placement } from "../core/blocks/placement.ts";
+import type {
+  RectGeometry,
+  RectUnit,
+  Vec3,
+} from "../core/blocks/geometry.ts";
+import { convertRectUnit } from "../core/blocks/geometry.ts";
 import {
   durationCarry,
   durationField,
@@ -29,15 +32,6 @@ export interface RectangleData extends DurationData, RectGeometry {
   color: Vec3;
 }
 
-export interface RectanglePayload {
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-  readonly unit: RectUnit;
-  readonly color: Vec3;
-}
-
 const duration = durationField<RectangleData>();
 
 class RectangleExecution extends TimedExecution {
@@ -48,18 +42,16 @@ class RectangleExecution extends TimedExecution {
       duration.resolve(block.data, { length: block.length, bpm: context.bpm }) * 1000,
     );
     const data = block.data;
-    context.stage.add({
+    context.stage.addRectangle({
       id: this.id,
-      kind: "rectangle",
+      type: "rectangle",
       layer: "screen",
-      payload: {
-        x: xInput.resolve(block, context.readSlot),
-        y: yInput.resolve(block, context.readSlot),
-        w: wInput.resolve(block, context.readSlot),
-        h: hInput.resolve(block, context.readSlot),
-        unit: data.rectUnit,
-        color: data.color,
-      } satisfies RectanglePayload,
+      x: xInput.resolve(block, context.readSlot),
+      y: yInput.resolve(block, context.readSlot),
+      w: wInput.resolve(block, context.readSlot),
+      h: hInput.resolve(block, context.readSlot),
+      unit: data.rectUnit,
+      color: data.color,
     });
   }
 
@@ -67,26 +59,6 @@ class RectangleExecution extends TimedExecution {
     super.terminate();
     this.context.stage.remove(this.id);
   }
-}
-
-function RectangleStage({ view }: StageViewProps<RectanglePayload>) {
-  const payload = view.payload;
-  const size = (value: number): string =>
-    payload.unit === "span"
-      ? `calc(var(--stage-span) * ${value})`
-      : `${value}px`;
-  return (
-    <div
-      className="stage-rect"
-      style={{
-        left: size(payload.x),
-        top: size(payload.y),
-        width: size(payload.w),
-        height: size(payload.h),
-        background: `rgb(${payload.color[0]}, ${payload.color[1]}, ${payload.color[2]})`,
-      }}
-    />
-  );
 }
 
 function chooseRectUnit(
@@ -190,11 +162,11 @@ const hInput = numberInput<RectangleData>({
   limits: (data) => geometryLimits(data, 0.25),
 });
 
-const rectangle: BlockDefinitionSpec<RectangleData, RectanglePayload> = {
+const rectangle: BlockDefinitionSpec<RectangleData> = {
   kind: "rectangle",
   label: "Rectangle",
   color: "#db2777",
-  icon: Square,
+  icon: "Square",
   fields: [
     xInput,
     yInput,
@@ -220,14 +192,14 @@ const rectangle: BlockDefinitionSpec<RectangleData, RectanglePayload> = {
         {
           value: "span",
           label: "Span",
-          icon: Grid2x2,
+          icon: "Grid2x2",
           commit: (data, context) =>
             chooseRectUnit(data, "span", context.stageSpan),
         },
         {
           value: "pixels",
           label: "Pixels",
-          icon: Monitor,
+          icon: "Monitor",
           commit: (data, context) =>
             chooseRectUnit(data, "pixels", context.stageSpan),
         },
@@ -254,7 +226,6 @@ const rectangle: BlockDefinitionSpec<RectangleData, RectanglePayload> = {
     ...DEFAULT_RECT_GEOMETRY,
     color: [...DEFAULT_RECT_COLOR] as Vec3,
   }),
-  renderStage: RectangleStage,
   onLengthChange: onDurationLengthChange,
   createExecution: (context, block) => new RectangleExecution(block, context),
 };

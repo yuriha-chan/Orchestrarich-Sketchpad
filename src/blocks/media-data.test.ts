@@ -4,8 +4,8 @@ import type {
   FadeData,
   FadesPanelField,
   TimelineGestureContext,
-} from "../block-definition";
-import type { Placement } from "../model";
+} from "./block-definition";
+import type { Placement } from "../core/blocks/placement.ts";
 import {
   clampFadesToLength,
   fadeBoundaries,

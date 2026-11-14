@@ -1,4 +1,6 @@
-import type { RectGeometry, RectUnit } from "./model";
+import type { RectGeometry } from "../core/blocks/geometry.ts";
+
+export { convertRectUnit } from "../core/blocks/geometry.ts";
 
 export interface StageLayout {
   readonly span: number;
@@ -40,23 +42,5 @@ export function rectPixels(geometry: RectGeometry, span: number): RectPixels {
     top: geometry.y * scale,
     width: geometry.w * scale,
     height: geometry.h * scale,
-  };
-}
-
-export function convertRectUnit(
-  geometry: RectGeometry,
-  unit: RectUnit,
-  span: number,
-): RectGeometry {
-  if (geometry.rectUnit === unit) {
-    return geometry;
-  }
-  const scale = unit === "pixels" ? span : 1 / span;
-  return {
-    x: geometry.x * scale,
-    y: geometry.y * scale,
-    w: geometry.w * scale,
-    h: geometry.h * scale,
-    rectUnit: unit,
   };
 }

@@ -3,14 +3,14 @@ import type {
   DurationData,
   DurationEdit,
   DurationPanelField,
-} from "../block-definition";
+} from "./block-definition";
 import {
   blockDurationSeconds,
   beatsToSeconds,
   convertDuration,
-} from "../model";
+} from "../core/blocks/duration.ts";
 
-export type { DurationData, DurationEdit } from "../block-definition";
+export type { DurationData, DurationEdit } from "./block-definition";
 
 export function durationField<T extends DurationData>(): DurationPanelField<T> {
   return {

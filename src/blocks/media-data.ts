@@ -1,4 +1,4 @@
-import type { CarryOver, FadeData } from "../block-definition";
+import type { CarryOver, FadeData } from "./block-definition";
 import {
   durationCarry,
   durationFromCarry,

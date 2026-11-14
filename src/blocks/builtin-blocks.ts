@@ -2,16 +2,16 @@ import type { BlockDefinition } from "./block-definition";
 import { packBlockDefinition } from "./block-definition";
 import type {
   BoundSlotProperty,
-  Placement,
   SlotDirection,
-} from "./model";
-import dialogue from "./blocks/dialogue";
-import camera from "./blocks/camera";
-import sound from "./blocks/sound";
-import animation from "./blocks/animation";
-import wait from "./blocks/wait";
-import rectangle from "./blocks/rectangle";
-import addition from "./blocks/addition";
+} from "../core/blocks/contracts.ts";
+import type { Placement } from "../core/blocks/placement.ts";
+import dialogue from "./dialogue";
+import camera from "./camera";
+import sound from "./sound";
+import animation from "./animation";
+import wait from "./wait";
+import rectangle from "./rectangle";
+import addition from "./addition";
 
 export const BLOCK_DEFINITIONS: readonly BlockDefinition[] = [
   packBlockDefinition(dialogue),

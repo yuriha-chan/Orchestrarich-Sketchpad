@@ -1,13 +1,13 @@
 import { useLayoutEffect, useState } from "react";
 import { AudioLines, Clock } from "lucide-react";
-import type { NumericSlot } from "../../core/slots/numeric-slots";
+import type { NumericSlot } from "../core/slots/numeric-slots";
 import type {
   DurationPanelField,
   EntryContext,
   FadesPanelField,
-} from "../block-definition";
-import type { DurationUnit, Placement, Track, Vec3 } from "../model";
-import { useExperimentStore } from "../store";
+} from "../blocks/block-definition";
+import type { DurationUnit, Placement, Track, Vec3 } from "./model";
+import { useExperimentStore } from "./store";
 
 export function PropertyNumber({
   value,

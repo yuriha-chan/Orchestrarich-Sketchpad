@@ -3,8 +3,9 @@ import type {
   FadeEdit,
   FadesPanelField,
   TimelineGestureContext,
-} from "../block-definition";
-import type { LoopRegion, Placement } from "../model";
+} from "./block-definition";
+import type { LoopRegion } from "../core/blocks/contracts.ts";
+import type { Placement } from "../core/blocks/placement.ts";
 import {
   clampFadesToLength,
   dragFadeBoundary,

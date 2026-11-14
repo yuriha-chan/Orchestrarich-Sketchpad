@@ -1,6 +1,5 @@
-import { Calculator } from "lucide-react";
 import { describe, expect, it } from "vitest";
-import { BLOCK_DEFINITIONS, blockDefinition } from "./builtin-blocks";
+import { BLOCK_DEFINITIONS, blockDefinition } from "../blocks/builtin-blocks";
 import {
   deriveSlotProperties,
   panelSections,
@@ -12,24 +11,25 @@ import {
   type EntryContext,
   type NumberPanelField,
   type OutputPanelField,
-} from "./block-definition";
-import { numberInput, numberOutput } from "./block-inputs";
-import { durationField } from "./blocks/duration-data";
+} from "../blocks/block-definition";
+import { numberInput, numberOutput } from "../blocks/block-inputs";
+import { durationField } from "../blocks/duration-data";
 import type { Placement } from "./model";
-import { ExecutionInstance } from "./block-runtime";
+import { ExecutionInstance } from "../core/blocks/runtime.ts";
 import { createStageStore } from "./stage-state";
+import { blockIcon } from "./icons";
 
-import dialogue from "./blocks/dialogue";
-import camera from "./blocks/camera";
-import sound from "./blocks/sound";
-import animation from "./blocks/animation";
-import wait from "./blocks/wait";
+import dialogue from "../blocks/dialogue";
+import camera from "../blocks/camera";
+import sound from "../blocks/sound";
+import animation from "../blocks/animation";
+import wait from "../blocks/wait";
 import rectangle, {
   DEFAULT_RECT_COLOR,
   type RectangleData,
-} from "./blocks/rectangle";
-import addition from "./blocks/addition";
-import { mediaPhases, onMediaLengthChange, type MediaData } from "./blocks/media-data";
+} from "../blocks/rectangle";
+import addition from "../blocks/addition";
+import { mediaPhases, onMediaLengthChange, type MediaData } from "../blocks/media-data";
 
 describe("block registry", () => {
   it("registers every builtin block with a unique kind and complete fields", () => {
@@ -39,7 +39,8 @@ describe("block registry", () => {
       expect(definition.kind).not.toBe("");
       expect(definition.label).not.toBe("");
       expect(definition.color).toMatch(/^#/);
-      expect(definition.icon).toBeDefined();
+      expect(definition.icon).toBeTypeOf("string");
+      expect(definition.icon).not.toBe("");
       expect(Array.isArray(definition.slotProperties)).toBe(true);
       expect(typeof definition.createData).toBe("function");
       expect(typeof definition.convertFrom).toBe("function");
@@ -57,8 +58,27 @@ describe("block registry", () => {
     ]);
   });
 
+  it("resolves every builtin and choice icon name through the editor adapter", () => {
+    for (const definition of BLOCK_DEFINITIONS) {
+      expect(blockIcon(definition.icon)).toBeDefined();
+      for (const field of definition.fields) {
+        if (field.kind !== "choice") continue;
+        for (const choice of field.choices) {
+          expect(choice.icon).toBeTypeOf("string");
+          expect(blockIcon(choice.icon)).toBeDefined();
+        }
+      }
+    }
+  });
+
   it("throws for an unknown kind", () => {
     expect(() => blockDefinition("missing")).toThrow(/Unknown block kind/);
+  });
+
+  it("advertises timeline fade rendering only for fade-capable blocks", () => {
+    expect(blockDefinition("sound").timelineFades).toBe(true);
+    expect(blockDefinition("animation").timelineFades).toBe(true);
+    expect(blockDefinition("dialogue").timelineFades).not.toBe(true);
   });
 });
 
@@ -328,8 +348,8 @@ describe("block input declarations", () => {
     const left = numberInput(freshLeftInput);
     const right = numberInput(freshRightInput);
     const total = numberOutput(freshTotalOutput);
-    const packed = packBlockDefinition<FreshInputData, never>({
-      kind: "fresh-sum", label: "Fresh Sum", color: "#123456", icon: Calculator,
+    const packed = packBlockDefinition<FreshInputData>({
+      kind: "fresh-sum", label: "Fresh Sum", color: "#123456", icon: "Calculator",
       fields: [left, right, total],
       createData: () => ({ firstAmount: 0, secondAmount: 0 }),
       convertFrom: () => ({ firstAmount: 0, secondAmount: 0 }),
@@ -423,7 +443,7 @@ describe("block input declarations", () => {
       kind: "fresh-sum",
       label: "Fresh Sum",
       color: "#123456",
-      icon: Calculator,
+      icon: "Calculator",
       slotProperties: [],
       fields: [left, right, total],
       createData: () => ({ firstAmount: 0, secondAmount: 0 }),
@@ -725,7 +745,7 @@ describe("rectangle unit choice field", () => {
       time: () => 0,
       readSlot: (id) => { reads.push(id); return 5; },
     }, { ...placement, data: converted });
-    expect(stage.getState().items[0].payload).toMatchObject({ x: 5, unit: "pixels" });
+    expect(stage.getState().items[0]).toMatchObject({ x: 5, unit: "pixels" });
     expect(reads).toEqual(["slot-x"]);
     expect(placement.slotBindings).toEqual({ x: "slot-x" });
     expect(deriveSlotProperties(rectangle.fields)).toEqual([
@@ -768,9 +788,17 @@ describe("rectangle unit choice field", () => {
       },
       placement,
     );
-    expect(
-      stage.getState().items.find((item) => item.id === execution.id)?.payload,
-    ).toEqual({
+    const item = stage.getState().items.find(
+      (candidate) => candidate.id === execution.id,
+    )!;
+    expect({
+      x: item.type === "rectangle" ? item.x : undefined,
+      y: item.type === "rectangle" ? item.y : undefined,
+      w: item.type === "rectangle" ? item.w : undefined,
+      h: item.type === "rectangle" ? item.h : undefined,
+      unit: item.type === "rectangle" ? item.unit : undefined,
+      color: item.type === "rectangle" ? item.color : undefined,
+    }).toEqual({
       x: 1,
       y: 0.5,
       w: 2,

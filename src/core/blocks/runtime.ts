@@ -2,9 +2,9 @@ import type {
   BlockSnapshot,
   BlockStartResult,
   SkipReason,
-} from "../core/execution/timeline-runner.ts";
-import type { Placement } from "./model";
-import type { StageActions } from "./stage-state";
+} from "../execution/timeline-runner.ts";
+import type { Placement } from "./placement.ts";
+import type { StageActions } from "./presentation.ts";
 
 export const SKIP_FADE_MS = 150;
 

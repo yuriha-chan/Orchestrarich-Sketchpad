@@ -1,5 +1,5 @@
 import type { Placement, SlotProperty } from "./model";
-import { blockDefinition, boundSlotProperties } from "./builtin-blocks";
+import { blockDefinition, boundSlotProperties } from "../blocks/builtin-blocks";
 import { blockLoopEdges, type LoopNode } from "./loops";
 import { rowTop, type TimelineRow } from "./timeline-rows";
 import {

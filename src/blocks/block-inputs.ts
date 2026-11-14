@@ -1,6 +1,6 @@
 import type { BlockOutputs } from "../core/execution/timeline-runner";
 import type { NumberPanelField, OutputPanelField } from "./block-definition";
-import type { Placement } from "./model";
+import type { Placement } from "../core/blocks/placement.ts";
 
 export type NumberInputSpec<T> = NumberPanelField<T> & {
   readonly section: "input";

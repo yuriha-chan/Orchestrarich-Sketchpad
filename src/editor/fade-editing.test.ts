@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { generateDotGradientSVG } from "./dot-gradient";
-import { dragFadeBoundary, fadeBoundaries } from "./blocks/media-data";
+import { dragFadeBoundary, fadeBoundaries } from "../blocks/media-data";
 
 describe("phase boundary editing", () => {
   it("exposes both internal fade boundaries", () => {

@@ -19,14 +19,14 @@ import {
   type NumericSlotWrite,
 } from "../core/slots/numeric-slots.ts";
 import { type Placement, type Track } from "./model";
-import { blockDefinition, boundSlotProperties } from "./builtin-blocks";
+import { blockDefinition, boundSlotProperties } from "../blocks/builtin-blocks";
 import { allLoops, type LoopNode } from "./loops";
 import { liveNumericSlots } from "./slot-gaps";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";
 
-import { type ExecutionInstance } from "./block-runtime";
-export { SKIP_FADE_MS, type ExecutionInstance } from "./block-runtime";
+import { type ExecutionInstance } from "../core/blocks/runtime.ts";
+export { SKIP_FADE_MS, type ExecutionInstance } from "../core/blocks/runtime.ts";
 
 export interface TimelineSessionOptions {
   readonly slots?: readonly NumericSlot[];

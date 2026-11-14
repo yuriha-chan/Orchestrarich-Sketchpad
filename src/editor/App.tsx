@@ -43,15 +43,17 @@ import {
   TRACK_COLORS,
   canPlace,
 } from "./model";
-import { BLOCK_DEFINITIONS, blockDefinition, boundSlotProperties } from "./builtin-blocks";
-import type { TimelineGesture, TimelineGestureTarget } from "./block-definition";
-import { PropertyNumber, slotDisplayName } from "./blocks/panel-widgets";
-import { BlockPanel } from "./blocks/block-panel";
+import { BLOCK_DEFINITIONS, blockDefinition, boundSlotProperties } from "../blocks/builtin-blocks";
+import type { TimelineGesture, TimelineGestureTarget } from "../blocks/block-definition";
+import { PropertyNumber, slotDisplayName } from "./panel-widgets";
+import { BlockPanel } from "./block-panel";
+import { BlockIcon } from "./icons";
 import { useExperimentStore } from "./store";
 import { allLoops, blockLoopEdges, boundaryGapPaths, maxLoopDepth, type LoopNode } from "./loops";
 import { loopLevelColor } from "./loop-colors";
 import { TimelineSession, slotReads, slotWrites } from "./execution";
 import { Stage } from "./Stage";
+import { TimelineFadeSurface, readTimelineFades } from "./timeline-fades";
 import { createStageStore } from "./stage-state";
 import { compilePlacement, definitionBlocks, phaseOffsets } from "./execution-definition";
 import { slotValueRail } from "./slot-value-rail";
@@ -885,7 +887,6 @@ export function App() {
         {isStaging ? (
           <div className="palette" role="group" aria-label="Block kinds">
             {BLOCK_DEFINITIONS.map((definition) => {
-              const Icon = definition.icon;
               return (
                 <button
                   type="button"
@@ -896,7 +897,7 @@ export function App() {
                   disabled={!editable}
                   onClick={() => setKind(definition.kind)}
                 >
-                  <Icon size={14} aria-hidden="true" />
+                  <BlockIcon name={definition.icon} size={14} aria-hidden="true" />
                   {definition.label}
                 </button>
               );
@@ -1293,10 +1294,11 @@ export function App() {
                           } as CSSProperties}
                         >
                           <span className="block-label">
-                            {(() => {
-                              const Icon = previewDefinition.icon;
-                              return <Icon size={12} aria-hidden="true" />;
-                            })()}
+                            <BlockIcon
+                              name={previewDefinition.icon}
+                              size={12}
+                              aria-hidden="true"
+                            />
                             <span className="block-label-text">
                               {previewDefinition.label}
                             </span>
@@ -1428,7 +1430,11 @@ export function App() {
           onContextMenu={(event) => event.preventDefault()}
         >
           <div className="context-menu-title">
-            <menuBlockDefinition.icon size={12} aria-hidden="true" />
+            <BlockIcon
+              name={menuBlockDefinition.icon}
+              size={12}
+              aria-hidden="true"
+            />
             {menuBlockDefinition.label} at t={menuBlock.start}–
             {menuBlock.start + menuBlock.length}
           </div>
@@ -2502,12 +2508,14 @@ function BlockView({
     onContextMenu(event);
   };
 
+  const fades = definition.timelineFades
+    ? readTimelineFades(definition, block)
+    : undefined;
   const fadeTitle = definition.timelineTitle?.(block) ?? "";
   const title =
     [block.cooperativeSkip ? "Cooperative skip" : "", fadeTitle]
       .filter(Boolean)
       .join(" · ") || undefined;
-  const Icon = definition.icon;
 
   return (
     <div
@@ -2527,9 +2535,16 @@ function BlockView({
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
     >
-      {definition.renderBlock?.(block, span.width, phasePositionsForBlock) ?? null}
+      {fades === undefined ? null : (
+        <TimelineFadeSurface
+          fades={fades}
+          length={block.length}
+          width={span.width}
+          phasePositions={phasePositionsForBlock}
+        />
+      )}
       <span className="block-label">
-        <Icon size={12} aria-hidden="true" />
+        <BlockIcon name={definition.icon} size={12} aria-hidden="true" />
         <span className="block-label-text">{definition.label}</span>
       </span>
       {editable ? (

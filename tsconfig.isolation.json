@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "files": [
+    "src/core/blocks/placement.ts",
+    "src/core/blocks/presentation.ts",
+    "src/core/blocks/contracts.ts",
+    "src/core/blocks/runtime.ts",
+    "src/core/blocks/duration.ts",
+    "src/core/blocks/geometry.ts",
+    "src/core/execution/timeline-runner.ts",
+    "src/core/execution/gap-contexts.ts",
+    "src/blocks/builtin-blocks.ts"
+  ]
+}

@@ -3,12 +3,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { validateNumericSlotReads } from "../core/slots/numeric-slots";
 import { slotReads } from "./execution";
 import { DEFAULT_BPM, DEFAULT_TRACKS, TRACK_COLORS, type DurationUnit, type Placement, type Vec3 } from "./model";
-import { DEFAULT_RECT_COLOR, type RectangleData } from "./blocks/rectangle";
-import { editDuration, type DurationData } from "./blocks/duration-data";
-import type { AdditionData } from "./blocks/addition";
-import type { MediaData } from "./blocks/media-data";
-import type { EntryContext, TimelineGestureContext } from "./block-definition";
-import { blockDefinition } from "./builtin-blocks";
+import { DEFAULT_RECT_COLOR, type RectangleData } from "../blocks/rectangle";
+import { editDuration, type DurationData } from "../blocks/duration-data";
+import type { AdditionData } from "../blocks/addition";
+import type { MediaData } from "../blocks/media-data";
+import type { EntryContext, TimelineGestureContext } from "../blocks/block-definition";
+import { blockDefinition } from "../blocks/builtin-blocks";
 import { allLoops } from "./loops";
 import { useExperimentStore } from "./store";
 

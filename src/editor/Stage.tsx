@@ -1,8 +1,23 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { CircleDashed } from "lucide-react";
-import type { StageItem } from "./stage-state";
-import { blockDefinition } from "./builtin-blocks";
+import type { StagePrimitive } from "./stage-state";
+import {
+  AnimationStage,
+  DialogueStage,
+  RectangleStage,
+} from "./stage-primitives";
 import { computeStageLayout } from "./stage-geometry";
+
+function StagePrimitiveView({ primitive }: { readonly primitive: StagePrimitive }) {
+  switch (primitive.type) {
+    case "dialogue":
+      return <DialogueStage card={primitive} />;
+    case "animation":
+      return <AnimationStage card={primitive} />;
+    case "rectangle":
+      return <RectangleStage rectangle={primitive} />;
+  }
+}
 
 export function Stage({
   items,
@@ -10,7 +25,7 @@ export function Stage({
   rows,
   onSpanChange,
 }: {
-  readonly items: readonly StageItem[];
+  readonly items: readonly StagePrimitive[];
   readonly columns: number;
   readonly rows: number;
   readonly onSpanChange: (span: number) => void;
@@ -48,20 +63,14 @@ export function Stage({
             "--stage-span": `${layout.span}px`,
           } as CSSProperties}
         >
-          {items.filter((item) => item.layer === "screen").map((item) => {
-            const Render = blockDefinition(item.kind).renderStage;
-            return Render === undefined ? null : (
-              <Render key={item.id} view={{ id: item.id, payload: item.payload }} />
-            );
-          })}
+          {items.filter((item) => item.layer === "screen").map((item) => (
+            <StagePrimitiveView key={item.id} primitive={item} />
+          ))}
         </div>
       </div>
-      {items.filter((item) => item.layer === "card").map((item) => {
-        const Render = blockDefinition(item.kind).renderStage;
-        return Render === undefined ? null : (
-          <Render key={item.id} view={{ id: item.id, payload: item.payload }} />
-        );
-      })}
+      {items.filter((item) => item.layer === "card").map((item) => (
+        <StagePrimitiveView key={item.id} primitive={item} />
+      ))}
       {items.length === 0 ? (
         <p className="stage-empty">
           <CircleDashed size={14} aria-hidden="true" />
