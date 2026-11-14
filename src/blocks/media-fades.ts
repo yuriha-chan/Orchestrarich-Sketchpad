@@ -5,7 +5,7 @@ import type {
   TimelineGestureContext,
 } from "./block-definition";
 import type { LoopRegion } from "../core/blocks/contracts.ts";
-import type { Placement } from "../core/blocks/placement.ts";
+import { toInteger, type Integer, type Placement } from "../core/blocks/placement.ts";
 import {
   clampFadesToLength,
   dragFadeBoundary,
@@ -101,9 +101,9 @@ export function mediaGesture(
     | { kind: "boundary"; index: number },
   columnCount: number,
   context?: TimelineGestureContext,
-): (delta: number, current: { start: number; length: number }) => {
-  start: number;
-  length: number;
+): (delta: number, current: { start: Integer; length: Integer }) => {
+  start: Integer;
+  length: Integer;
   update: (data: MediaData) => MediaData;
 } {
   const originStart = block.start;
@@ -140,9 +140,9 @@ export function mediaGesture(
             editSnappedFades(data, { kind: "fadeIn", value: delta }, current.start, current.length, context?.loops),
         };
       }
-      const start = Math.max(0, originStart + delta);
+      const start = toInteger(Math.max(0, originStart + delta));
       const extra = originStart - start;
-      const length = originLength + extra;
+      const length = toInteger(originLength + extra);
       return {
         start,
         length,
@@ -158,9 +158,11 @@ export function mediaGesture(
           editSnappedFades(data, { kind: "fadeOut", value: -delta }, current.start, current.length, context?.loops),
       };
     }
-    const length = Math.min(
-      originLength + delta,
-      Math.max(originLength, columnCount - originStart),
+    const length = toInteger(
+      Math.min(
+        originLength + delta,
+        Math.max(originLength, columnCount - originStart),
+      ),
     );
     const extra = length - originLength;
     return {

@@ -11,7 +11,7 @@ import type {
   Track,
   Vec3,
 } from "./model";
-import { DEFAULT_TRACKS } from "./model";
+import { DEFAULT_TRACKS, toInteger } from "./model";
 import { createStageStore } from "./stage-state";
 import { blockDefinition } from "../blocks/builtin-blocks";
 import { packBlockDefinition } from "../blocks/block-definition";
@@ -44,9 +44,11 @@ vi.mock("../blocks/builtin-blocks", async (importOriginal) => {
   };
 });
 
-type PlacementOverrides = Omit<Partial<Placement>, "kind" | "data"> & {
+type PlacementOverrides = Omit<Partial<Placement>, "kind" | "data" | "start" | "length"> & {
   kind?: string;
   data?: unknown;
+  start?: number;
+  length?: number;
   duration?: number;
   durationUnit?: DurationUnit;
   syncBeatsToCellSpan?: boolean;
@@ -67,6 +69,8 @@ function placement(overrides: PlacementOverrides = {}): Placement {
   const {
     kind = "dialogue",
     data,
+    start = 0,
+    length = 1,
     duration,
     durationUnit,
     syncBeatsToCellSpan,
@@ -86,8 +90,8 @@ function placement(overrides: PlacementOverrides = {}): Placement {
   const base = {
     id: "placement-1",
     trackId: DEFAULT_TRACKS[0].id,
-    start: 0,
-    length: 1,
+    start: toInteger(start),
+    length: toInteger(length),
     cooperativeSkip: false,
     ...(slotBindings === undefined ? {} : { slotBindings }),
     ...rest,

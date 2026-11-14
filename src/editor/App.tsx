@@ -34,7 +34,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { Placement, Track } from "./model";
+import type { Integer, Placement, Track } from "./model";
 import {
   MAX_BPM,
   MAX_GRID_SIZE,
@@ -42,6 +42,7 @@ import {
   MIN_GRID_SIZE,
   TRACK_COLORS,
   canPlace,
+  toInteger,
 } from "./model";
 import { BLOCK_DEFINITIONS, blockDefinition, boundSlotProperties } from "../blocks/builtin-blocks";
 import type { TimelineGesture, TimelineGestureTarget } from "../blocks/block-definition";
@@ -130,8 +131,8 @@ interface DragState {
   readonly mode: "move" | "resize" | "resizeStart" | "gesture";
   readonly originX: number;
   readonly originY: number;
-  readonly start: number;
-  readonly length: number;
+  readonly start: Integer;
+  readonly length: Integer;
   readonly trackId: string;
   readonly gesture?: TimelineGesture<unknown>;
 }
@@ -140,8 +141,8 @@ interface CreationState {
   readonly pointerId: number;
   readonly trackId: string;
   readonly kind: string;
-  readonly anchor: number;
-  readonly current: number;
+  readonly anchor: Integer;
+  readonly current: Integer;
 }
 
 type MenuState =
@@ -664,7 +665,7 @@ export function App() {
       return;
     }
     const start = cellFromPointer(event, layout);
-    if (!canPlace(tracks, blocks, { trackId, start, length: 1 }, loopRegions)) {
+    if (!canPlace(tracks, blocks, { trackId, start, length: toInteger(1) }, loopRegions)) {
       return;
     }
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -693,8 +694,8 @@ export function App() {
       return;
     }
     const end = cellFromPointer(event, layout);
-    const start = Math.min(active.anchor, end);
-    const length = Math.abs(end - active.anchor) + 1;
+    const start = toInteger(Math.min(active.anchor, end));
+    const length = toInteger(Math.abs(end - active.anchor) + 1);
     create(active.trackId, active.kind, start, length);
     setCreation(null);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -826,10 +827,12 @@ export function App() {
     }
   };
 
-  const previewStart = creation ? Math.min(creation.anchor, creation.current) : 0;
-  const previewLength = creation
-    ? Math.abs(creation.current - creation.anchor) + 1
-    : 0;
+  const previewStart = toInteger(
+    creation ? Math.min(creation.anchor, creation.current) : 0,
+  );
+  const previewLength = toInteger(
+    creation ? Math.abs(creation.current - creation.anchor) + 1 : 0,
+  );
   const previewRowIndex = creation
     ? trackRowIndex(rows, creation.trackId)
     : -1;
@@ -2432,15 +2435,13 @@ function BlockView({
     }
     if (current.mode === "resizeStart") {
       const end = current.start + current.length;
-      const start = clamp(current.start + delta, 0, end - 1);
-      setSpan(block.id, start, end - start);
+      const start = toInteger(clamp(current.start + delta, 0, end - 1));
+      setSpan(block.id, start, toInteger(end - start));
       return;
     }
     if (current.mode === "move") {
-      const start = clamp(
-        current.start + delta,
-        0,
-        columnCount - current.length,
+      const start = toInteger(
+        clamp(current.start + delta, 0, columnCount - current.length),
       );
       const trackId = trackAtY(
         rows,
@@ -2451,10 +2452,8 @@ function BlockView({
       move(block.id, trackId, start);
       return;
     }
-    const length = clamp(
-      current.length + delta,
-      1,
-      columnCount - current.start,
+    const length = toInteger(
+      clamp(current.length + delta, 1, columnCount - current.start),
     );
     resize(block.id, length);
   };
@@ -2650,9 +2649,9 @@ function flattenLoops(
 function cellFromPointer(
   event: ReactPointerEvent<HTMLDivElement>,
   layout: TimelineLayout,
-): number {
+): Integer {
   const rect = event.currentTarget.getBoundingClientRect();
-  return cellAtX(layout, event.clientX - rect.left);
+  return toInteger(cellAtX(layout, event.clientX - rect.left));
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

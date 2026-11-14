@@ -1,7 +1,8 @@
-import type { Placement } from "../core/blocks/placement.ts";
+import { toInteger, type Integer, type Placement } from "../core/blocks/placement.ts";
 import type { LoopRegion } from "../core/blocks/contracts.ts";
 
-export type { Placement, PlacementBase } from "../core/blocks/placement.ts";
+export type { Integer, Placement, PlacementBase } from "../core/blocks/placement.ts";
+export { isInteger, toInteger } from "../core/blocks/placement.ts";
 
 export type {
   BoundSlotProperty,
@@ -52,8 +53,8 @@ export const MAX_GRID_SIZE = 64;
 
 export interface PlacementShape {
   readonly trackId: string;
-  readonly start: number;
-  readonly length: number;
+  readonly start: Integer;
+  readonly length: Integer;
 }
 
 export const DEFAULT_TRACKS: readonly Track[] = [
@@ -122,7 +123,7 @@ export function nextFreeStart(
   after: number,
   length: number,
   loopRegions: readonly LoopRegion[],
-): number {
+): Integer {
   const occupied = placements
     .filter((placement) => placement.trackId === trackId)
     .map((placement) => ({
@@ -143,7 +144,7 @@ export function nextFreeStart(
       (span) => start < span.end && span.start < start + length,
     );
     if (blocker === undefined) {
-      return start;
+      return toInteger(start);
     }
     start = blocker.end;
   }

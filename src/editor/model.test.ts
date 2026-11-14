@@ -10,18 +10,25 @@ import {
   nextFreeStart,
   partiallyOverlapsLoop,
   secondsToBeats,
+  toInteger,
 } from "./model";
 
-function block(overrides: Partial<Placement> = {}): Placement {
+type BlockOverrides = Omit<Partial<Placement>, "start" | "length"> & {
+  start?: number;
+  length?: number;
+};
+
+function block(overrides: BlockOverrides = {}): Placement {
+  const { start = 0, length = 1, ...rest } = overrides;
   return {
     id: "placement-1",
     trackId: DEFAULT_TRACKS[0].id,
     kind: "dialogue",
-    start: 0,
-    length: 1,
+    start: toInteger(start),
+    length: toInteger(length),
     cooperativeSkip: false,
     data: {},
-    ...overrides,
+    ...rest,
   };
 }
 

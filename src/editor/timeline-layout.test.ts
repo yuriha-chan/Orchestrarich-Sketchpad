@@ -20,7 +20,7 @@ import {
 } from "./timeline-layout";
 import { allLoops, boundaryGapPaths, type LoopNode } from "./loops";
 import { compilePlacement, phaseOffsets } from "./execution-definition";
-import type { Placement } from "./model";
+import { toInteger, type Placement } from "./model";
 
 const uniformGaps = () => [[]];
 
@@ -342,8 +342,8 @@ describe("phasePositions", () => {
       id: "media",
       trackId: "track",
       kind: "sound",
-      start,
-      length,
+      start: toInteger(start),
+      length: toInteger(length),
       cooperativeSkip: false,
       data: {
         duration: length,

@@ -3,7 +3,7 @@ import type { IconName } from "./icon";
 import type { LoopRegion, SlotProperty } from "../core/blocks/contracts.ts";
 import type { DurationUnit } from "../core/blocks/duration.ts";
 import type { Vec3 } from "../core/blocks/geometry.ts";
-import type { Placement } from "../core/blocks/placement.ts";
+import type { Integer, Placement } from "../core/blocks/placement.ts";
 import type { ExecutionContext, ExecutionInstance } from "../core/blocks/runtime.ts";
 
 export interface FieldProps<T = unknown> {
@@ -182,8 +182,8 @@ export type TimelineGestureTarget =
   | { readonly kind: "boundary"; readonly index: number };
 
 export interface TimelineGestureEdit<T> {
-  readonly start: number;
-  readonly length: number;
+  readonly start: Integer;
+  readonly length: Integer;
   readonly update: (data: T) => T;
 }
 
@@ -193,7 +193,7 @@ export interface TimelineGestureContext {
 
 export type TimelineGesture<T> = (
   delta: number,
-  current: { start: number; length: number },
+  current: { start: Integer; length: Integer },
 ) => TimelineGestureEdit<T>;
 
 export interface BlockDefinition<T = unknown> {

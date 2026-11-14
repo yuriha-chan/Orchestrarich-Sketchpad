@@ -14,7 +14,7 @@ import {
 } from "../blocks/block-definition";
 import { numberInput, numberOutput } from "../blocks/block-inputs";
 import { durationField } from "../blocks/duration-data";
-import type { Placement } from "./model";
+import { toInteger, type Placement } from "./model";
 import { ExecutionInstance } from "../core/blocks/runtime.ts";
 import { createStageStore } from "./stage-state";
 import { blockIcon } from "./icons";
@@ -403,8 +403,8 @@ function freshPlacement(
   return {
     id: "fresh-block",
     trackId: "fresh-track",
-    start: 0,
-    length: 1,
+    start: toInteger(0),
+    length: toInteger(1),
     cooperativeSkip: false,
     kind: "fresh-sum",
     data,
@@ -794,8 +794,8 @@ describe("rectangle unit choice field", () => {
     const placement: Placement<RectangleData> = {
       id: "rect",
       trackId: "track",
-      start: 0,
-      length: 4,
+      start: toInteger(0),
+      length: toInteger(4),
       cooperativeSkip: false,
       kind: "rectangle",
       data: rectangleEntryData(),
@@ -841,8 +841,8 @@ describe("rectangle unit choice field", () => {
     const placement: Placement<RectangleData> = {
       id: "rect",
       trackId: "track",
-      start: 0,
-      length: 4,
+      start: toInteger(0),
+      length: toInteger(4),
       cooperativeSkip: false,
       kind: "rectangle",
       data: span,

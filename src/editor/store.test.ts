@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { validateNumericSlotReads } from "../core/slots/numeric-slots";
 import { slotReads } from "./execution";
-import { DEFAULT_BPM, DEFAULT_TRACKS, TRACK_COLORS, type DurationUnit, type Placement, type Vec3 } from "./model";
+import { DEFAULT_BPM, DEFAULT_TRACKS, TRACK_COLORS, toInteger, type DurationUnit, type Placement, type Vec3 } from "./model";
 import { DEFAULT_RECT_COLOR, type RectangleData } from "../blocks/rectangle";
 import { editDuration, type DurationData } from "../blocks/duration-data";
 import type { AdditionData } from "../blocks/addition";
@@ -35,7 +35,7 @@ function createAddition(
   trackId: string = DEFAULT_TRACKS[1].id,
   start = 0,
 ): string {
-  useExperimentStore.getState().create(trackId, "addition", start, 1);
+  useExperimentStore.getState().create(trackId, "addition", toInteger(start), toInteger(1));
   const blocks = useExperimentStore.getState().blocks;
   return blocks[blocks.length - 1].id;
 }
@@ -44,7 +44,7 @@ function createRectangle(
   trackId: string = DEFAULT_TRACKS[1].id,
   start = 0,
 ): string {
-  useExperimentStore.getState().create(trackId, "rectangle", start, 1);
+  useExperimentStore.getState().create(trackId, "rectangle", toInteger(start), toInteger(1));
   const blocks = useExperimentStore.getState().blocks;
   return blocks[blocks.length - 1].id;
 }
@@ -167,7 +167,7 @@ function createAnimation(
   start = 0,
   length = 4,
 ): string {
-  useExperimentStore.getState().create(trackId, "animation", start, length);
+  useExperimentStore.getState().create(trackId, "animation", toInteger(start), toInteger(length));
   const blocks = useExperimentStore.getState().blocks;
   return blocks[blocks.length - 1].id;
 }
@@ -433,7 +433,7 @@ describe("rectangle slot selection", () => {
   });
 
   it("rejects a slot binding on a kind without slot-capable properties", () => {
-    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "camera", 0, 1);
+    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "camera", toInteger(0), toInteger(1));
     const cameraId = useExperimentStore.getState().blocks[0].id;
     const slotId = addSlot(null);
 
@@ -994,7 +994,7 @@ describe("media span transactions", () => {
       fadeOut: 3,
     }));
 
-    const applied = useExperimentStore.getState().setSpan(id, 2, 4);
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(2), toInteger(4));
 
     expect(applied).toBe(true);
     const block = animationBlock(id);
@@ -1025,7 +1025,7 @@ describe("media span transactions", () => {
     const before = animationSnapshot(id);
     createAnimation(DEFAULT_TRACKS[1].id, 6, 2);
 
-    const applied = useExperimentStore.getState().setSpan(id, 4, 4);
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(4), toInteger(4));
 
     expect(applied).toBe(false);
     expect(blockById(id)).toEqual(before);
@@ -1044,7 +1044,7 @@ describe("media span transactions", () => {
     useExperimentStore.getState().setLoopBoundary(loopId, "end", 4);
     const before = animationSnapshot(id);
 
-    const applied = useExperimentStore.getState().setSpan(id, 3, 2);
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(3), toInteger(2));
 
     expect(applied).toBe(false);
     expect(blockById(id)).toEqual(before);
@@ -1063,7 +1063,7 @@ describe("transactional span and data edits", () => {
     }));
     const received: MediaData[] = [];
 
-    const applied = useExperimentStore.getState().setSpan(id, 2, 4, (data) => {
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(2), toInteger(4), (data) => {
       received.push({ ...(data as MediaData) });
       return { ...(data as MediaData), fadeIn: 1, fadeOut: 3 };
     });
@@ -1098,7 +1098,7 @@ describe("transactional span and data edits", () => {
     createAnimation(DEFAULT_TRACKS[1].id, 6, 2);
     let called = false;
 
-    const applied = useExperimentStore.getState().setSpan(id, 4, 4, (data) => {
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(4), toInteger(4), (data) => {
       called = true;
       return data;
     });
@@ -1122,7 +1122,7 @@ describe("transactional span and data edits", () => {
     const before = animationSnapshot(id);
     let called = false;
 
-    const applied = useExperimentStore.getState().setSpan(id, 3, 2, (data) => {
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(3), toInteger(2), (data) => {
       called = true;
       return data;
     });
@@ -1142,7 +1142,7 @@ describe("transactional span and data edits", () => {
       fadeOut: 3,
     }));
 
-    const applied = useExperimentStore.getState().setSpan(id, 2, 4);
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(2), toInteger(4));
 
     expect(applied).toBe(true);
     expect(animationBlock(id)).toMatchObject({
@@ -1210,7 +1210,7 @@ describe("phase boundary validity", () => {
     addLoop(2, 6);
     const before = animationSnapshot(id);
 
-    const applied = useExperimentStore.getState().setSpan(id, 1, 8, (data) => ({
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(1), toInteger(8), (data) => ({
       ...(data as MediaData),
       fadeIn: 4,
       fadeOut: 0,
@@ -1224,7 +1224,7 @@ describe("phase boundary validity", () => {
     const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
     addLoop(2, 6);
 
-    const applied = useExperimentStore.getState().setSpan(id, 0, 8, (data) => ({
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(0), toInteger(8), (data) => ({
       ...(data as MediaData),
       fadeIn: 2,
       fadeOut: 0,
@@ -1238,7 +1238,7 @@ describe("phase boundary validity", () => {
     const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
     addLoop(2, 6);
 
-    const applied = useExperimentStore.getState().setSpan(id, 0, 8, (data) => ({
+    const applied = useExperimentStore.getState().setSpan(id, toInteger(0), toInteger(8), (data) => ({
       ...(data as MediaData),
       fadeIn: 6,
       fadeOut: 0,
@@ -1266,7 +1266,7 @@ describe("phase boundary validity", () => {
     addLoop(10, 14);
     const before = animationSnapshot(id);
 
-    useExperimentStore.getState().move(id, DEFAULT_TRACKS[1].id, 8);
+    useExperimentStore.getState().move(id, DEFAULT_TRACKS[1].id, toInteger(8));
 
     expect(blockById(id)).toEqual(before);
   });
@@ -1277,7 +1277,7 @@ describe("phase boundary validity", () => {
     addLoop(10, 14);
     const before = animationSnapshot(id);
 
-    const applied = useExperimentStore.getState().resize(id, 6);
+    const applied = useExperimentStore.getState().resize(id, toInteger(6));
 
     expect(applied).toBe(false);
     expect(blockById(id)).toEqual(before);
@@ -1657,7 +1657,7 @@ describe("loop markers", () => {
     start = 0,
     length = 1,
   ): string {
-    useExperimentStore.getState().create(trackId, "dialogue", start, length);
+    useExperimentStore.getState().create(trackId, "dialogue", toInteger(start), toInteger(length));
     const blocks = useExperimentStore.getState().blocks;
     return blocks[blocks.length - 1].id;
   }
@@ -1797,7 +1797,7 @@ describe("loop markers", () => {
     useExperimentStore.getState().setLoopBoundary(innerId, "end", 4);
     useExperimentStore
       .getState()
-      .create(DEFAULT_TRACKS[0].id, "dialogue", 1, 2);
+      .create(DEFAULT_TRACKS[0].id, "dialogue", toInteger(1), toInteger(2));
     expect(useExperimentStore.getState().blocks).toHaveLength(0);
   });
 
@@ -1813,7 +1813,7 @@ describe("loop markers", () => {
     useExperimentStore.getState().addLoopAtCell(0);
     useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 4);
     const id = createBlock(DEFAULT_TRACKS[0].id, 8, 3);
-    useExperimentStore.getState().move(id, DEFAULT_TRACKS[0].id, 2);
+    useExperimentStore.getState().move(id, DEFAULT_TRACKS[0].id, toInteger(2));
     expect(blockAt(0).start).toBe(8);
   });
 
@@ -1821,7 +1821,7 @@ describe("loop markers", () => {
     useExperimentStore.getState().addLoopAtCell(0);
     useExperimentStore.getState().setLoopBoundary(firstLoopId(), "end", 4);
     const id = createBlock(DEFAULT_TRACKS[0].id, 3, 1);
-    useExperimentStore.getState().resize(id, 3);
+    useExperimentStore.getState().resize(id, toInteger(3));
     expect(blockAt(0).length).toBe(1);
   });
 
@@ -1929,7 +1929,7 @@ describe("block kind changes", () => {
   });
 
   it("builds the target kind's data during a change", () => {
-    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "camera", 0, 3);
+    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "camera", toInteger(0), toInteger(3));
 
     const cameraId = useExperimentStore.getState().blocks[0].id;
     editData(cameraId, (data) => ({
@@ -1953,7 +1953,7 @@ describe("block kind changes", () => {
   });
 
   it("creates the addition's default data when another kind becomes an addition", () => {
-    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "wait", 0, 2);
+    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "wait", toInteger(0), toInteger(2));
 
     const waitId = useExperimentStore.getState().blocks[0].id;
     useExperimentStore.getState().setBlockKind(waitId, "addition");
@@ -1962,7 +1962,7 @@ describe("block kind changes", () => {
   });
 
   it("resets data that only the previous kind defines", () => {
-    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "rectangle", 0, 2);
+    useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "rectangle", toInteger(0), toInteger(2));
     const rectangleId = useExperimentStore.getState().blocks[0].id;
     editData(rectangleId, (data) => ({
       ...(data as RectangleData),
@@ -1987,3 +1987,18 @@ describe("block kind changes", () => {
     });
   });
 });
+
+function integerCommandTypeChecks(): void {
+  const store = useExperimentStore.getState();
+  // @ts-expect-error placement coordinates require integer values
+  store.create("track", "dialogue", 1.5, toInteger(1));
+  // @ts-expect-error placement coordinates require integer values
+  store.create("track", "dialogue", toInteger(0), 1.5);
+  // @ts-expect-error placement coordinates require integer values
+  store.move("block", "track", 8.5);
+  // @ts-expect-error placement coordinates require integer values
+  store.resize("block", 2.5);
+  // @ts-expect-error placement coordinates require integer values
+  store.setSpan("block", 1.5, toInteger(2));
+}
+void integerCommandTypeChecks;

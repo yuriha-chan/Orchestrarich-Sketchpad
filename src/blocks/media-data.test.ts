@@ -5,7 +5,7 @@ import type {
   FadesPanelField,
   TimelineGestureContext,
 } from "./block-definition";
-import type { Placement } from "../core/blocks/placement.ts";
+import { toInteger, type Integer, type Placement } from "../core/blocks/placement.ts";
 import {
   clampFadesToLength,
   fadeBoundaries,
@@ -204,8 +204,8 @@ function mediaBlock(overrides: {
   return {
     id: "media-1",
     trackId: "track-1",
-    start: overrides.start ?? 2,
-    length,
+    start: toInteger(overrides.start ?? 2),
+    length: toInteger(length),
     cooperativeSkip: false,
     kind: "sound",
     data: {
@@ -223,12 +223,12 @@ function applyMediaGesture(
   target: MediaGestureTarget,
   columnCount: number,
   delta: number,
-  current: { start: number; length: number } = {
+  current: { start: Integer; length: Integer } = {
     start: block.start,
     length: block.length,
   },
   context?: TimelineGestureContext,
-): { start: number; length: number; data: MediaData } {
+): { start: Integer; length: Integer; data: MediaData } {
   const edit = mediaGesture(block, target, columnCount, context)(delta, current);
   const adjusted = onMediaLengthChange(block.data, edit.length);
   return {

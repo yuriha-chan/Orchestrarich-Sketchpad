@@ -13,7 +13,7 @@ import {
   wrappableSpan,
   type LoopNode,
 } from "./loops";
-import type { LoopRegion, Placement } from "./model";
+import { toInteger, type LoopRegion, type Placement } from "./model";
 
 function loop(
   id: string,
@@ -28,8 +28,8 @@ function block(start: number, length: number): Placement {
   return {
     id: `block-${start}-${length}`,
     trackId: "track-1",
-    start,
-    length,
+    start: toInteger(start),
+    length: toInteger(length),
     cooperativeSkip: false,
     kind: "dialogue",
     data: {},

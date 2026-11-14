@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NumericSlot } from "../core/slots/numeric-slots";
-import type { Placement, Track } from "./model";
+import { toInteger, type Placement, type Track } from "./model";
 import { outputWires, slotWires, type SlotWireLayout } from "./slot-wires";
 import { buildTimelineLayout } from "./timeline-layout";
 import { timelineRows } from "./timeline-rows";
@@ -36,12 +36,12 @@ type BlockOverrides = {
 };
 
 function block(kind: string, overrides: BlockOverrides): Placement {
-  const { start = 0, ...rest } = overrides;
+  const { start = 0, length = 1, ...rest } = overrides;
   return {
     kind,
     data: {},
-    start,
-    length: 1,
+    start: toInteger(start),
+    length: toInteger(length),
     cooperativeSkip: false,
     ...rest,
   };

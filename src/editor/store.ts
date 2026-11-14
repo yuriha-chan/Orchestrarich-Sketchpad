@@ -2,6 +2,7 @@ import { current } from "immer";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type {
+  Integer,
   Placement,
   Track,
   TrackColor,
@@ -50,13 +51,13 @@ interface ExperimentState {
   duplicateTrack: (id: string) => void;
   removeTrack: (id: string) => void;
   setTrackColor: (id: string, color: TrackColor) => void;
-  create: (trackId: string, kind: string, start: number, length: number) => void;
-  move: (id: string, trackId: string, start: number) => void;
-  resize: (id: string, length: number) => boolean;
+  create: (trackId: string, kind: string, start: Integer, length: Integer) => void;
+  move: (id: string, trackId: string, start: Integer) => void;
+  resize: (id: string, length: Integer) => boolean;
   setSpan: (
     id: string,
-    start: number,
-    length: number,
+    start: Integer,
+    length: Integer,
     update?: (data: unknown) => unknown,
   ) => boolean;
   duplicateBlock: (id: string) => void;
@@ -121,8 +122,8 @@ function editBlock(
 function applySpan(
   state: SpanState,
   block: Placement,
-  start: number,
-  length: number,
+  start: Integer,
+  length: Integer,
   update?: (data: unknown) => unknown,
 ): boolean {
   if (
