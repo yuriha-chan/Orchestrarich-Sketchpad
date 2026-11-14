@@ -1,4 +1,4 @@
-import { initializationPathKey, type NumericSlot } from "../core/slots/numeric-slots";
+import { initializationPathKey, type Slot } from "../core/slots/numeric-slots";
 import { boundaryGapPaths, type LoopNode } from "./loops";
 
 export function slotGapExists(
@@ -12,14 +12,29 @@ export function slotGapExists(
   );
 }
 
-export function liveNumericSlots(
-  slots: readonly NumericSlot[],
+function liveInitializations<T extends { boundary: number; path: readonly string[] }>(
+  initializations: readonly T[],
   loops: readonly LoopNode[],
-): readonly NumericSlot[] {
-  return slots.map((slot) => ({
-    ...slot,
-    initializations: slot.initializations.filter((initialization) =>
-      slotGapExists(loops, initialization.boundary, initialization.path),
-    ),
-  }));
+): T[] {
+  return initializations.filter((initialization) =>
+    slotGapExists(loops, initialization.boundary, initialization.path),
+  );
+}
+
+export function liveNumericSlots(
+  slots: readonly Slot[],
+  loops: readonly LoopNode[],
+): readonly Slot[] {
+  return slots.map((slot) => {
+    if (slot.type === "string") {
+      return {
+        ...slot,
+        initializations: liveInitializations(slot.initializations, loops),
+      };
+    }
+    return {
+      ...slot,
+      initializations: liveInitializations(slot.initializations, loops),
+    };
+  });
 }

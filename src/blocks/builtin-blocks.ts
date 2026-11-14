@@ -46,7 +46,7 @@ export function boundSlotProperties(
     }
     const slotId = bindings[property.key];
     if (slotId !== undefined) {
-      bound.push({ key: property.key, slotId });
+      bound.push({ key: property.key, slotId, type: property.type });
     }
   }
   return bound;

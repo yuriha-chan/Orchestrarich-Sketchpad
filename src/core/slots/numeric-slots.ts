@@ -1,15 +1,36 @@
+export type SlotType = "number" | "string";
+
 export interface NumericSlotInitialization {
   readonly boundary: number;
   readonly path: readonly string[];
   readonly value: number;
 }
 
-export interface NumericSlot {
+export interface StringSlotInitialization {
+  readonly boundary: number;
+  readonly path: readonly string[];
+  readonly value: string;
+}
+
+interface SlotBase {
   readonly id: string;
   readonly trackId: string | null;
   readonly name?: string;
+}
+
+export interface NumericSlot extends SlotBase {
+  readonly type: "number";
   readonly initializations: readonly NumericSlotInitialization[];
 }
+
+export interface StringSlot extends SlotBase {
+  readonly type: "string";
+  readonly initializations: readonly StringSlotInitialization[];
+}
+
+export type Slot = NumericSlot | StringSlot;
+
+export type SlotInitialization = NumericSlotInitialization | StringSlotInitialization;
 
 export function initializationPathKey(path: readonly string[]): string {
   return path.join("/");
@@ -27,8 +48,24 @@ export interface NumericSlotWrite {
   readonly time: number;
 }
 
+export interface SlotTypeBinding {
+  readonly slotId: string;
+  readonly type: SlotType;
+}
+
+export function validateSlotTypes(
+  slots: readonly Slot[],
+  bindings: readonly SlotTypeBinding[],
+): readonly SlotTypeBinding[] {
+  const slotsById = new Map(slots.map((slot) => [slot.id, slot]));
+  return bindings.filter((binding) => {
+    const slot = slotsById.get(binding.slotId);
+    return slot !== undefined && slot.type !== binding.type;
+  });
+}
+
 export function validateNumericSlotReads(
-  slots: readonly NumericSlot[],
+  slots: readonly Slot[],
   reads: readonly NumericSlotRead[],
   writes: readonly NumericSlotWrite[] = [],
 ): readonly NumericSlotRead[] {
@@ -43,8 +80,9 @@ export function validateNumericSlotReads(
     if (slot.trackId !== null && slot.trackId !== read.trackId) {
       return true;
     }
+    const initializations: readonly SlotInitialization[] = slot.initializations;
     if (
-      slot.initializations.some(
+      initializations.some(
         (initialization) => initialization.boundary <= read.time,
       )
     ) {
@@ -57,7 +95,7 @@ export function validateNumericSlotReads(
 }
 
 export function validateNumericSlotWrites(
-  slots: readonly NumericSlot[],
+  slots: readonly Slot[],
   writes: readonly NumericSlotWrite[],
 ): readonly NumericSlotWrite[] {
   const slotsById = new Map(slots.map((slot) => [slot.id, slot]));

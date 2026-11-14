@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { NumericSlot } from "../core/slots/numeric-slots";
+import type { Slot } from "../core/slots/numeric-slots";
 import { toInteger, type Placement, type Track } from "./model";
 import { outputWires, slotWires, type SlotWireLayout } from "./slot-wires";
 import { buildTimelineLayout } from "./timeline-layout";
@@ -11,10 +11,11 @@ const tracks: readonly Track[] = [
   { id: "second", label: "Second", color: "#7c3aed" },
 ];
 
-const slots: readonly NumericSlot[] = [
-  { id: "first-slot", trackId: "first", initializations: [{ boundary: 0, path: [], value: 1 }] },
-  { id: "second-slot", trackId: "second", initializations: [{ boundary: 0, path: [], value: 2 }] },
-  { id: "shared-slot", trackId: null, initializations: [{ boundary: 0, path: [], value: 3 }] },
+const slots: readonly Slot[] = [
+  { id: "first-slot", trackId: "first", type: "number", initializations: [{ boundary: 0, path: [], value: 1 }] },
+  { id: "second-slot", trackId: "second", type: "number", initializations: [{ boundary: 0, path: [], value: 2 }] },
+  { id: "shared-slot", trackId: null, type: "number", initializations: [{ boundary: 0, path: [], value: 3 }] },
+  { id: "text-slot", trackId: null, type: "string", initializations: [{ boundary: 0, path: [], value: "hello" }] },
 ];
 
 const rows = timelineRows(tracks, slots);
@@ -80,7 +81,7 @@ describe("slotWires", () => {
     });
 
     expect(slotWires(rows, [block], layout)).toEqual([
-      { key: "r:x", x: 308, blockBottomY: 38, slotY: 60 },
+      { key: "r:x", x: 308, blockBottomY: 38, slotY: 60, type: "number" },
     ]);
   });
 
@@ -103,9 +104,9 @@ describe("slotWires", () => {
     });
 
     expect(slotWires(rows, [block], layout)).toEqual([
-      { key: "r:x", x: 178, blockBottomY: 38, slotY: 60 },
-      { key: "r:y", x: 196, blockBottomY: 38, slotY: 60 },
-      { key: "r:w", x: 214, blockBottomY: 38, slotY: 60 },
+      { key: "r:x", x: 178, blockBottomY: 38, slotY: 60, type: "number" },
+      { key: "r:y", x: 196, blockBottomY: 38, slotY: 60, type: "number" },
+      { key: "r:w", x: 214, blockBottomY: 38, slotY: 60, type: "number" },
     ]);
   });
 
@@ -118,8 +119,8 @@ describe("slotWires", () => {
     });
 
     expect(slotWires(rows, [block], layout)).toEqual([
-      { key: "r:x", x: 48, blockBottomY: 110, slotY: 132 },
-      { key: "r:h", x: 102, blockBottomY: 110, slotY: 156 },
+      { key: "r:x", x: 48, blockBottomY: 110, slotY: 132, type: "number" },
+      { key: "r:h", x: 102, blockBottomY: 110, slotY: 156, type: "number" },
     ]);
   });
 
@@ -136,9 +137,9 @@ describe("slotWires", () => {
     });
 
     expect(slotWires(rows, [block], layout)).toEqual([
-      { key: "r:x", x: 48, blockBottomY: 38, slotY: 60 },
-      { key: "r:y", x: 66, blockBottomY: 38, slotY: 132 },
-      { key: "r:h", x: 102, blockBottomY: 38, slotY: 156 },
+      { key: "r:x", x: 48, blockBottomY: 38, slotY: 60, type: "number" },
+      { key: "r:y", x: 66, blockBottomY: 38, slotY: 132, type: "number" },
+      { key: "r:h", x: 102, blockBottomY: 38, slotY: 156, type: "number" },
     ]);
   });
 
@@ -159,8 +160,8 @@ describe("slotWires", () => {
     ];
 
     expect(slotWires(rows, blocks, layout)).toEqual([
-      { key: "a:x", x: 40, blockBottomY: 38, slotY: 156 },
-      { key: "b:y", x: 90, blockBottomY: 110, slotY: 156 },
+      { key: "a:x", x: 40, blockBottomY: 38, slotY: 156, type: "number" },
+      { key: "b:y", x: 90, blockBottomY: 110, slotY: 156, type: "number" },
     ]);
   });
 
@@ -181,8 +182,8 @@ describe("slotWires", () => {
     ];
 
     expect(slotWires(rows, blocks, layout)).toEqual([
-      { key: "a:x", x: 48, blockBottomY: 38, slotY: 156 },
-      { key: "b:y", x: 586, blockBottomY: 110, slotY: 156 },
+      { key: "a:x", x: 48, blockBottomY: 38, slotY: 156, type: "number" },
+      { key: "b:y", x: 586, blockBottomY: 110, slotY: 156, type: "number" },
     ]);
   });
 
@@ -195,6 +196,19 @@ describe("slotWires", () => {
     });
 
     expect(slotWires(rows, [block], layout)).toEqual([]);
+  });
+
+  it("marks a wire from a string slot with its value type", () => {
+    const line = block("dialogue", {
+      id: "line",
+      trackId: "first",
+      start: 0,
+      slotBindings: { message: "text-slot" },
+    });
+
+    expect(slotWires(rows, [line], layout)).toEqual([
+      { key: "line:message", x: 75, blockBottomY: 38, slotY: 180, type: "string" },
+    ]);
   });
 
   it("spreads only input properties into lanes for a block with an output", () => {
@@ -210,8 +224,8 @@ describe("slotWires", () => {
     });
 
     expect(slotWires(rows, [block], layout)).toEqual([
-      { key: "sum:a", x: 60, blockBottomY: 38, slotY: 60 },
-      { key: "sum:b", x: 90, blockBottomY: 38, slotY: 132 },
+      { key: "sum:a", x: 60, blockBottomY: 38, slotY: 60, type: "number" },
+      { key: "sum:b", x: 90, blockBottomY: 38, slotY: 132, type: "number" },
     ]);
   });
 });
@@ -233,6 +247,7 @@ describe("outputWires", () => {
         blockCenterY: 24,
         gapX: 660,
         slotY: 156,
+        type: "number",
       },
     ]);
   });
@@ -253,6 +268,7 @@ describe("outputWires", () => {
         blockCenterY: 96,
         gapX: 140,
         slotY: 132,
+        type: "number",
       },
     ]);
   });
@@ -284,6 +300,7 @@ describe("outputWires", () => {
         blockCenterY: 24,
         gapX: 550,
         slotY: 156,
+        type: "number",
       },
     ]);
   });

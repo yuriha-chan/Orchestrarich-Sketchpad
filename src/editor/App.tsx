@@ -88,7 +88,9 @@ import {
   initializationPathKey,
   validateNumericSlotReads,
   validateNumericSlotWrites,
-  type NumericSlot,
+  type Slot,
+  type SlotInitialization,
+  type SlotType,
   type NumericSlotRead,
   type NumericSlotWrite,
 } from "../core/slots/numeric-slots";
@@ -175,6 +177,7 @@ interface SlotDragState {
   readonly slotId: string;
   readonly slotName: string;
   readonly slotTrackId: string | null;
+  readonly slotType: SlotType;
   readonly pointerId: number;
   readonly x: number;
   readonly y: number;
@@ -215,7 +218,6 @@ export function App() {
   const duplicateTrack = useExperimentStore((state) => state.duplicateTrack);
   const removeTrack = useExperimentStore((state) => state.removeTrack);
   const setTrackColor = useExperimentStore((state) => state.setTrackColor);
-  const addSlot = useExperimentStore((state) => state.addSlot);
   const selectedKind = useExperimentStore((state) => state.selectedKind);
   const selectedId = useExperimentStore((state) => state.selectedId);
   const setKind = useExperimentStore((state) => state.setKind);
@@ -451,7 +453,7 @@ export function App() {
     return assignments;
   }, [blocks]);
   const slotsById = useMemo(
-    () => Object.fromEntries(slots.map((slot) => [slot.id, slot])) as Record<string, NumericSlot>,
+    () => Object.fromEntries(slots.map((slot) => [slot.id, slot])) as Record<string, Slot>,
     [slots],
   );
   const rowGroupStarts = useMemo(() => {
@@ -500,6 +502,7 @@ export function App() {
       slotId: string,
       slotName: string,
       slotTrackId: string | null,
+      slotType: SlotType,
       pointerId: number,
       x: number,
       y: number,
@@ -508,6 +511,7 @@ export function App() {
         slotId,
         slotName,
         slotTrackId,
+        slotType,
         pointerId,
         x,
         y,
@@ -1069,16 +1073,11 @@ export function App() {
                 className="shared-slot-add"
                 style={{ height: SLOT_CONTROL_HEIGHT }}
               >
-                <button
-                  type="button"
-                  className="slot-add"
-                  aria-label="Add shared slot"
-                  disabled={!editable}
-                  onClick={() => addSlot(null)}
-                >
-                  <Plus size={11} aria-hidden="true" />
-                  Add shared slot
-                </button>
+                <AddSlotControl
+                  trackId={null}
+                  scope="shared slots"
+                  editable={editable}
+                />
               </div>
             </div>
             <div className="grid-scroll" onScroll={handleGridScroll}>
@@ -1248,6 +1247,7 @@ export function App() {
                             y1={wire.blockBottomY}
                             x2={wire.x}
                             y2={wire.slotY}
+                            className={wire.type === "string" ? "is-string" : undefined}
                           />
                         </g>
                       ))}
@@ -1259,6 +1259,7 @@ export function App() {
                           />
                           <polyline
                             points={`${wire.blockRightX},${wire.blockCenterY} ${wire.gapX},${wire.blockCenterY} ${wire.gapX},${wire.slotY}`}
+                            className={wire.type === "string" ? "is-string" : undefined}
                           />
                         </g>
                       ))}
@@ -1316,6 +1317,7 @@ export function App() {
                           cx={wire.x}
                           cy={wire.blockBottomY}
                           r={4}
+                          className={wire.type === "string" ? "is-string" : undefined}
                         />
                       ))}
                     </svg>
@@ -1629,7 +1631,7 @@ export function App() {
       {slotDrag !== null ? (
         <>
           <div
-            className="slot-drag-ghost"
+            className={`slot-drag-ghost${slotDrag.slotType === "string" ? " is-string" : ""}`}
             style={{ left: slotDrag.x + 16, top: slotDrag.y + 16 }}
             aria-hidden="true"
           >
@@ -1644,6 +1646,7 @@ export function App() {
               anchorX={slotDrag.hoveredX}
               slotName={slotDrag.slotName}
               slotTrackId={slotDrag.slotTrackId}
+              slotType={slotDrag.slotType}
               slotNames={slotNames}
             />
           ) : null}
@@ -1660,6 +1663,7 @@ function SlotParameterPopup({
   anchorX,
   slotName,
   slotTrackId,
+  slotType,
   slotNames,
 }: {
   block: Placement;
@@ -1667,6 +1671,7 @@ function SlotParameterPopup({
   anchorX: number;
   slotName: string;
   slotTrackId: string | null;
+  slotType: SlotType;
   slotNames: ReadonlyMap<string, string>;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -1693,13 +1698,16 @@ function SlotParameterPopup({
   }, [blockRect, anchorX]);
 
   const definition = blockDefinition(block.kind);
-  const properties = definition.slotProperties;
+  const slotProperties = definition.slotProperties;
+  const properties = slotProperties.filter(
+    (property) => property.type === slotType,
+  );
   const sameTrack = slotTrackId === null || slotTrackId === block.trackId;
 
   return (
     <div
       ref={ref}
-      className="parameter-popup"
+      className={`parameter-popup${slotType === "string" ? " is-string" : ""}`}
       data-parameter-popup=""
       data-block-id={block.id}
       role="group"
@@ -1715,10 +1723,14 @@ function SlotParameterPopup({
           This slot belongs to another track.
         </p>
       ) : properties.length === 0 ? (
-        <p className="parameter-popup-note">No slot-capable parameters.</p>
+        <p className="parameter-popup-note">
+          {slotProperties.length === 0
+            ? "No slot-capable parameters."
+            : "No compatible parameters."}
+        </p>
       ) : (
         <div className="parameter-popup-list">
-          {properties.map(({ key, label }) => {
+          {properties.map(({ key, label, type }) => {
             const bound = block.slotBindings?.[key];
             return (
               <div
@@ -1734,7 +1746,9 @@ function SlotParameterPopup({
                 <span className="parameter-popup-key">{label}</span>
                 <span className="parameter-popup-source">
                   {bound === undefined
-                    ? "Number"
+                    ? type === "string"
+                      ? "String"
+                      : "Number"
                     : (slotNames.get(bound) ?? bound)}
                 </span>
               </div>
@@ -1761,7 +1775,6 @@ function TrackLabel({
   onEndRename: () => void;
   onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => void;
 }) {
-  const addSlot = useExperimentStore((state) => state.addSlot);
   const renameTrack = useExperimentStore((state) => state.renameTrack);
   const [draft, setDraft] = useState("");
 
@@ -1828,18 +1841,52 @@ function TrackLabel({
       ) : (
         <>
           <span className="track-label-text">{track.label}</span>
-          <button
-            type="button"
-            className="slot-add"
-            aria-label={`Add slot to ${track.label}`}
-            disabled={!editable}
-            onClick={() => addSlot(track.id)}
-          >
-            <Plus size={11} aria-hidden="true" />
-            Add slot
-          </button>
+          <AddSlotControl
+            trackId={track.id}
+            scope={track.label}
+            editable={editable}
+          />
         </>
       )}
+    </div>
+  );
+}
+
+function AddSlotControl({
+  trackId,
+  scope,
+  editable,
+}: {
+  trackId: string | null;
+  scope: string;
+  editable: boolean;
+}) {
+  const addSlot = useExperimentStore((state) => state.addSlot);
+  const [type, setType] = useState<SlotType>("number");
+  const typeLabel = type === "string" ? "string" : "number";
+
+  return (
+    <div className="slot-add-control">
+      <select
+        className="slot-type-select"
+        aria-label={`New slot type for ${scope}`}
+        value={type}
+        disabled={!editable}
+        onChange={(event) => setType(event.target.value as SlotType)}
+      >
+        <option value="number">Number</option>
+        <option value="string">String</option>
+      </select>
+      <button
+        type="button"
+        className="slot-add is-icon"
+        aria-label={`Add ${typeLabel} slot for ${scope}`}
+        title={`Add ${typeLabel} slot`}
+        disabled={!editable}
+        onClick={() => addSlot(trackId, type)}
+      >
+        <Plus size={11} aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -1850,7 +1897,7 @@ function SlotLabel({
   editable,
   groupStart,
 }: {
-  slot: NumericSlot;
+  slot: Slot;
   name: string;
   editable: boolean;
   groupStart: boolean;
@@ -1881,7 +1928,7 @@ function SlotLabel({
 
   return (
     <div
-      className={`slot-label${groupStart ? " is-group-start" : ""}`}
+      className={`slot-label${groupStart ? " is-group-start" : ""}${slot.type === "string" ? " is-string" : ""}`}
       id={`slot-label-${slot.id}`}
     >
       {editing ? (
@@ -1965,7 +2012,7 @@ function SlotRow({
   assignmentTimes,
   onValueDragStart,
 }: {
-  slot: NumericSlot;
+  slot: Slot;
   name: string;
   layout: TimelineLayout;
   columnCount: number;
@@ -1976,6 +2023,7 @@ function SlotRow({
     slotId: string,
     slotName: string,
     slotTrackId: string | null,
+    slotType: SlotType,
     pointerId: number,
     x: number,
     y: number,
@@ -2026,6 +2074,7 @@ function SlotRow({
         slot.id,
         name,
         slot.trackId,
+        slot.type,
         event.pointerId,
         event.clientX,
         event.clientY,
@@ -2051,7 +2100,8 @@ function SlotRow({
     path: readonly string[],
   ) => {
     const key = initializationPathKey(path);
-    return slot.initializations.find(
+    const initializations: readonly SlotInitialization[] = slot.initializations;
+    return initializations.find(
       (candidate) =>
         candidate.boundary === boundary &&
         initializationPathKey(candidate.path) === key,
@@ -2068,12 +2118,23 @@ function SlotRow({
       return;
     }
     const initialization = initializationAt(boundary, path);
-    setDraft(initialization === undefined ? "0" : String(initialization.value));
+    setDraft(
+      initialization === undefined
+        ? slot.type === "string"
+          ? ""
+          : "0"
+        : String(initialization.value),
+    );
     setEditing({ boundary, path });
   };
 
   const commit = () => {
     if (editing === null) {
+      return;
+    }
+    if (slot.type === "string") {
+      initializeSlot(slot.id, editing.boundary, editing.path, draft);
+      setEditing(null);
       return;
     }
     const value = Number.parseFloat(draft);
@@ -2111,7 +2172,7 @@ function SlotRow({
 
   return (
     <div
-      className={`slot-row${groupStart ? " is-group-start" : ""}`}
+      className={`slot-row${groupStart ? " is-group-start" : ""}${slot.type === "string" ? " is-string" : ""}`}
       data-slot-id={slot.id}
       role="group"
       aria-label={`${name} slot row`}
@@ -2141,8 +2202,14 @@ function SlotRow({
           const initialized = initialization !== undefined;
           const context =
             key === "" ? "outside all loops" : `inside ${key.replaceAll("/", " and ")}`;
+          const valueText =
+            initialization === undefined
+              ? ""
+              : typeof initialization.value === "string"
+                ? `"${initialization.value}"`
+                : String(initialization.value);
           const description = initialized
-            ? `${name} at time ${run.time} (${context}), initialized to ${initialization.value}. Open to edit or delete the initialization.`
+            ? `${name} at time ${run.time} (${context}), initialized to ${valueText}. Open to edit or delete the initialization.`
             : `${name} at time ${run.time} (${context}), unset. Open to initialize it.`;
           return (
             <button
@@ -2177,7 +2244,7 @@ function SlotRow({
                     });
                   }}
                 >
-                  {initialization.value}
+                  {valueText}
                 </span>
               ) : null}
             </button>
@@ -2203,6 +2270,7 @@ function SlotRow({
               slot.id,
               name,
               slot.trackId,
+              slot.type,
               event.pointerId,
               event.clientX,
               event.clientY,
@@ -2212,7 +2280,7 @@ function SlotRow({
       ))}
       {editing !== null && editingGap !== undefined && editable ? (
         <form
-          className="slot-editor"
+          className={`slot-editor${slot.type === "string" ? " is-string" : ""}`}
           style={{
             left: Math.max(
               2,
@@ -2227,9 +2295,9 @@ function SlotRow({
         >
           <input
             className="slot-editor-input"
-            type="number"
-            step="any"
-            inputMode="decimal"
+            type={slot.type === "string" ? "text" : "number"}
+            step={slot.type === "string" ? undefined : "any"}
+            inputMode={slot.type === "string" ? undefined : "decimal"}
             autoFocus
             aria-label={`${name} value at time ${editing.boundary}`}
             value={draft}
@@ -2577,7 +2645,7 @@ function RowTiles({ layout }: { layout: TimelineLayout }) {
 function formatSlotValidation(
   reads: readonly NumericSlotRead[],
   writes: readonly NumericSlotWrite[],
-  slots: readonly NumericSlot[],
+  slots: readonly Slot[],
   tracks: readonly Track[],
 ): string | null {
   if (reads.length === 0 && writes.length === 0) {

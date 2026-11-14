@@ -25,8 +25,11 @@ function resetStore(): void {
 
 beforeEach(resetStore);
 
-function addSlot(trackId: string | null): string {
-  useExperimentStore.getState().addSlot(trackId);
+function addSlot(
+  trackId: string | null,
+  type?: "number" | "string",
+): string {
+  useExperimentStore.getState().addSlot(trackId, type);
   const slots = useExperimentStore.getState().slots;
   return slots[slots.length - 1].id;
 }
@@ -45,6 +48,15 @@ function createRectangle(
   start = 0,
 ): string {
   useExperimentStore.getState().create(trackId, "rectangle", toInteger(start), toInteger(1));
+  const blocks = useExperimentStore.getState().blocks;
+  return blocks[blocks.length - 1].id;
+}
+
+function createDialogue(
+  trackId: string = DEFAULT_TRACKS[0].id,
+  start = 0,
+): string {
+  useExperimentStore.getState().create(trackId, "dialogue", toInteger(start), toInteger(1));
   const blocks = useExperimentStore.getState().blocks;
   return blocks[blocks.length - 1].id;
 }
@@ -270,6 +282,61 @@ describe("slot creation", () => {
     expect(new Set(slots.map((slot) => slot.id)).size).toBe(3);
     expect(slots.map((slot) => slot.initializations)).toEqual([[], [], []]);
   });
+
+  it("defaults a new shared slot to the number type", () => {
+    const slotId = addSlot(null);
+
+    expect(slotById(slotId)).toEqual({
+      id: slotId,
+      trackId: null,
+      type: "number",
+      initializations: [],
+    });
+  });
+
+  it("defaults a new track-local slot to the number type", () => {
+    const slotId = addSlot(DEFAULT_TRACKS[0].id);
+
+    expect(slotById(slotId)).toEqual({
+      id: slotId,
+      trackId: DEFAULT_TRACKS[0].id,
+      type: "number",
+      initializations: [],
+    });
+  });
+
+  it("creates an explicitly typed number slot", () => {
+    const slotId = addSlot(DEFAULT_TRACKS[1].id, "number");
+
+    expect(slotById(slotId)).toEqual({
+      id: slotId,
+      trackId: DEFAULT_TRACKS[1].id,
+      type: "number",
+      initializations: [],
+    });
+  });
+
+  it("creates a shared string slot", () => {
+    const slotId = addSlot(null, "string");
+
+    expect(slotById(slotId)).toEqual({
+      id: slotId,
+      trackId: null,
+      type: "string",
+      initializations: [],
+    });
+  });
+
+  it("creates a track-local string slot", () => {
+    const slotId = addSlot(DEFAULT_TRACKS[0].id, "string");
+
+    expect(slotById(slotId)).toEqual({
+      id: slotId,
+      trackId: DEFAULT_TRACKS[0].id,
+      type: "string",
+      initializations: [],
+    });
+  });
 });
 
 describe("slot initialization", () => {
@@ -369,6 +436,117 @@ describe("slot initialization", () => {
 
     expect(slotById(first).initializations).toEqual([{ boundary: 0, path: [], value: 7 }]);
     expect(slotById(second).initializations).toEqual([]);
+  });
+
+  it("stores a string initialization on a string slot", () => {
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().initializeSlot(slotId, 3, [], "hello");
+
+    expect(slotById(slotId).initializations).toEqual([
+      { boundary: 3, path: [], value: "hello" },
+    ]);
+  });
+
+  it("accepts an empty string initialization", () => {
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, [], "");
+
+    expect(slotById(slotId).initializations).toEqual([
+      { boundary: 0, path: [], value: "" },
+    ]);
+  });
+
+  it("permits editing a string value at the same initialization time", () => {
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().initializeSlot(slotId, 2, [], "first");
+    useExperimentStore.getState().initializeSlot(slotId, 2, [], "second");
+
+    expect(slotById(slotId).initializations).toEqual([
+      { boundary: 2, path: [], value: "second" },
+    ]);
+  });
+
+  it("stores string initializations at multiple times in time order", () => {
+    const slotId = addSlot(DEFAULT_TRACKS[0].id, "string");
+
+    useExperimentStore.getState().initializeSlot(slotId, 4, [], "later");
+    useExperimentStore.getState().initializeSlot(slotId, 1, [], "earlier");
+
+    expect(slotById(slotId).initializations).toEqual([
+      { boundary: 1, path: [], value: "earlier" },
+      { boundary: 4, path: [], value: "later" },
+    ]);
+  });
+
+  it("rejects a numeric initialization on a string slot", () => {
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, [], 5);
+
+    expect(slotById(slotId).initializations).toEqual([]);
+  });
+
+  it("rejects a string initialization on a numeric slot", () => {
+    const slotId = addSlot(null);
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, [], "hello");
+
+    expect(slotById(slotId).initializations).toEqual([]);
+  });
+
+  it("rejects a string initialization on an explicitly numeric slot", () => {
+    const slotId = addSlot(DEFAULT_TRACKS[1].id, "number");
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, [], "hello");
+
+    expect(slotById(slotId).initializations).toEqual([]);
+  });
+
+  it("keeps a valid string value when a numeric initialization is rejected", () => {
+    const slotId = addSlot(null, "string");
+    useExperimentStore.getState().initializeSlot(slotId, 0, [], "hello");
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, [], 5);
+
+    expect(slotById(slotId).initializations).toEqual([
+      { boundary: 0, path: [], value: "hello" },
+    ]);
+  });
+
+  it("keeps a valid numeric value when a string initialization is rejected", () => {
+    const slotId = addSlot(null);
+    useExperimentStore.getState().initializeSlot(slotId, 0, [], 5);
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, [], "hello");
+
+    expect(slotById(slotId).initializations).toEqual([
+      { boundary: 0, path: [], value: 5 },
+    ]);
+  });
+
+  it("rejects a string initialization at a negative time", () => {
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().initializeSlot(slotId, -1, [], "hello");
+
+    expect(slotById(slotId).initializations).toEqual([]);
+  });
+
+  it("keeps numeric non-finite rejection for an explicitly numeric slot", () => {
+    const slotId = addSlot(null, "number");
+
+    for (const value of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      useExperimentStore.getState().initializeSlot(slotId, 0, [], value);
+    }
+
+    expect(slotById(slotId).initializations).toEqual([]);
   });
 });
 
@@ -483,6 +661,52 @@ describe("rectangle slot selection", () => {
     expect(slotById(slotId).initializations).toEqual([{ boundary: 0, path: [], value: 3 }]);
     expect(rectangle(rectangleId).slotBindings?.x).toBe(slotId);
     expect(rectangle(rectangleId).rectUnit).toBe("pixels");
+  });
+});
+
+describe("dialogue message slot selection", () => {
+  it("binds a string slot to the dialogue message", () => {
+    const dialogueId = createDialogue();
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().setSlotBinding(dialogueId, "message", slotId);
+
+    expect(requiredBlock(dialogueId).slotBindings).toEqual({ message: slotId });
+  });
+
+  it("rejects binding a numeric slot to the dialogue message", () => {
+    const dialogueId = createDialogue();
+    const stringId = addSlot(null, "string");
+    const numericId = addSlot(null, "number");
+
+    useExperimentStore
+      .getState()
+      .setSlotBinding(dialogueId, "message", stringId);
+    useExperimentStore
+      .getState()
+      .setSlotBinding(dialogueId, "message", numericId);
+
+    expect(requiredBlock(dialogueId).slotBindings).toEqual({
+      message: stringId,
+    });
+  });
+
+  it("rejects binding a string slot to a numeric input", () => {
+    const rectangleId = createRectangle();
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().setSlotBinding(rectangleId, "x", slotId);
+
+    expect(requiredBlock(rectangleId).slotBindings).toBeUndefined();
+  });
+
+  it("rejects binding a string slot to a numeric output", () => {
+    const additionId = createAddition();
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().setSlotBinding(additionId, "out", slotId);
+
+    expect(requiredBlock(additionId).slotBindings).toBeUndefined();
   });
 });
 
@@ -1852,6 +2076,29 @@ describe("gap-keyed slot initializations", () => {
 
     expect(slotById(slotId).initializations).toEqual([
       { boundary: 0, path: [loopId], value: 4 },
+    ]);
+  });
+
+  it("stores a string initialization with its enclosing loop path", () => {
+    const loopId = addLoopAt(0, 3);
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, [loopId], "inside");
+
+    expect(slotById(slotId).initializations).toEqual([
+      { boundary: 0, path: [loopId], value: "inside" },
+    ]);
+  });
+
+  it("replaces a string initialization in the same gap", () => {
+    const loopId = addLoopAt(0, 3);
+    const slotId = addSlot(null, "string");
+
+    useExperimentStore.getState().initializeSlot(slotId, 0, [loopId], "first");
+    useExperimentStore.getState().initializeSlot(slotId, 0, [loopId], "second");
+
+    expect(slotById(slotId).initializations).toEqual([
+      { boundary: 0, path: [loopId], value: "second" },
     ]);
   });
 

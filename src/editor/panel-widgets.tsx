@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState } from "react";
 import { AudioLines, Clock } from "lucide-react";
-import type { NumericSlot } from "../core/slots/numeric-slots";
+import type { Slot, SlotType } from "../core/slots/numeric-slots";
 import type {
   DurationPanelField,
   EntryContext,
@@ -283,7 +283,7 @@ export function SlotPropertyField({
   const slots = useExperimentStore((state) => state.slots);
   const tracks = useExperimentStore((state) => state.tracks);
   const setSlotBinding = useExperimentStore((state) => state.setSlotBinding);
-  const { local, shared } = slotChoices(slots, tracks, trackId);
+  const { local, shared } = slotChoices(slots, tracks, trackId, "number");
   const missingBound =
     boundSlotId !== undefined &&
     ![...local, ...shared].some(({ slot }) => slot.id === boundSlotId);
@@ -341,6 +341,109 @@ export function SlotPropertyField({
   );
 }
 
+export function StringPropertyField({
+  placementId,
+  field,
+  slotEnabled,
+  label,
+  value,
+  valueKey,
+  boundSlotId,
+  trackId,
+  editable,
+  ariaLabel,
+  onCommit,
+}: {
+  placementId: string;
+  field: string;
+  slotEnabled: boolean;
+  label: string;
+  value: string;
+  valueKey: string;
+  boundSlotId: string | undefined;
+  trackId: string;
+  editable: boolean;
+  ariaLabel: string;
+  onCommit: (value: string) => void;
+}) {
+  const slots = useExperimentStore((state) => state.slots);
+  const tracks = useExperimentStore((state) => state.tracks);
+  const setSlotBinding = useExperimentStore((state) => state.setSlotBinding);
+  const { local, shared } = slotChoices(slots, tracks, trackId, "string");
+  const missingBound =
+    boundSlotId !== undefined &&
+    ![...local, ...shared].some(({ slot }) => slot.id === boundSlotId);
+  const [draft, setDraft] = useState(value);
+
+  useLayoutEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commit = () => {
+    onCommit(draft);
+    setDraft(value);
+  };
+
+  return (
+    <div className="inspector-field">
+      <label htmlFor={`property-${placementId}-${field}-${slotEnabled ? "source" : "value"}`}>
+        {label}
+      </label>
+      {slotEnabled ? <select
+        id={`property-${placementId}-${field}-source`}
+        className="rect-source"
+        aria-label={`${ariaLabel} source`}
+        value={boundSlotId ?? ""}
+        disabled={!editable}
+        onChange={(event) => {
+          const next = event.target.value;
+          setSlotBinding(placementId, field, next === "" ? null : next);
+        }}
+      >
+        <option value="">Text</option>
+        {local.length > 0 ? (
+          <optgroup label="Track slots">
+            {local.map(({ slot, name }) => (
+              <option key={slot.id} value={slot.id}>
+                {name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {shared.length > 0 ? (
+          <optgroup label="Shared slots">
+            {shared.map(({ slot, name }) => (
+              <option key={slot.id} value={slot.id}>
+                {name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {missingBound ? (
+          <option value={boundSlotId}>{`${boundSlotId} (unavailable)`}</option>
+        ) : null}
+      </select> : null}
+      <input
+        id={`property-${placementId}-${field}-value`}
+        key={`property-${field}-${placementId}-${valueKey}`}
+        type="text"
+        className="inspector-number"
+        aria-label={ariaLabel}
+        value={draft}
+        disabled={!editable || boundSlotId !== undefined}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            commit();
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 export function OutputSlotField({
   placementId,
   field,
@@ -359,7 +462,7 @@ export function OutputSlotField({
   const slots = useExperimentStore((state) => state.slots);
   const tracks = useExperimentStore((state) => state.tracks);
   const setSlotBinding = useExperimentStore((state) => state.setSlotBinding);
-  const { local, shared } = slotChoices(slots, tracks, trackId);
+  const { local, shared } = slotChoices(slots, tracks, trackId, "number");
   const missingBound =
     boundSlotId !== undefined &&
     ![...local, ...shared].some(({ slot }) => slot.id === boundSlotId);
@@ -406,16 +509,21 @@ export function OutputSlotField({
 }
 
 export function slotChoices(
-  slots: readonly NumericSlot[],
+  slots: readonly Slot[],
   tracks: readonly Track[],
   trackId: string,
+  type: SlotType,
 ): {
-  local: { slot: NumericSlot; name: string }[];
-  shared: { slot: NumericSlot; name: string }[];
+  local: { slot: Slot; name: string }[];
+  shared: { slot: Slot; name: string }[];
 } {
   const available = slots
     .map((slot, index) => ({ slot, name: slotDisplayName(slot, index, tracks) }))
-    .filter(({ slot }) => slot.trackId === null || slot.trackId === trackId);
+    .filter(
+      ({ slot }) =>
+        slot.type === type &&
+        (slot.trackId === null || slot.trackId === trackId),
+    );
   return {
     local: available.filter(({ slot }) => slot.trackId !== null),
     shared: available.filter(({ slot }) => slot.trackId === null),
@@ -423,7 +531,7 @@ export function slotChoices(
 }
 
 export function slotDisplayName(
-  slot: NumericSlot,
+  slot: Slot,
   index: number,
   tracks: readonly Track[],
 ): string {

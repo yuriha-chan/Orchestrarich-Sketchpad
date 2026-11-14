@@ -400,6 +400,37 @@ body {
   opacity: 0.5;
 }
 
+.slot-add.is-icon {
+  width: 22px;
+  justify-content: center;
+  padding: 0;
+}
+
+.slot-add-control {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+.slot-type-select {
+  height: 20px;
+  max-width: 56px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 0 2px;
+  background: #ffffff;
+  color: #475569;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.slot-type-select:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .slot-label {
   display: flex;
   align-items: center;
@@ -407,11 +438,15 @@ body {
   height: var(--slot-height);
   padding: 0 4px 0 12px;
   border-bottom: 1px solid #e2e8f0;
-  background: #f8fafc;
+  background: #dbeafe;
 }
 
 .slot-label.is-group-start {
   border-top: 1px solid #94a3b8;
+}
+
+.slot-label.is-string {
+  background: #fae8ff;
 }
 
 .slot-label-name {
@@ -836,6 +871,76 @@ body {
   border-color: #fecaca;
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.slot-row.is-string .slot-cell:not(:disabled):hover {
+  background: rgb(162 28 175 / 0.1);
+}
+
+.slot-row.is-string .slot-value-rail line {
+  stroke: #a21caf;
+}
+
+.slot-row.is-string .slot-cell-value {
+  border-color: #c026d3;
+  background: #fae8ff;
+  color: #86198f;
+}
+
+.slot-row.is-string .slot-value-dot {
+  background: #a21caf;
+}
+
+.slot-wire-layer line.is-string {
+  stroke: #a21caf;
+}
+
+.slot-wire-layer polyline.is-string {
+  stroke: #a21caf;
+}
+
+.slot-dot-layer circle.is-string {
+  fill: #a21caf;
+}
+
+.slot-drag-ghost.is-string {
+  background: #86198f;
+}
+
+.slot-editor.is-string {
+  border-color: #a21caf;
+}
+
+.slot-editor.is-string button[type="submit"] {
+  border-color: #a21caf;
+  background: #a21caf;
+  color: #ffffff;
+}
+
+.parameter-popup.is-string .parameter-popup-slot {
+  color: #a21caf;
+}
+
+.parameter-popup.is-string .parameter-popup-row {
+  border-color: #f0abfc;
+}
+
+.parameter-popup.is-string .parameter-popup-row.is-bound {
+  border-color: #c026d3;
+  background: #fdf4ff;
+}
+
+.parameter-popup.is-string .parameter-popup-row:hover {
+  border-color: #a21caf;
+  background: #fae8ff;
+}
+
+.parameter-popup.is-string .parameter-popup-row.is-bound .parameter-popup-source {
+  color: #86198f;
+}
+
+.parameter-popup.is-string .parameter-popup-row.is-bound .parameter-popup-source::before {
+  background: #a21caf;
 }
 
 .slot-validation {

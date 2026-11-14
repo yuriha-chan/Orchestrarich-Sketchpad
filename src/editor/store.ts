@@ -31,12 +31,16 @@ import {
 import type { WorkspaceId } from "./workspaces";
 import { blockDefinition } from "../blocks/builtin-blocks";
 import { compilePlacement, phaseOffsets } from "./execution-definition";
-import { initializationPathKey, type NumericSlot } from "../core/slots/numeric-slots";
+import {
+  initializationPathKey,
+  type Slot,
+  type SlotType,
+} from "../core/slots/numeric-slots";
 
 interface ExperimentState {
   blocks: Placement[];
   tracks: Track[];
-  slots: NumericSlot[];
+  slots: Slot[];
   bpm: number;
   loops: LoopNode[];
   gridColumns: number;
@@ -68,7 +72,7 @@ interface ExperimentState {
   setBlockKind: (id: string, kind: string) => void;
   setCooperativeSkip: (id: string, value: boolean) => void;
   editBlockData: (id: string, update: (data: unknown) => unknown) => void;
-  addSlot: (trackId: string | null) => void;
+  addSlot: (trackId: string | null, type?: SlotType) => void;
   renameSlot: (id: string, name: string) => void;
   removeSlot: (id: string) => void;
   clearSlotInitialization: (
@@ -80,7 +84,7 @@ interface ExperimentState {
     id: string,
     boundary: number,
     path: readonly string[],
-    value: number,
+    value: number | string,
   ) => void;
   setSlotBinding: (
     id: string,
@@ -165,6 +169,69 @@ function clampGridSize(value: number): number {
   return Math.min(MAX_GRID_SIZE, Math.max(MIN_GRID_SIZE, Math.round(value)));
 }
 
+interface WritableSlotInitialization<T extends number | string> {
+  boundary: number;
+  path: readonly string[];
+  value: T;
+}
+
+function writeSlotInitialization<T extends number | string>(
+  initializations: WritableSlotInitialization<T>[],
+  boundary: number,
+  context: readonly string[],
+  value: T,
+  loops: readonly LoopNode[],
+): void {
+  const key = initializationPathKey(context);
+  const existing = initializations.find(
+    (initialization) =>
+      initialization.boundary === boundary &&
+      initializationPathKey(initialization.path) === key,
+  );
+  if (existing !== undefined) {
+    existing.value = value;
+    return;
+  }
+  initializations.push({ boundary, path: [...context], value });
+  initializations.sort((left, right) => {
+    if (left.boundary !== right.boundary) {
+      return left.boundary - right.boundary;
+    }
+    const leftIndex = boundaryGapPaths(loops, left.boundary).findIndex(
+      (candidate) =>
+        initializationPathKey(candidate) === initializationPathKey(left.path),
+    );
+    const rightIndex = boundaryGapPaths(loops, right.boundary).findIndex(
+      (candidate) =>
+        initializationPathKey(candidate) === initializationPathKey(right.path),
+    );
+    return leftIndex - rightIndex;
+  });
+}
+
+function cloneSlot(slot: Slot, id: string, trackId: string) {
+  if (slot.type === "string") {
+    return {
+      ...slot,
+      id,
+      trackId,
+      initializations: slot.initializations.map((entry) => ({
+        ...entry,
+        path: [...entry.path],
+      })),
+    };
+  }
+  return {
+    ...slot,
+    id,
+    trackId,
+    initializations: slot.initializations.map((entry) => ({
+      ...entry,
+      path: [...entry.path],
+    })),
+  };
+}
+
 let nextId = 1;
 let nextTrackId = 1;
 let nextSlotId = 1;
@@ -237,15 +304,7 @@ export const useExperimentStore = create<ExperimentState>()(
           const copyId = `slot-${nextSlotId}`;
           nextSlotId += 1;
           slotIds.set(slot.id, copyId);
-          state.slots.push({
-            ...slot,
-            id: copyId,
-            trackId: id,
-            initializations: slot.initializations.map((entry) => ({
-              ...entry,
-              path: [...entry.path],
-            })),
-          });
+          state.slots.push(cloneSlot(slot, copyId, id));
         }
         for (const block of sourceBlocks) {
           const bindings = block.slotBindings;
@@ -414,7 +473,11 @@ export const useExperimentStore = create<ExperimentState>()(
           const retainedBindings: Partial<Record<string, string>> = {};
           for (const property of definition.slotProperties) {
             const slotId = block.slotBindings?.[property.key];
-            if (slotId !== undefined) {
+            if (slotId === undefined) {
+              continue;
+            }
+            const slot = state.slots.find((candidate) => candidate.id === slotId);
+            if (slot !== undefined && slot.type === property.type) {
               retainedBindings[property.key] = slotId;
             }
           }
@@ -442,16 +505,17 @@ export const useExperimentStore = create<ExperimentState>()(
           if (phasesRespectLoops({ ...block, data }, allLoops(state.loops))) block.data = data;
         });
       }),
-    addSlot: (trackId) =>
+    addSlot: (trackId, type = "number") =>
       set((state) => {
         if (trackId !== null && !state.tracks.some((track) => track.id === trackId)) {
           return;
         }
-        state.slots.push({
-          id: `slot-${nextSlotId}`,
-          trackId,
-          initializations: [],
-        });
+        const id = `slot-${nextSlotId}`;
+        if (type === "string") {
+          state.slots.push({ id, trackId, type: "string", initializations: [] });
+        } else {
+          state.slots.push({ id, trackId, type: "number", initializations: [] });
+        }
         nextSlotId += 1;
       }),
     renameSlot: (id, name) =>
@@ -472,15 +536,18 @@ export const useExperimentStore = create<ExperimentState>()(
           return;
         }
         const key = initializationPathKey(path);
-        slot.initializations = slot.initializations.filter(
-          (initialization) =>
-            initialization.boundary !== boundary ||
-            initializationPathKey(initialization.path) !== key,
-        );
+        const keep = (initialization: WritableSlotInitialization<number | string>) =>
+          initialization.boundary !== boundary ||
+          initializationPathKey(initialization.path) !== key;
+        if (slot.type === "string") {
+          slot.initializations = slot.initializations.filter(keep);
+        } else {
+          slot.initializations = slot.initializations.filter(keep);
+        }
       }),
     initializeSlot: (id, boundary, path, value) =>
       set((state) => {
-        if (!Number.isInteger(boundary) || boundary < 0 || !Number.isFinite(value)) {
+        if (!Number.isInteger(boundary) || boundary < 0) {
           return;
         }
         const contexts = boundaryGapPaths(state.loops, boundary);
@@ -495,37 +562,37 @@ export const useExperimentStore = create<ExperimentState>()(
         if (slot === undefined) {
           return;
         }
-        const existing = slot.initializations.find(
-          (initialization) =>
-            initialization.boundary === boundary &&
-            initializationPathKey(initialization.path) === key,
-        );
-        if (existing !== undefined) {
-          existing.value = value;
+        if (slot.type === "string") {
+          if (typeof value !== "string") {
+            return;
+          }
+          writeSlotInitialization(
+            slot.initializations,
+            boundary,
+            context,
+            value,
+            state.loops,
+          );
           return;
         }
-        slot.initializations.push({ boundary, path: [...context], value });
-        slot.initializations.sort((left, right) => {
-          if (left.boundary !== right.boundary) {
-            return left.boundary - right.boundary;
-          }
-          const leftIndex = boundaryGapPaths(state.loops, left.boundary).findIndex(
-            (candidate) =>
-              initializationPathKey(candidate) ===
-              initializationPathKey(left.path),
-          );
-          const rightIndex = boundaryGapPaths(state.loops, right.boundary).findIndex(
-            (candidate) =>
-              initializationPathKey(candidate) ===
-              initializationPathKey(right.path),
-          );
-          return leftIndex - rightIndex;
-        });
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          return;
+        }
+        writeSlotInitialization(
+          slot.initializations,
+          boundary,
+          context,
+          value,
+          state.loops,
+        );
       }),
     setSlotBinding: (id, key, slotId) =>
       set((state) => {
         editBlock(state, id, (block) => {
-          if (!blockDefinition(block.kind).slotProperties.some((property) => property.key === key)) {
+          const property = blockDefinition(block.kind).slotProperties.find(
+            (candidate) => candidate.key === key,
+          );
+          if (property === undefined) {
             return;
           }
           if (slotId === null) {
@@ -540,6 +607,7 @@ export const useExperimentStore = create<ExperimentState>()(
           const slot = state.slots.find((candidate) => candidate.id === slotId);
           if (
             slot === undefined ||
+            slot.type !== property.type ||
             (slot.trackId !== null && slot.trackId !== block.trackId)
           ) {
             return;

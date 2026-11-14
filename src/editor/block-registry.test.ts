@@ -84,7 +84,7 @@ describe("block registry", () => {
 
 describe("block data conversion", () => {
   it("creates each block's default data from its length", () => {
-    expect(dialogue.createData(2)).toEqual({});
+    expect(dialogue.createData(2)).toEqual({ message: "lazy dog jumps ..." });
     expect(camera.createData(2)).toEqual({
       duration: 2,
       durationUnit: "beats",
@@ -192,7 +192,9 @@ describe("block data conversion", () => {
     };
     const carried = camera.carryOver?.(duration);
     expect(carried).toEqual({ duration });
-    expect(dialogue.convertFrom(carried ?? {}, 4)).toEqual({});
+    expect(dialogue.convertFrom(carried ?? {}, 4)).toEqual({
+      message: "lazy dog jumps ...",
+    });
     expect(addition.convertFrom(carried ?? {}, 4)).toEqual({
       inputA: 0,
       inputB: 0,
@@ -342,15 +344,15 @@ describe("derived block panel", () => {
 
   it("derives slot properties from input and output fields", () => {
     expect(blockDefinition("rectangle").slotProperties).toEqual([
-      { key: "x", label: "X", direction: "input" },
-      { key: "y", label: "Y", direction: "input" },
-      { key: "w", label: "Width", direction: "input" },
-      { key: "h", label: "Height", direction: "input" },
+      { key: "x", label: "X", direction: "input", type: "number" },
+      { key: "y", label: "Y", direction: "input", type: "number" },
+      { key: "w", label: "Width", direction: "input", type: "number" },
+      { key: "h", label: "Height", direction: "input", type: "number" },
     ]);
     expect(blockDefinition("addition").slotProperties).toEqual([
-      { key: "a", label: "A", direction: "input" },
-      { key: "b", label: "B", direction: "input" },
-      { key: "out", label: "Output", direction: "output" },
+      { key: "a", label: "A", direction: "input", type: "number" },
+      { key: "b", label: "B", direction: "input", type: "number" },
+      { key: "out", label: "Output", direction: "output", type: "number" },
     ]);
     expect(blockDefinition("camera").slotProperties).toEqual([]);
   });
@@ -532,9 +534,9 @@ describe("block input declarations", () => {
     expect(sections[1].fields).toEqual([]);
     expect(sections[2].fields[0]).toBe(total);
     expect(deriveSlotProperties(definition.fields)).toEqual([
-      { key: "left", label: "Left", direction: "input" },
-      { key: "right", label: "Right", direction: "input" },
-      { key: "total", label: "Total", direction: "output" },
+      { key: "left", label: "Left", direction: "input", type: "number" },
+      { key: "right", label: "Right", direction: "input", type: "number" },
+      { key: "total", label: "Total", direction: "output", type: "number" },
     ]);
   });
 });
@@ -818,10 +820,10 @@ describe("rectangle unit choice field", () => {
     expect(reads).toEqual(["slot-x"]);
     expect(placement.slotBindings).toEqual({ x: "slot-x" });
     expect(deriveSlotProperties(rectangle.fields)).toEqual([
-      { key: "x", label: "X", direction: "input" },
-      { key: "y", label: "Y", direction: "input" },
-      { key: "w", label: "Width", direction: "input" },
-      { key: "h", label: "Height", direction: "input" },
+      { key: "x", label: "X", direction: "input", type: "number" },
+      { key: "y", label: "Y", direction: "input", type: "number" },
+      { key: "w", label: "Width", direction: "input", type: "number" },
+      { key: "h", label: "Height", direction: "input", type: "number" },
     ]);
     execution.terminate();
   });

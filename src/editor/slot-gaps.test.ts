@@ -38,6 +38,7 @@ describe("liveNumericSlots", () => {
       {
         id: "speed",
         trackId: null,
+        type: "number",
         initializations: [
           { boundary: 0, path: ["gone"], value: 1 },
           { boundary: 0, path: [], value: 2 },
@@ -55,6 +56,7 @@ describe("liveNumericSlots", () => {
       {
         id: "speed",
         trackId: null,
+        type: "number",
         initializations: [{ boundary: 2, path: ["outer", "inner"], value: 3 }],
       },
     ];
@@ -69,6 +71,7 @@ describe("liveNumericSlots", () => {
       {
         id: "speed",
         trackId: null,
+        type: "number",
         initializations: [
           { boundary: 0, path: ["gone"], value: 1 },
           { boundary: 0, path: [], value: 2 },
@@ -92,6 +95,7 @@ describe("liveNumericSlots", () => {
       {
         id: "speed",
         trackId: null,
+        type: "number",
         initializations: [{ boundary: 0, path: ["gone"], value: 1 }],
       },
     ];

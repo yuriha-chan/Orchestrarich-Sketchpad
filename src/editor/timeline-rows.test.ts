@@ -24,7 +24,7 @@ function slot(
     { boundary: 0, path: [], value: 0 },
   ],
 ): NumericSlot {
-  return { id, trackId, initializations };
+  return { id, trackId, type: "number", initializations };
 }
 
 describe("timelineRows", () => {

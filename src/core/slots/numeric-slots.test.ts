@@ -13,7 +13,7 @@ function slot(
   trackId: string | null,
   initializations: { boundary: number; path: string[]; value: number }[] = [],
 ): NumericSlot {
-  return { id, trackId, initializations };
+  return { id, trackId, type: "number", initializations };
 }
 
 function read(slotId: string, trackId: string, time: number): NumericSlotRead {

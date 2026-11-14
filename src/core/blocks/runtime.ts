@@ -25,7 +25,7 @@ export interface ExecutionContext {
   readonly stage: StageActions;
   readonly report: (message: string) => void;
   readonly time: () => number;
-  readonly readSlot: (slotId: string) => number;
+  readonly readSlot: (slotId: string) => number | string;
 }
 
 export class TimedExecution extends ExecutionInstance {

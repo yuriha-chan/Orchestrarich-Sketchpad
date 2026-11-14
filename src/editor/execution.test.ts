@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimelineSnapshot } from "../core/execution/timeline-runner.ts";
-import type { NumericSlot } from "../core/slots/numeric-slots.ts";
+import type { NumericSlot, Slot, StringSlot } from "../core/slots/numeric-slots.ts";
 import type { LoopNode } from "./loops";
 import { TimelineSession, SKIP_FADE_MS, slotReads, toTimelineDefinition, type ExecutionInstance } from "./execution";
 import { compilePlacement, definitionBlocks, isMultiPhase, phaseOffsets, type ExecutionDefinition } from "./execution-definition";
@@ -100,7 +100,7 @@ function placement(overrides: PlacementOverrides = {}): Placement {
     return { ...base, kind, data };
   }
   if (kind === "dialogue") {
-    return { ...base, kind, data: {} };
+    return { ...base, kind, data: { message: "lazy dog jumps ..." } };
   }
   const durationFields = {
     duration: duration ?? 1,
@@ -151,7 +151,15 @@ function numericSlot(
   trackId: string | null,
   initializations: { boundary: number; path: string[]; value: number }[] = [],
 ): NumericSlot {
-  return { id, trackId, initializations };
+  return { id, trackId, type: "number", initializations };
+}
+
+function stringSlot(
+  id: string,
+  trackId: string | null,
+  initializations: { boundary: number; path: string[]; value: string }[] = [],
+): StringSlot {
+  return { id, trackId, type: "string", initializations };
 }
 
 interface Deferred {
@@ -180,7 +188,7 @@ function setup(
   placements: Placement[],
   bpm = 120,
   stage = createStageStore(),
-  slots: readonly NumericSlot[] = [],
+  slots: readonly Slot[] = [],
   loops: readonly LoopNode[] = [],
 ) {
   const activities: string[] = [];
@@ -1165,6 +1173,326 @@ describe("TimelineSession", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(run.blockState("line")).toBe("completed");
     run.session.dispose();
+  });
+
+  it("shows a literal dialogue message on the stage", () => {
+    const run = setup([
+      placement({ id: "line", data: { message: "The cat sleeps." } }),
+    ]);
+
+    run.session.start();
+
+    const instance = run.startedInstances.find(
+      (started) => started.placement.id === "line",
+    )!;
+    expect(stagePrimitive(run, instance.id)).toMatchObject({
+      type: "dialogue",
+      layer: "card",
+      text: "The cat sleeps.",
+    });
+    run.session.dispose();
+  });
+
+  it("shows an empty literal dialogue message instead of the default", () => {
+    const run = setup([placement({ id: "line", data: { message: "" } })]);
+
+    run.session.start();
+
+    const instance = run.startedInstances.find(
+      (started) => started.placement.id === "line",
+    )!;
+    expect(stagePrimitive(run, instance.id)).toMatchObject({
+      type: "dialogue",
+      layer: "card",
+      text: "",
+    });
+    run.session.dispose();
+  });
+
+  it("shows a bound dialogue message instead of the literal data", () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          data: { message: "literal message" },
+          slotBindings: { message: "greeting" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        stringSlot("greeting", DEFAULT_TRACKS[0].id, [
+          { boundary: 0, path: [], value: "Hello from a slot" },
+        ]),
+      ],
+    );
+
+    run.session.start();
+
+    const instance = run.startedInstances.find(
+      (started) => started.placement.id === "line",
+    )!;
+    expect(stagePrimitive(run, instance.id)).toMatchObject({
+      type: "dialogue",
+      layer: "card",
+      text: "Hello from a slot",
+    });
+    run.session.dispose();
+  });
+
+  it("shows an empty bound dialogue message", () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          slotBindings: { message: "empty-text" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        stringSlot("empty-text", DEFAULT_TRACKS[0].id, [
+          { boundary: 0, path: [], value: "" },
+        ]),
+      ],
+    );
+
+    run.session.start();
+
+    const instance = run.startedInstances.find(
+      (started) => started.placement.id === "line",
+    )!;
+    expect(stagePrimitive(run, instance.id)).toMatchObject({
+      type: "dialogue",
+      layer: "card",
+      text: "",
+    });
+    run.session.dispose();
+  });
+
+  it("uses the latest string initialization at or before the dialogue start", () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          start: 3,
+          slotBindings: { message: "caption" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        stringSlot("caption", DEFAULT_TRACKS[0].id, [
+          { boundary: 1, path: [], value: "earlier" },
+          { boundary: 2, path: [], value: "latest" },
+        ]),
+      ],
+    );
+
+    run.session.start();
+
+    expect(run.snapshot()?.time).toBe(3);
+    const instance = run.startedInstances.find(
+      (started) => started.placement.id === "line",
+    )!;
+    expect(stagePrimitive(run, instance.id)).toMatchObject({ text: "latest" });
+    run.session.dispose();
+  });
+
+  it("ignores a string initialization after the dialogue start", () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          start: 1,
+          slotBindings: { message: "caption" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        stringSlot("caption", DEFAULT_TRACKS[0].id, [
+          { boundary: 0, path: [], value: "at start" },
+          { boundary: 2, path: [], value: "later" },
+        ]),
+      ],
+    );
+
+    run.session.start();
+
+    const instance = run.startedInstances.find(
+      (started) => started.placement.id === "line",
+    )!;
+    expect(stagePrimitive(run, instance.id)).toMatchObject({ text: "at start" });
+    run.session.dispose();
+  });
+
+  it("reapplies a string initialization at the loop end on each iteration", async () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          start: 1,
+          length: 1,
+          slotBindings: { message: "caption" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        stringSlot("caption", DEFAULT_TRACKS[0].id, [
+          { boundary: 0, path: [], value: "first" },
+          { boundary: 3, path: ["loop-1"], value: "loop" },
+        ]),
+      ],
+      [{ id: "loop-1", start: 0, end: 3, children: [] }],
+    );
+
+    run.session.start();
+
+    const texts: string[] = [];
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      const instance = run.startedInstances[run.startedInstances.length - 1]!;
+      texts.push((stagePrimitive(run, instance.id) as StageDialogueCard).text);
+      run.advanceDialogue("line");
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    expect(texts).toEqual(["first", "loop", "loop"]);
+    expect(run.snapshot()?.phase).toBe("finished");
+  });
+
+  it("rejects start for a dialogue message bound to a numeric slot", () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          slotBindings: { message: "count" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        numericSlot("count", DEFAULT_TRACKS[0].id, [
+          { boundary: 0, path: [], value: 7 },
+        ]),
+      ],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("rejects start for an uninitialized dialogue message slot", () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          slotBindings: { message: "empty-text" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [stringSlot("empty-text", DEFAULT_TRACKS[0].id)],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("rejects start for a later-initialized dialogue message slot", () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          start: 0,
+          slotBindings: { message: "late-text" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        stringSlot("late-text", DEFAULT_TRACKS[0].id, [
+          { boundary: 2, path: [], value: "too late" },
+        ]),
+      ],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("rejects start for a dialogue message slot local to another track", () => {
+    const run = setup(
+      [
+        placement({
+          id: "line",
+          trackId: DEFAULT_TRACKS[0].id,
+          slotBindings: { message: "other-track-text" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        stringSlot("other-track-text", DEFAULT_TRACKS[1].id, [
+          { boundary: 0, path: [], value: "inaccessible" },
+        ]),
+      ],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("rejects start for a string slot bound to a numeric input", () => {
+    const run = setup(
+      [
+        placement({
+          id: "rect",
+          trackId: DEFAULT_TRACKS[1].id,
+          kind: "rectangle",
+          slotBindings: { x: "text-size" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [
+        stringSlot("text-size", DEFAULT_TRACKS[1].id, [
+          { boundary: 0, path: [], value: "wide" },
+        ]),
+      ],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
+  });
+
+  it("rejects start for a string slot bound to a numeric output", () => {
+    const run = setup(
+      [
+        placement({
+          id: "add",
+          kind: "addition",
+          start: 0,
+          length: 1,
+          inputA: 1,
+          inputB: 2,
+          slotBindings: { out: "text-result" },
+        }),
+      ],
+      120,
+      createStageStore(),
+      [stringSlot("text-result", null)],
+    );
+
+    expect(() => run.session.start()).toThrow();
+    expect(run.startedInstances).toEqual([]);
+    expect(run.stage.getState().items).toEqual([]);
   });
 
   it("disposal terminates the presentations owned by active blocks", () => {

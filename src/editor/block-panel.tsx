@@ -15,6 +15,7 @@ import {
   OutputSlotField,
   PropertyNumber,
   SlotPropertyField,
+  StringPropertyField,
 } from "./panel-widgets";
 
 export interface BlockPanelProps {
@@ -95,6 +96,24 @@ function FieldView({
   update: (change: (data: unknown) => unknown) => void;
 }) {
   switch (field.kind) {
+    case "string":
+      return (
+        <StringPropertyField
+          placementId={block.id}
+          field={field.key}
+          slotEnabled={field.slot === true}
+          label={field.label}
+          value={field.value(block.data)}
+          valueKey={field.value(block.data)}
+          boundSlotId={block.slotBindings?.[field.key]}
+          trackId={block.trackId}
+          editable={editable}
+          ariaLabel={field.label}
+          onCommit={(value) =>
+            update((data) => field.commit(data, value))
+          }
+        />
+      );
     case "number": {
       const limits = field.limits?.(block.data) ?? {
         min: field.min,

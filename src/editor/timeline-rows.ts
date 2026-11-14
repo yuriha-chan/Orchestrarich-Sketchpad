@@ -1,4 +1,4 @@
-import type { NumericSlot } from "../core/slots/numeric-slots";
+import type { Slot } from "../core/slots/numeric-slots";
 import type { Track } from "./model";
 
 export type TimelineRow =
@@ -7,7 +7,7 @@ export type TimelineRow =
 
 export function timelineRows(
   tracks: readonly Track[],
-  slots: readonly NumericSlot[],
+  slots: readonly Slot[],
 ): readonly TimelineRow[] {
   const rows: TimelineRow[] = [];
 

@@ -22,6 +22,7 @@ export interface SlotWire {
   readonly x: number;
   readonly blockBottomY: number;
   readonly slotY: number;
+  readonly type: SlotProperty["type"];
 }
 
 interface PendingBlock {
@@ -106,6 +107,7 @@ export function slotWires(
             slotY:
               rowTop(rows, slotIndex, layout.trackHeight, layout.slotHeight) +
               layout.slotHeight / 2,
+            type: property.type,
           });
         }
         lane += 1;
@@ -122,6 +124,7 @@ export interface OutputWire {
   readonly blockCenterY: number;
   readonly gapX: number;
   readonly slotY: number;
+  readonly type: SlotProperty["type"];
 }
 
 export function outputWires(
@@ -147,7 +150,7 @@ export function outputWires(
       layout.blockInset,
       blockLoopEdges(layout.loops, block.start, block.length),
     );
-    for (const { key, slotId } of outputs) {
+    for (const { key, slotId, type } of outputs) {
       const slotIndex = slotRows.get(slotId);
       if (slotIndex === undefined) {
         continue;
@@ -162,6 +165,7 @@ export function outputWires(
         slotY:
           rowTop(rows, slotIndex, layout.trackHeight, layout.slotHeight) +
           layout.slotHeight / 2,
+        type,
       });
     }
   }

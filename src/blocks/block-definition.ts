@@ -38,6 +38,14 @@ export interface NumberPanelField<T> extends PanelFieldBase {
   readonly limits?: (data: T) => NumberLimits;
 }
 
+export interface StringPanelField<T> extends PanelFieldBase {
+  readonly kind: "string";
+  readonly section: "input";
+  readonly slot?: boolean;
+  readonly value: (data: T) => string;
+  readonly commit: (data: T, value: string) => T;
+}
+
 export interface ColorPanelField<T> extends PanelFieldBase {
   readonly kind: "color";
   readonly section: "block";
@@ -106,6 +114,7 @@ export interface CustomPanelField<T> extends PanelFieldBase {
 
 export type PanelField<T> =
   | NumberPanelField<T>
+  | StringPanelField<T>
   | ColorPanelField<T>
   | DurationPanelField<T>
   | FadesPanelField<T>
@@ -163,9 +172,26 @@ export function deriveSlotProperties<T>(
   const properties: SlotProperty[] = [];
   for (const field of fields) {
     if (field.kind === "output") {
-      properties.push({ key: field.key, label: field.label, direction: "output" });
+      properties.push({
+        key: field.key,
+        label: field.label,
+        direction: "output",
+        type: "number",
+      });
     } else if (field.kind === "number" && field.section === "input" && field.slot) {
-      properties.push({ key: field.key, label: field.label, direction: "input" });
+      properties.push({
+        key: field.key,
+        label: field.label,
+        direction: "input",
+        type: "number",
+      });
+    } else if (field.kind === "string" && field.section === "input" && field.slot) {
+      properties.push({
+        key: field.key,
+        label: field.label,
+        direction: "input",
+        type: "string",
+      });
     }
   }
   return properties;

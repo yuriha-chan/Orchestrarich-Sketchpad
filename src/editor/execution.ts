@@ -14,7 +14,10 @@ import {
   initializationPathKey,
   validateNumericSlotReads,
   validateNumericSlotWrites,
-  type NumericSlot,
+  validateSlotTypes,
+  type Slot,
+  type SlotInitialization,
+  type SlotTypeBinding,
   type NumericSlotRead,
   type NumericSlotWrite,
 } from "../core/slots/numeric-slots.ts";
@@ -29,7 +32,7 @@ import { type ExecutionInstance } from "../core/blocks/runtime.ts";
 export { SKIP_FADE_MS, type ExecutionInstance } from "../core/blocks/runtime.ts";
 
 export interface TimelineSessionOptions {
-  readonly slots?: readonly NumericSlot[];
+  readonly slots?: readonly Slot[];
   readonly onSnapshot?: (snapshot: TimelineSnapshot) => void;
   readonly onActivity?: (message: string) => void;
   readonly onExecutionStart?: (instance: ExecutionInstance) => void;
@@ -123,6 +126,19 @@ export function slotWrites(
   );
 }
 
+export function slotTypeBindings(
+  placements: readonly Placement[],
+): SlotTypeBinding[] {
+  return placements.flatMap((placement) =>
+    (["input", "output"] as const).flatMap((direction) =>
+      boundSlotProperties(placement, direction).map(({ slotId, type }) => ({
+        slotId,
+        type,
+      })),
+    ),
+  );
+}
+
 export class TimelineSession {
   private readonly runner: TimelineRunner;
   private readonly unsubscribe: () => void;
@@ -131,9 +147,9 @@ export class TimelineSession {
   private readonly options: TimelineSessionOptions;
   private readonly bpm: number;
   private readonly placements: readonly Placement[];
-  private readonly slots: readonly NumericSlot[];
+  private readonly slots: readonly Slot[];
   private readonly loopIds: ReadonlyMap<LoopDefinition, string>;
-  private readonly runtimeSlots = new Map<string, number>();
+  private readonly runtimeSlots = new Map<string, number | string>();
   private lastPhase: TimelinePhase = "idle";
 
   constructor(
@@ -185,6 +201,16 @@ export class TimelineSession {
 
   start(): void {
     const slots = this.slots;
+    const invalidTypes = validateSlotTypes(
+      slots,
+      slotTypeBindings(this.placements),
+    );
+    if (invalidTypes.length > 0) {
+      const details = invalidTypes
+        .map((binding) => `${binding.slotId}:${binding.type}`)
+        .join(", ");
+      throw new Error(`Invalid slot bindings: ${details}`);
+    }
     const writes = slotWrites(this.placements);
     const invalidWrites = validateNumericSlotWrites(slots, writes);
     if (invalidWrites.length > 0) {
@@ -225,7 +251,8 @@ export class TimelineSession {
   private applyContext(boundary: number, path: readonly string[]): void {
     const key = initializationPathKey(path);
     for (const slot of this.slots) {
-      const initialization = slot.initializations.find(
+      const initializations: readonly SlotInitialization[] = slot.initializations;
+      const initialization = initializations.find(
         (candidate) =>
           candidate.boundary === boundary &&
           initializationPathKey(candidate.path) === key,
@@ -236,10 +263,10 @@ export class TimelineSession {
     }
   }
 
-  private readRuntimeSlot(slotId: string): number {
+  private readRuntimeSlot(slotId: string): number | string {
     const value = this.runtimeSlots.get(slotId);
     if (value === undefined) {
-      throw new Error(`Numeric slot "${slotId}" has no runtime value`);
+      throw new Error(`Slot "${slotId}" has no runtime value`);
     }
     return value;
   }
