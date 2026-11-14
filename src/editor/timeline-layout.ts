@@ -1,3 +1,6 @@
+import { blockLoopPath, type LoopNode } from "./loops";
+import type { Placement } from "./model";
+
 export const CELL_WIDTH = 96;
 export const BASE_GAP_WIDTH = 32;
 
@@ -97,6 +100,31 @@ export function boundary(layout: TimelineLayout, time: number): Boundary {
 
 export function anchorGapCenter(layout: TimelineLayout, time: number): number {
   return layout.boundaries[time].gaps[0].center;
+}
+
+export function phaseBoundaryX(
+  layout: TimelineLayout,
+  time: number,
+  path: readonly string[],
+): number {
+  return gapAtPath(layout, time, path).center;
+}
+
+export function phasePositions(
+  layout: TimelineLayout,
+  loops: readonly LoopNode[],
+  block: Pick<Placement, "start" | "length">,
+  offsets: readonly number[],
+  blockLeft: number,
+): readonly number[] {
+  const path: readonly string[] =
+    offsets.length === 0
+      ? []
+      : blockLoopPath(loops, block.start, block.length);
+  return offsets.map(
+    (offset) =>
+      phaseBoundaryX(layout, block.start + offset, path) - blockLeft,
+  );
 }
 
 export type LoopEdge = "start" | "end";

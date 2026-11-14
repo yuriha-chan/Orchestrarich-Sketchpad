@@ -57,7 +57,9 @@ Phase A is complete: see `phase-a-lifecycle.md` for the contract, regression
 coverage, consultation outcome and verification. Phase B is complete: see
 `phase-b-repairs.md` and `Implementation_Notes.B4.md`. Phase C is complete:
 see `phase-c-inputs.md` for the connected declarations, typed packing boundary,
-unit-preserving operations and production-test migration. Phase D is next.
+unit-preserving operations and production-test migration. Phase D is complete:
+see `phase-d-structure.md` for phase ownership, layout, loop constraints, fade
+snapping and tests. Phase E is next.
 
 ### A. Execution lifecycle correctness — R1/R2, T1/T3
 

@@ -14,8 +14,13 @@ import {
   cellLeft,
   cellRight,
   loopEdgeX,
+  phaseBoundaryX,
+  phasePositions,
   type TimelineLayout,
 } from "./timeline-layout";
+import { allLoops, boundaryGapPaths, type LoopNode } from "./loops";
+import { compilePlacement, phaseOffsets } from "./execution-definition";
+import type { Placement } from "./model";
 
 const uniformGaps = () => [[]];
 
@@ -267,6 +272,161 @@ describe("loopEdgeX", () => {
     expect(loopEdgeX(split, 2, "c", "start")).toBe(
       boundary(split, 2).gaps[1].right,
     );
+  });
+});
+
+describe("phaseBoundaryX", () => {
+  it("returns the center of the gap with the exact path", () => {
+    const layout = layoutFor(3, [[[]], [[]], [["a"]], [[]]]);
+
+    expect(phaseBoundaryX(layout, 2, ["a"])).toBe(
+      boundary(layout, 2).gaps[0].center,
+    );
+  });
+
+  it("selects among multiple contiguous gaps by exact path", () => {
+    const layout = layoutFor(3, [
+      [[], ["a"], ["a", "b"]],
+      [[]],
+      [[]],
+      [[]],
+    ]);
+
+    expect(phaseBoundaryX(layout, 0, ["a"])).toBe(
+      boundary(layout, 0).gaps[1].center,
+    );
+    expect(phaseBoundaryX(layout, 0, ["a", "b"])).toBe(
+      boundary(layout, 0).gaps[2].center,
+    );
+  });
+
+  it("selects the block-level path rather than a contained inner loop path", () => {
+    const layout = layoutFor(3, [
+      [[], ["a"]],
+      [["a", "b"]],
+      [["a", "b"], ["a"], ["a", "c"]],
+      [["a", "c"], ["a"], []],
+    ]);
+
+    expect(phaseBoundaryX(layout, 2, ["a"])).toBe(
+      boundary(layout, 2).gaps[1].center,
+    );
+  });
+
+  it("throws the established error when no gap has the exact path", () => {
+    const layout = layoutFor(2, [[[]], [["a"]], [["a"]]]);
+
+    expect(() => phaseBoundaryX(layout, 1, ["a", "b"])).toThrow(
+      "No gap at time 1 for path a/b",
+    );
+  });
+});
+
+describe("phasePositions", () => {
+  function loopNode(
+    id: string,
+    start: number,
+    end: number,
+    children: LoopNode[] = [],
+  ): LoopNode {
+    return { id, start, end, children };
+  }
+
+  function mediaBlock(
+    start: number,
+    length: number,
+    fadeIn: number,
+    fadeOut: number,
+  ): Placement {
+    return {
+      id: "media",
+      trackId: "track",
+      kind: "sound",
+      start,
+      length,
+      cooperativeSkip: false,
+      data: {
+        duration: length,
+        durationUnit: "beats",
+        syncBeatsToCellSpan: false,
+        fadeIn,
+        fadeOut,
+      },
+    };
+  }
+
+  function layoutForLoops(
+    loops: readonly LoopNode[],
+    cellCount: number,
+  ): TimelineLayout {
+    return buildTimelineLayout(cellCount, (time) =>
+      boundaryGapPaths(loops, time),
+    );
+  }
+
+  function positionsFor(
+    layout: TimelineLayout,
+    loops: readonly LoopNode[],
+    block: Placement,
+  ): readonly number[] {
+    const span = blockSpan(layout, block.start, block.length, 0);
+    return phasePositions(
+      layout,
+      loops,
+      block,
+      phaseOffsets(compilePlacement(block).structure),
+      span.left,
+    );
+  }
+
+  it("returns an ordinary boundary relative to the drawn block left", () => {
+    const block = mediaBlock(1, 6, 2, 0);
+    const layout = layoutForLoops([], 8);
+    const span = blockSpan(layout, block.start, block.length, 0);
+
+    const positions = positionsFor(layout, [], block);
+
+    expect(positions).toEqual([
+      boundary(layout, 3).gaps[0].center - span.left,
+    ]);
+    expect(positions[0]).toBeLessThan(boundary(layout, 3).gaps[0].center);
+  });
+
+  it("selects the block-level gap at a loop edge enclosed by the block", () => {
+    const loops = [loopNode("inner", 2, 4)];
+    const block = mediaBlock(0, 6, 2, 0);
+    const layout = layoutForLoops(loops, 8);
+    const span = blockSpan(layout, block.start, block.length, 0);
+
+    const positions = positionsFor(layout, allLoops(loops), block);
+
+    expect(boundary(layout, 2).gaps.map((gap) => gap.path)).toEqual([
+      [],
+      ["inner"],
+    ]);
+    expect(positions).toEqual([
+      boundary(layout, 2).gaps[0].center - span.left,
+    ]);
+    expect(positions[0]).not.toBe(
+      boundary(layout, 2).gaps[1].center - span.left,
+    );
+  });
+
+  it("stays at the outer loop level for a contained inner loop boundary", () => {
+    const loops = [loopNode("outer", 0, 10, [loopNode("inner", 2, 4)])];
+    const block = mediaBlock(0, 6, 2, 0);
+    const layout = layoutForLoops(loops, 12);
+    const span = blockSpan(layout, block.start, block.length, 0);
+
+    const positions = positionsFor(layout, allLoops(loops), block);
+
+    expect(boundary(layout, 2).gaps.map((gap) => gap.path)).toEqual([
+      ["outer"],
+      ["outer", "inner"],
+    ]);
+    expect(positions).toEqual([
+      boundary(layout, 2).gaps[0].center - span.left,
+    ]);
   });
 });
 

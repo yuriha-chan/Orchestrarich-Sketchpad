@@ -44,17 +44,16 @@ import {
   canPlace,
 } from "./model";
 import { BLOCK_DEFINITIONS, blockDefinition, boundSlotProperties } from "./builtin-blocks";
-import type { FadeHandles } from "./block-definition";
+import type { TimelineGesture, TimelineGestureTarget } from "./block-definition";
 import { PropertyNumber, slotDisplayName } from "./blocks/panel-widgets";
 import { BlockPanel } from "./blocks/block-panel";
-import { dragFadeBoundary } from "./blocks/media-data";
 import { useExperimentStore } from "./store";
 import { allLoops, blockLoopEdges, boundaryGapPaths, maxLoopDepth, type LoopNode } from "./loops";
 import { loopLevelColor } from "./loop-colors";
 import { TimelineSession, slotReads, slotWrites } from "./execution";
 import { Stage } from "./Stage";
 import { createStageStore } from "./stage-state";
-import { compilePlacement, definitionBlocks } from "./execution-definition";
+import { compilePlacement, definitionBlocks, phaseOffsets } from "./execution-definition";
 import { slotValueRail } from "./slot-value-rail";
 import { outputWires, slotWires } from "./slot-wires";
 import {
@@ -71,6 +70,7 @@ import {
   cellLeft,
   cellRight,
   loopEdgeX,
+  phasePositions,
   type TimelineLayout,
 } from "./timeline-layout";
 import { WORKSPACES } from "./workspaces";
@@ -121,21 +121,17 @@ const STATE_RANK: Record<BlockState, number> = {
   completed: 1,
 };
 
-const FADE_HANDLE_PX = 10;
-
-type FadeBoundaryKind = "fadeIn" | "fadeOut" | "shared";
+const EDGE_HANDLE_PX = 10;
 
 interface DragState {
   readonly pointerId: number;
-  readonly mode: "move" | "resize" | "resizeStart" | "fadeIn" | "fadeOut";
+  readonly mode: "move" | "resize" | "resizeStart" | "gesture";
   readonly originX: number;
   readonly originY: number;
   readonly start: number;
   readonly length: number;
-  readonly fadeIn: number;
-  readonly fadeOut: number;
   readonly trackId: string;
-  readonly boundaryKind?: FadeBoundaryKind;
+  readonly gesture?: TimelineGesture<unknown>;
 }
 
 interface CreationState {
@@ -2302,39 +2298,34 @@ function BlockView({
   const resize = useExperimentStore((store) => store.resize);
   const setSpan = useExperimentStore((store) => store.setSpan);
   const select = useExperimentStore((store) => store.select);
-  const editBlockData = useExperimentStore((store) => store.editBlockData);
   const drag = useRef<DragState | null>(null);
   const suppressEdgeMenu = useRef(false);
   const [dragging, setDragging] = useState(false);
 
   const trackIndex = trackRowIndex(rows, block.trackId);
   const definition = blockDefinition(block.kind);
-  const updateData = (change: (data: unknown) => unknown) =>
-    editBlockData(block.id, change);
   const currentBlock = () =>
     useExperimentStore.getState().blocks.find((candidate) => candidate.id === block.id) ??
     block;
-  const currentHandles = () =>
-    definition.fadeHandles?.(currentBlock(), updateData) ?? null;
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button === 2) {
       if (!editable) {
         return;
       }
-      const handles = definition.fadeHandles?.(block, updateData) ?? null;
-      if (handles === null) {
+      const gestureFactory = definition.timelineGesture;
+      if (gestureFactory === undefined) {
         return;
       }
       const rect = event.currentTarget.getBoundingClientRect();
       const offset = event.clientX - rect.left;
-      const mode =
-        offset <= FADE_HANDLE_PX
-          ? "fadeIn"
-          : rect.width - offset <= FADE_HANDLE_PX
-            ? "fadeOut"
+      const target: TimelineGestureTarget | null =
+        offset <= EDGE_HANDLE_PX
+          ? { kind: "edge", edge: "start" }
+          : rect.width - offset <= EDGE_HANDLE_PX
+            ? { kind: "edge", edge: "end" }
             : null;
-      if (mode === null) {
+      if (target === null) {
         return;
       }
       suppressEdgeMenu.current = true;
@@ -2343,14 +2334,15 @@ function BlockView({
       select(block.id);
       drag.current = {
         pointerId: event.pointerId,
-        mode,
+        mode: "gesture",
         originX: event.clientX,
         originY: event.clientY,
         start: block.start,
         length: block.length,
-        fadeIn: handles.fadeIn,
-        fadeOut: handles.fadeOut,
         trackId: block.trackId,
+        gesture: gestureFactory(block, target, columnCount, {
+          loops: loopRegions,
+        }),
       };
       event.currentTarget.setPointerCapture(event.pointerId);
       setDragging(true);
@@ -2365,19 +2357,24 @@ function BlockView({
     if (!editable) {
       return;
     }
-    const target = event.target as HTMLElement;
-    const handle = target.dataset.handle;
-    const handles = definition.fadeHandles?.(block, updateData) ?? null;
+    const element = event.target as HTMLElement;
+    const handle = element.dataset.handle;
+    const gestureFactory = definition.timelineGesture;
     const boundaryIndex =
-      handles === null ? undefined : Number(target.dataset.boundary);
-    const boundaryOffset =
-      boundaryIndex === undefined || Number.isNaN(boundaryIndex)
+      gestureFactory !== undefined && element.dataset.boundary !== undefined
+        ? Number(element.dataset.boundary)
+        : Number.NaN;
+    const gestureTarget: TimelineGestureTarget | undefined = Number.isNaN(
+      boundaryIndex,
+    )
+      ? undefined
+      : { kind: "boundary", index: boundaryIndex };
+    const gesture =
+      gestureTarget === undefined || gestureFactory === undefined
         ? undefined
-        : definition.phaseBoundaries?.(block)[boundaryIndex];
-    const boundaryKind =
-      handles !== null && boundaryOffset !== undefined
-        ? fadeBoundaryKind(handles, boundaryOffset, block.length)
-        : undefined;
+        : gestureFactory(block, gestureTarget, columnCount, {
+            loops: loopRegions,
+          });
     drag.current = {
       pointerId: event.pointerId,
       mode:
@@ -2385,15 +2382,15 @@ function BlockView({
           ? "resize"
           : handle === "resize-start"
             ? "resizeStart"
-            : "move",
+            : gesture === undefined
+              ? "move"
+              : "gesture",
       originX: event.clientX,
       originY: event.clientY,
       start: block.start,
       length: block.length,
-      fadeIn: handles?.fadeIn ?? 0,
-      fadeOut: handles?.fadeOut ?? 0,
       trackId: block.trackId,
-      boundaryKind,
+      gesture,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     setDragging(true);
@@ -2414,56 +2411,23 @@ function BlockView({
       current.originX - rowsRect.left,
       event.clientX - rowsRect.left,
     );
-    if (current.boundaryKind !== undefined) {
-      const handles = currentHandles();
-      if (handles === null) {
+    if (current.mode === "gesture") {
+      const gesture = current.gesture;
+      if (gesture === undefined) {
         return;
       }
-      const length = current.length;
-      const origin = current.boundaryKind === "fadeOut"
-        ? length - current.fadeOut
-        : current.fadeIn;
-      const fades = dragFadeBoundary(
-        current.boundaryKind,
-        origin + delta,
-        length,
-        current.fadeIn,
-        current.fadeOut,
-      );
-      handles.setFades(fades);
+      const placement = currentBlock();
+      const edit = gesture(delta, {
+        start: placement.start,
+        length: placement.length,
+      });
+      setSpan(block.id, edit.start, edit.length, edit.update);
       return;
     }
     if (current.mode === "resizeStart") {
       const end = current.start + current.length;
       const start = clamp(current.start + delta, 0, end - 1);
       setSpan(block.id, start, end - start);
-      return;
-    }
-    if (current.mode === "fadeIn" || current.mode === "fadeOut") {
-      if (current.mode === "fadeIn") {
-        if (delta >= 0) {
-          currentHandles()?.setFadeIn(delta);
-        } else {
-          const start = Math.max(0, current.start + delta);
-          const extra = current.start - start;
-          if (setSpan(block.id, start, current.length + extra)) {
-            currentHandles()?.setFadeIn(current.fadeIn + extra);
-          }
-        }
-        return;
-      }
-      if (delta <= 0) {
-        currentHandles()?.setFadeOut(-delta);
-      } else {
-        const length = Math.min(
-          current.length + delta,
-          Math.max(current.length, columnCount - current.start),
-        );
-        const extra = length - current.length;
-        if (setSpan(block.id, current.start, length)) {
-          currentHandles()?.setFadeOut(current.fadeOut + extra);
-        }
-      }
       return;
     }
     if (current.mode === "move") {
@@ -2507,9 +2471,17 @@ function BlockView({
     BLOCK_INSET,
     blockLoopEdges(loopRegions, block.start, block.length),
   );
+  const phaseOffsetsForBlock = phaseOffsets(compilePlacement(block).structure);
+  const phasePositionsForBlock = phasePositions(
+    layout,
+    loopRegions,
+    block,
+    phaseOffsetsForBlock,
+    span.left,
+  );
   const className = [
     "block",
-    definition.fadeHandles !== undefined ? "is-media" : "",
+    definition.timelineClassName ?? "",
     selected ? "is-selected" : "",
     dragging ? "is-dragging" : "",
     state ? `is-${state}` : "",
@@ -2530,10 +2502,7 @@ function BlockView({
     onContextMenu(event);
   };
 
-  const handles = definition.fadeHandles?.(block, updateData) ?? null;
-  const fadeTitle = handles === null
-    ? ""
-    : `Fade in ${handles.fadeIn}, fade out ${handles.fadeOut} (cells)`;
+  const fadeTitle = definition.timelineTitle?.(block) ?? "";
   const title =
     [block.cooperativeSkip ? "Cooperative skip" : "", fadeTitle]
       .filter(Boolean)
@@ -2558,7 +2527,7 @@ function BlockView({
       onPointerUp={finishDrag}
       onPointerCancel={finishDrag}
     >
-      {definition.renderBlock?.(block, span.width) ?? null}
+      {definition.renderBlock?.(block, span.width, phasePositionsForBlock) ?? null}
       <span className="block-label">
         <Icon size={12} aria-hidden="true" />
         <span className="block-label-text">{definition.label}</span>
@@ -2673,19 +2642,4 @@ function cellFromPointer(
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
-}
-
-function fadeBoundaryKind(
-  handles: FadeHandles,
-  offset: number,
-  length: number,
-): FadeBoundaryKind {
-  if (
-    handles.fadeIn > 0 &&
-    handles.fadeOut > 0 &&
-    handles.fadeIn + handles.fadeOut === length
-  ) {
-    return "shared";
-  }
-  return offset === handles.fadeIn ? "fadeIn" : "fadeOut";
 }

@@ -42,13 +42,19 @@ type ExecutionAllocation =
   | { readonly state: "allocating"; readonly instance?: never }
   | { readonly state: "active"; readonly instance: ExecutionInstance };
 
+interface CompiledBlock {
+  readonly definition: ExecutionDefinition;
+  readonly first: boolean;
+  readonly last: boolean;
+}
+
 function compileTimeline(
   tracks: readonly Track[],
   placements: readonly Placement[],
   loops: readonly LoopNode[],
 ): {
   readonly timeline: TimelineDefinition;
-  readonly definitionByBlockId: Readonly<Record<string, ExecutionDefinition>>;
+  readonly definitionByBlockId: Readonly<Record<string, CompiledBlock>>;
   readonly loopPaths: ReadonlyMap<LoopDefinition, readonly string[]>;
 } {
   const regions = allLoops(loops);
@@ -72,14 +78,14 @@ function compileTimeline(
     return definition;
   };
   const definitions = placements.map(compilePlacement);
-  const byBlock: Record<string, ExecutionDefinition> = {};
+  const byBlock: Record<string, CompiledBlock> = {};
   const timeline: TimelineDefinition = {
     tracks: tracks.map((track) => ({
       id: track.id,
       blocks: definitions
         .filter(({ placement }) => placement.trackId === track.id)
-        .flatMap((definition) => definitionBlocks(definition).map((block) => {
-          byBlock[block.id] = definition;
+        .flatMap((definition) => definitionBlocks(definition).map((block, index, blocks) => {
+          byBlock[block.id] = { definition, first: index === 0, last: index === blocks.length - 1 };
           return block;
         })),
     })),
@@ -121,7 +127,7 @@ export function slotWrites(
 export class TimelineSession {
   private readonly runner: TimelineRunner;
   private readonly unsubscribe: () => void;
-  private readonly definitionByBlockId: Readonly<Record<string, ExecutionDefinition>>;
+  private readonly definitionByBlockId: Readonly<Record<string, CompiledBlock>>;
   private readonly activeExecutions = new Map<ExecutionDefinition, ExecutionAllocation>();
   private readonly options: TimelineSessionOptions;
   private readonly bpm: number;
@@ -284,9 +290,9 @@ export class TimelineSession {
   }
 
   private startBlock(block: BlockSnapshot): BlockStartResult | undefined {
-    const definition = this.definitionByBlockId[block.id];
+    const { definition, first } = this.definitionByBlockId[block.id];
     const placement = definition.placement;
-    if (block.start === placement.start) {
+    if (first) {
       this.activeExecutions.set(definition, { state: "allocating" });
       const instance = blockDefinition(placement.kind).createExecution(
         {
@@ -308,7 +314,7 @@ export class TimelineSession {
   }
 
   private terminateBlock(block: BlockSnapshot, outputs: BlockOutputs): void {
-    const definition = this.definitionByBlockId[block.id];
+    const { definition, last } = this.definitionByBlockId[block.id];
     const placement = definition.placement;
     const allocation = this.activeExecutions.get(definition)!;
     if (allocation.state === "allocating") {
@@ -317,7 +323,7 @@ export class TimelineSession {
     }
     const instance = allocation.instance;
     instance.terminatePhase(block);
-    if (block.end === placement.start + placement.length) {
+    if (last) {
       if (block.state === "completed") {
         for (const { key, slotId } of boundSlotProperties(placement, "output")) {
           this.runtimeSlots.set(slotId, outputs[key]);

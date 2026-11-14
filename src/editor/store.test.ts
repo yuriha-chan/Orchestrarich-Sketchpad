@@ -7,8 +7,9 @@ import { DEFAULT_RECT_COLOR, type RectangleData } from "./blocks/rectangle";
 import { editDuration, type DurationData } from "./blocks/duration-data";
 import type { AdditionData } from "./blocks/addition";
 import type { MediaData } from "./blocks/media-data";
-import type { EntryContext, FadeData } from "./block-definition";
+import type { EntryContext, TimelineGestureContext } from "./block-definition";
 import { blockDefinition } from "./builtin-blocks";
+import { allLoops } from "./loops";
 import { useExperimentStore } from "./store";
 
 function resetStore(): void {
@@ -185,18 +186,42 @@ type PhaseSnapshot = readonly {
   readonly length: number;
 }[];
 
-function commitFades(id: string, fades: FadeData): readonly PhaseSnapshot[] {
+function commitBoundaryGesture(
+  id: string,
+  index: number,
+  delta: number,
+  context?: TimelineGestureContext,
+): readonly PhaseSnapshot[] {
   const definition = blockDefinition("animation");
-  const snapshots: PhaseSnapshot[] = [];
-  const handles = definition.fadeHandles?.(animationBlock(id), (change) => {
-    useExperimentStore.getState().editBlockData(id, change);
-    const current = animationBlock(id);
-    snapshots.push(definition.phases?.(current.data, current.length) ?? []);
-  }) ?? null;
-  if (handles === null) {
-    throw new Error("animation definition has no fade handles");
+  const gestureFactory = definition.timelineGesture;
+  if (gestureFactory === undefined) {
+    throw new Error("animation definition has no timeline gesture");
   }
-  handles.setFades(fades);
+  const block = animationBlock(id);
+  const gesture = gestureFactory(
+    block,
+    { kind: "boundary", index },
+    useExperimentStore.getState().gridColumns,
+    context,
+  );
+  const edit = gesture(delta, { start: block.start, length: block.length });
+  const snapshots: PhaseSnapshot[] = [];
+  const unsubscribe = useExperimentStore.subscribe((state) => {
+    const current = state.blocks.find((candidate) => candidate.id === id);
+    if (current !== undefined) {
+      snapshots.push(definition.phases?.(current.data, current.length) ?? []);
+    }
+  });
+  try {
+    const applied = useExperimentStore
+      .getState()
+      .setSpan(id, edit.start, edit.length, edit.update);
+    if (!applied) {
+      throw new Error("animation boundary gesture was rejected");
+    }
+  } finally {
+    unsubscribe();
+  }
   return snapshots;
 }
 
@@ -855,12 +880,12 @@ describe("addition blocks", () => {
   });
 });
 
-describe("media fade handle edits", () => {
+describe("media fade boundary gestures", () => {
   it("commits a shared 2/2 boundary as 3/1 in one update", () => {
     const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
     editData(id, (data) => ({ ...(data as MediaData), fadeIn: 2, fadeOut: 2 }));
 
-    const snapshots = commitFades(id, { fadeIn: 3, fadeOut: 1 });
+    const snapshots = commitBoundaryGesture(id, 0, 1);
 
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]).toEqual([
@@ -874,7 +899,7 @@ describe("media fade handle edits", () => {
     const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
     editData(id, (data) => ({ ...(data as MediaData), fadeIn: 2, fadeOut: 2 }));
 
-    const snapshots = commitFades(id, { fadeIn: 1, fadeOut: 3 });
+    const snapshots = commitBoundaryGesture(id, 0, -1);
 
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]).toEqual([
@@ -884,11 +909,11 @@ describe("media fade handle edits", () => {
     expect(animationBlock(id).data).toMatchObject({ fadeIn: 1, fadeOut: 3 });
   });
 
-  it("commits a pair containing a zero fade in one update", () => {
+  it("commits a fade-in boundary containing a zero fade in one update", () => {
     const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
-    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 2, fadeOut: 2 }));
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 1, fadeOut: 2 }));
 
-    const snapshots = commitFades(id, { fadeIn: 0, fadeOut: 2 });
+    const snapshots = commitBoundaryGesture(id, 0, -1);
 
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]).toEqual([
@@ -896,6 +921,34 @@ describe("media fade handle edits", () => {
       { index: 1, offset: 2, length: 2 },
     ]);
     expect(animationBlock(id).data).toMatchObject({ fadeIn: 0, fadeOut: 2 });
+  });
+});
+
+describe("media fade gesture snapping", () => {
+  function addContainedLoop(start: number, end: number): void {
+    useExperimentStore.getState().addLoopAtCell(start);
+    const loopId = useExperimentStore.getState().loops[0].id;
+    useExperimentStore.getState().setLoopBoundary(loopId, "end", end);
+  }
+
+  it("applies a snapped fade-in boundary through the registered gesture and store transaction", () => {
+    addContainedLoop(2, 6);
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      fadeIn: 6,
+      fadeOut: 0,
+    }));
+    const loops = allLoops(useExperimentStore.getState().loops);
+
+    const snapshots = commitBoundaryGesture(id, 0, -2, { loops });
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toEqual([
+      { index: 0, offset: 0, length: 2 },
+      { index: 1, offset: 2, length: 6 },
+    ]);
+    expect(animationBlock(id).data).toMatchObject({ fadeIn: 2, fadeOut: 0 });
   });
 });
 
@@ -964,6 +1017,275 @@ describe("media span transactions", () => {
 
     expect(applied).toBe(false);
     expect(blockById(id)).toEqual(before);
+  });
+});
+
+describe("transactional span and data edits", () => {
+  it("applies the data callback after length-change processing", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 6);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 6,
+      syncBeatsToCellSpan: true,
+      fadeIn: 3,
+      fadeOut: 3,
+    }));
+    const received: MediaData[] = [];
+
+    const applied = useExperimentStore.getState().setSpan(id, 2, 4, (data) => {
+      received.push({ ...(data as MediaData) });
+      return { ...(data as MediaData), fadeIn: 1, fadeOut: 3 };
+    });
+
+    expect(applied).toBe(true);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      duration: 4,
+      fadeIn: 2,
+      fadeOut: 2,
+    });
+    const block = animationBlock(id);
+    expect(block.start).toBe(2);
+    expect(block.length).toBe(4);
+    expect(block.data).toMatchObject({
+      duration: 4,
+      syncBeatsToCellSpan: true,
+      fadeIn: 1,
+      fadeOut: 3,
+    });
+  });
+
+  it("applies neither callback nor geometry when the span overlaps another block", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 4);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 4,
+      fadeIn: 1,
+      fadeOut: 1,
+    }));
+    const before = animationSnapshot(id);
+    createAnimation(DEFAULT_TRACKS[1].id, 6, 2);
+    let called = false;
+
+    const applied = useExperimentStore.getState().setSpan(id, 4, 4, (data) => {
+      called = true;
+      return data;
+    });
+
+    expect(applied).toBe(false);
+    expect(called).toBe(false);
+    expect(blockById(id)).toEqual(before);
+  });
+
+  it("applies neither callback nor geometry when the span would cut a loop", () => {
+    const id = createAnimation(DEFAULT_TRACKS[2].id, 1, 2);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 2,
+      fadeIn: 1,
+      fadeOut: 1,
+    }));
+    useExperimentStore.getState().addLoopAtCell(0);
+    const loopId = useExperimentStore.getState().loops[0].id;
+    useExperimentStore.getState().setLoopBoundary(loopId, "end", 4);
+    const before = animationSnapshot(id);
+    let called = false;
+
+    const applied = useExperimentStore.getState().setSpan(id, 3, 2, (data) => {
+      called = true;
+      return data;
+    });
+
+    expect(applied).toBe(false);
+    expect(called).toBe(false);
+    expect(blockById(id)).toEqual(before);
+  });
+
+  it("keeps three-argument span operations working", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 6);
+    editData(id, (data) => ({
+      ...(data as MediaData),
+      duration: 6,
+      syncBeatsToCellSpan: true,
+      fadeIn: 3,
+      fadeOut: 3,
+    }));
+
+    const applied = useExperimentStore.getState().setSpan(id, 2, 4);
+
+    expect(applied).toBe(true);
+    expect(animationBlock(id)).toMatchObject({
+      start: 2,
+      length: 4,
+      data: {
+        duration: 4,
+        syncBeatsToCellSpan: true,
+        fadeIn: 2,
+        fadeOut: 2,
+      },
+    });
+  });
+});
+
+describe("phase boundary validity", () => {
+  function addLoop(start: number, end: number): string {
+    useExperimentStore.getState().addLoopAtCell(start);
+    const loops = useExperimentStore.getState().loops;
+    const loop = loops[loops.length - 1];
+    if (loop.end !== end) {
+      useExperimentStore.getState().setLoopBoundary(loop.id, "end", end);
+    }
+    return loop.id;
+  }
+
+  function loopSnapshots() {
+    return useExperimentStore.getState().loops.map((loop) => ({
+      id: loop.id,
+      start: loop.start,
+      end: loop.end,
+    }));
+  }
+
+  it("rejects a fade edit that puts a phase boundary strictly inside a contained loop", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    addLoop(2, 6);
+    const before = animationSnapshot(id);
+
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 4, fadeOut: 0 }));
+
+    expect(blockById(id)).toEqual(before);
+  });
+
+  it("permits a phase boundary at the contained loop start", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    addLoop(2, 6);
+
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 2, fadeOut: 0 }));
+
+    expect(animationBlock(id).data).toMatchObject({ fadeIn: 2, fadeOut: 0 });
+  });
+
+  it("permits a phase boundary at the contained loop end", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    addLoop(2, 6);
+
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 6, fadeOut: 0 }));
+
+    expect(animationBlock(id).data).toMatchObject({ fadeIn: 6, fadeOut: 0 });
+  });
+
+  it("rejects a span callback that puts a phase boundary strictly inside a contained loop", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    addLoop(2, 6);
+    const before = animationSnapshot(id);
+
+    const applied = useExperimentStore.getState().setSpan(id, 1, 8, (data) => ({
+      ...(data as MediaData),
+      fadeIn: 4,
+      fadeOut: 0,
+    }));
+
+    expect(applied).toBe(false);
+    expect(blockById(id)).toEqual(before);
+  });
+
+  it("permits a span callback whose phase boundary coincides with the contained loop start", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    addLoop(2, 6);
+
+    const applied = useExperimentStore.getState().setSpan(id, 0, 8, (data) => ({
+      ...(data as MediaData),
+      fadeIn: 2,
+      fadeOut: 0,
+    }));
+
+    expect(applied).toBe(true);
+    expect(animationBlock(id).data).toMatchObject({ fadeIn: 2, fadeOut: 0 });
+  });
+
+  it("permits a span callback whose phase boundary coincides with the contained loop end", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    addLoop(2, 6);
+
+    const applied = useExperimentStore.getState().setSpan(id, 0, 8, (data) => ({
+      ...(data as MediaData),
+      fadeIn: 6,
+      fadeOut: 0,
+    }));
+
+    expect(applied).toBe(true);
+    expect(animationBlock(id).data).toMatchObject({ fadeIn: 6, fadeOut: 0 });
+  });
+
+  it("keeps a carried fade boundary at a contained loop edge through a media kind change", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    addLoop(2, 6);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 2, fadeOut: 0 }));
+
+    useExperimentStore.getState().setBlockKind(id, "sound");
+
+    const block = requiredBlock(id);
+    expect(block.kind).toBe("sound");
+    expect(block.data).toMatchObject({ fadeIn: 2, fadeOut: 0 });
+  });
+
+  it("rejects moving a phased block so a boundary falls strictly inside a loop it contains", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 4, fadeOut: 0 }));
+    addLoop(10, 14);
+    const before = animationSnapshot(id);
+
+    useExperimentStore.getState().move(id, DEFAULT_TRACKS[1].id, 8);
+
+    expect(blockById(id)).toEqual(before);
+  });
+
+  it("rejects resizing a phased block so a boundary falls strictly inside a loop it contains", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 8, 2);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 1, fadeOut: 1 }));
+    addLoop(10, 14);
+    const before = animationSnapshot(id);
+
+    const applied = useExperimentStore.getState().resize(id, 6);
+
+    expect(applied).toBe(false);
+    expect(blockById(id)).toEqual(before);
+  });
+
+  it("rejects wrapping a phased block in a loop that would contain its boundary", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 4, fadeOut: 0 }));
+    const before = loopSnapshots();
+
+    useExperimentStore.getState().addLoopForBlock(id);
+
+    expect(loopSnapshots()).toEqual(before);
+  });
+
+  it("rejects extending a contained loop over a phase boundary", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 4, fadeOut: 0 }));
+    const loopId = addLoop(2, 3);
+    const before = loopSnapshots();
+
+    useExperimentStore.getState().setLoopBoundary(loopId, "end", 6);
+
+    expect(loopSnapshots()).toEqual(before);
+  });
+
+  it("duplicates to the next free span that keeps a contained loop clear of phase boundaries", () => {
+    const id = createAnimation(DEFAULT_TRACKS[1].id, 0, 8);
+    editData(id, (data) => ({ ...(data as MediaData), fadeIn: 4, fadeOut: 0 }));
+    addLoop(8, 14);
+    const sourceBefore = animationSnapshot(id);
+
+    useExperimentStore.getState().duplicateBlock(id);
+
+    const state = useExperimentStore.getState();
+    expect(state.blocks).toHaveLength(2);
+    const copy = state.blocks.find((block) => block.id !== id)!;
+    expect(copy.start).toBe(14);
+    expect(blockById(id)).toEqual(sourceBefore);
   });
 });
 

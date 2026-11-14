@@ -29,6 +29,7 @@ import {
 } from "./loops";
 import type { WorkspaceId } from "./workspaces";
 import { blockDefinition } from "./builtin-blocks";
+import { compilePlacement, phaseOffsets } from "./execution-definition";
 import { initializationPathKey, type NumericSlot } from "../core/slots/numeric-slots";
 
 interface ExperimentState {
@@ -52,7 +53,12 @@ interface ExperimentState {
   create: (trackId: string, kind: string, start: number, length: number) => void;
   move: (id: string, trackId: string, start: number) => void;
   resize: (id: string, length: number) => boolean;
-  setSpan: (id: string, start: number, length: number) => boolean;
+  setSpan: (
+    id: string,
+    start: number,
+    length: number,
+    update?: (data: unknown) => unknown,
+  ) => boolean;
   duplicateBlock: (id: string) => void;
   remove: (id: string) => void;
   clear: () => void;
@@ -117,6 +123,7 @@ function applySpan(
   block: Placement,
   start: number,
   length: number,
+  update?: (data: unknown) => unknown,
 ): boolean {
   if (
     !canPlace(
@@ -129,13 +136,28 @@ function applySpan(
   ) {
     return false;
   }
+  const definition = blockDefinition(block.kind);
+  let data = definition.onLengthChange?.(block.data, length) ?? block.data;
+  if (update !== undefined) data = update(data);
+  if (!phasesRespectLoops({ ...block, start, length, data }, allLoops(state.loops))) return false;
   block.start = start;
   block.length = length;
-  const definition = blockDefinition(block.kind);
-  if (definition.onLengthChange !== undefined) {
-    block.data = definition.onLengthChange(block.data, length);
-  }
+  block.data = data;
   return true;
+}
+
+function phasesRespectLoops(block: Placement, loops: readonly LoopNode[]): boolean {
+  const end = block.start + block.length;
+  return phaseOffsets(compilePlacement(block).structure).every((offset) =>
+    loops.every((loop) =>
+      !(block.start <= loop.start && loop.end <= end &&
+        loop.start < block.start + offset && block.start + offset < loop.end),
+    ),
+  );
+}
+
+function allPhasesRespectLoops(blocks: readonly Placement[], loops: readonly LoopNode[]): boolean {
+  return blocks.every((block) => phasesRespectLoops(block, loops));
 }
 
 function clampGridSize(value: number): number {
@@ -280,7 +302,8 @@ export const useExperimentStore = create<ExperimentState>()(
           data: definition.createData(length),
         };
         if (
-          !canPlace(state.tracks, state.blocks, candidate, allLoops(state.loops))
+          !canPlace(state.tracks, state.blocks, candidate, allLoops(state.loops)) ||
+          !phasesRespectLoops(candidate, allLoops(state.loops))
         ) {
           return;
         }
@@ -298,7 +321,7 @@ export const useExperimentStore = create<ExperimentState>()(
               { trackId, start, length: block.length },
               allLoops(state.loops),
               id,
-            )
+            ) || !phasesRespectLoops({ ...block, trackId, start }, allLoops(state.loops))
           ) {
             return;
           }
@@ -315,11 +338,11 @@ export const useExperimentStore = create<ExperimentState>()(
       });
       return applied;
     },
-    setSpan: (id, start, length) => {
+    setSpan: (id, start, length, update) => {
       let applied = false;
       set((state) => {
         editBlock(state, id, (block) => {
-          applied = applySpan(state, block, start, length);
+          applied = applySpan(state, block, start, length, update);
         });
       });
       return applied;
@@ -331,13 +354,16 @@ export const useExperimentStore = create<ExperimentState>()(
           return;
         }
         const copyId = `placement-${nextId}`;
-        const start = nextFreeStart(
+        let start = nextFreeStart(
           state.blocks,
           source.trackId,
           source.start + source.length,
           source.length,
           allLoops(state.loops),
         );
+        while (!phasesRespectLoops({ ...source, start }, allLoops(state.loops))) {
+          start = nextFreeStart(state.blocks, source.trackId, start + 1, source.length, allLoops(state.loops));
+        }
         state.blocks.push({
           ...source,
           id: copyId,
@@ -383,6 +409,7 @@ export const useExperimentStore = create<ExperimentState>()(
           const definition = blockDefinition(kind);
           const carry = source.carryOver?.(block.data) ?? {};
           const data = definition.convertFrom(carry, block.length);
+          if (!phasesRespectLoops({ ...block, kind, data }, allLoops(state.loops))) return block;
           const retainedBindings: Partial<Record<string, string>> = {};
           for (const property of definition.slotProperties) {
             const slotId = block.slotBindings?.[property.key];
@@ -410,7 +437,8 @@ export const useExperimentStore = create<ExperimentState>()(
     editBlockData: (id, update) =>
       set((state) => {
         editBlock(state, id, (block) => {
-          block.data = update(block.data);
+          const data = update(block.data);
+          if (phasesRespectLoops({ ...block, data }, allLoops(state.loops))) block.data = data;
         });
       }),
     addSlot: (trackId) =>
@@ -538,7 +566,7 @@ export const useExperimentStore = create<ExperimentState>()(
           span.start,
           span.end,
         );
-        if (loops !== null) {
+        if (loops !== null && allPhasesRespectLoops(state.blocks, allLoops(loops))) {
           state.loops = loops;
           nextLoopId += 1;
         }
@@ -555,7 +583,7 @@ export const useExperimentStore = create<ExperimentState>()(
           span.start,
           span.end,
         );
-        if (loops !== null) {
+        if (loops !== null && allPhasesRespectLoops(state.blocks, allLoops(loops))) {
           state.loops = loops;
           nextLoopId += 1;
         }
@@ -581,7 +609,7 @@ export const useExperimentStore = create<ExperimentState>()(
         if (loops === null) {
           return;
         }
-        if (!blocksRespectLoops(state.blocks, allLoops(loops))) {
+        if (!blocksRespectLoops(state.blocks, allLoops(loops)) || !allPhasesRespectLoops(state.blocks, allLoops(loops))) {
           return;
         }
         state.loops = loops;

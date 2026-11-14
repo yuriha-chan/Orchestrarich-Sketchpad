@@ -27,6 +27,12 @@ export function isMultiPhase(
   return structure.type === "multi-phase";
 }
 
+export function phaseOffsets(structure: ExecutionStructure): readonly number[] {
+  return isMultiPhase(structure)
+    ? structure.phases.slice(0, -1).map((phase) => phase.offset + phase.length)
+    : [];
+}
+
 export function compilePlacement(placement: Placement): ExecutionDefinition {
   const phases = blockDefinition(placement.kind).phases?.(
     placement.data,

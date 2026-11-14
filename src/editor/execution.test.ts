@@ -3,7 +3,7 @@ import type { TimelineSnapshot } from "../core/execution/timeline-runner.ts";
 import type { NumericSlot } from "../core/slots/numeric-slots.ts";
 import type { LoopNode } from "./loops";
 import { TimelineSession, SKIP_FADE_MS, slotReads, toTimelineDefinition, type ExecutionInstance } from "./execution";
-import { compilePlacement, definitionBlocks, isMultiPhase, type ExecutionDefinition } from "./execution-definition";
+import { compilePlacement, definitionBlocks, isMultiPhase, phaseOffsets, type ExecutionDefinition } from "./execution-definition";
 import type {
   DurationUnit,
   Placement,
@@ -461,6 +461,34 @@ describe("execution structure", () => {
   });
 });
 
+describe("phaseOffsets", () => {
+  it("returns no internal offsets for a single structure", () => {
+    expect(phaseOffsets({ type: "single" })).toEqual([]);
+  });
+
+  it("returns the end offset of each phase except the final phase", () => {
+    expect(
+      phaseOffsets({
+        type: "multi-phase",
+        phases: [
+          { index: 0, offset: 0, length: 1 },
+          { index: 1, offset: 1, length: 3 },
+          { index: 2, offset: 4, length: 2 },
+        ],
+      }),
+    ).toEqual([1, 4]);
+  });
+
+  it("returns no internal offsets for a one-phase multi-phase structure", () => {
+    expect(
+      phaseOffsets({
+        type: "multi-phase",
+        phases: [{ index: 0, offset: 0, length: 2 }],
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe("slotReads", () => {
   it("derives reads for each slot-capable property in capability order", () => {
     const reads = slotReads([
@@ -493,12 +521,17 @@ describe("slotReads", () => {
 });
 
 describe("TimelineSession", () => {
+  let temporaryWaitPhases = false;
   beforeEach(() => {
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    if (temporaryWaitPhases) {
+      Reflect.deleteProperty(blockDefinition("wait"), "phases");
+      temporaryWaitPhases = false;
+    }
     vi.useRealTimers();
   });
 
@@ -1350,6 +1383,69 @@ describe("TimelineSession", () => {
     expect(run.blockState("clip~2")).toBe("completed");
     expect(run.finalized).toEqual(["clip"]);
     expect(run.snapshot()?.phase).toBe("finished");
+  });
+
+  it("runs a two-phase non-media container through one execution and one finalization", async () => {
+    const definition = blockDefinition("wait");
+    Object.defineProperty(definition, "phases", {
+      configurable: true,
+      writable: true,
+      value: () => undefined,
+    });
+    temporaryWaitPhases = true;
+    const phases = [
+      { index: 0, offset: 0, length: 1 },
+      { index: 1, offset: 1, length: 3 },
+    ];
+    vi.spyOn(definition, "phases").mockReturnValue(phases);
+
+    const run = setup([
+      placement({
+        id: "pause",
+        trackId: DEFAULT_TRACKS[1].id,
+        kind: "wait",
+        length: 4,
+        duration: 4,
+      }),
+    ]);
+
+    run.session.start();
+
+    expect(run.startedInstances).toHaveLength(1);
+    const container = run.startedInstances[0]!;
+    expect(container.placement.id).toBe("pause");
+    expect(container).toBeInstanceOf(TimedExecution);
+    expect(container).not.toBeInstanceOf(MediaExecution);
+    expect(run.blockState("pause~0")).toBe("running");
+    expect(run.blockState("pause~1")).toBe("pending");
+    expect(run.snapshot()?.blockingBlockIds).toEqual(["pause~0"]);
+    expect(run.finalizedInstances).toEqual([]);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(run.blockState("pause~0")).toBe("completed");
+    expect(run.blockState("pause~1")).toBe("running");
+    expect(run.snapshot()?.blockingBlockIds).toEqual(["pause~1"]);
+    expect(run.snapshot()?.time).toBe(3);
+    expect(run.startedInstances).toEqual([container]);
+    expect(run.finalizedInstances).toEqual([]);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(run.blockState("pause~1")).toBe("running");
+    expect(run.finalizedInstances).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(run.blockState("pause~1")).toBe("completed");
+    expect(run.startedInstances).toEqual([container]);
+    expect(run.finalizedInstances).toEqual([container]);
+    expect(run.finalized).toEqual(["pause"]);
+    expect(run.snapshot()?.time).toBe(4);
+    expect(run.snapshot()?.phase).toBe("finished");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("reads a slot initialized at the same logical time before the rectangle starts", () => {

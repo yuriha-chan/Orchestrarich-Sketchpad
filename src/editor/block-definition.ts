@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import type {
   DurationUnit,
+  LoopRegion,
   Placement,
   SlotProperty,
   Vec3,
@@ -177,19 +178,30 @@ export interface StageViewProps<T = unknown> {
   readonly view: { readonly id: string; readonly payload: T };
 }
 
-export interface FadeHandles {
-  readonly fadeIn: number;
-  readonly fadeOut: number;
-  setFadeIn(value: number): void;
-  setFadeOut(value: number): void;
-  setFades(fades: FadeData): void;
-}
-
 export interface PhaseSpan {
   readonly index: number;
   readonly offset: number;
   readonly length: number;
 }
+
+export type TimelineGestureTarget =
+  | { readonly kind: "edge"; readonly edge: "start" | "end" }
+  | { readonly kind: "boundary"; readonly index: number };
+
+export interface TimelineGestureEdit<T> {
+  readonly start: number;
+  readonly length: number;
+  readonly update: (data: T) => T;
+}
+
+export interface TimelineGestureContext {
+  readonly loops: readonly LoopRegion[];
+}
+
+export type TimelineGesture<T> = (
+  delta: number,
+  current: { start: number; length: number },
+) => TimelineGestureEdit<T>;
 
 export interface BlockDefinition<T = unknown, S = unknown> {
   readonly kind: string;
@@ -202,13 +214,16 @@ export interface BlockDefinition<T = unknown, S = unknown> {
   readonly carryOver?: (data: T) => CarryOver;
   readonly convertFrom: (carry: CarryOver, length: number) => T;
   readonly renderStage?: ComponentType<StageViewProps<S>>;
-  readonly renderBlock?: (block: Placement<T>, width: number) => ReactNode;
-  readonly fadeHandles?: (
-    block: Placement<T>,
-    update: (change: (data: T) => T) => void,
-  ) => FadeHandles | null;
+  readonly renderBlock?: (block: Placement<T>, width: number, phasePositions: readonly number[]) => ReactNode;
+  readonly timelineClassName?: string;
+  readonly timelineTitle?: (block: Placement<T>) => string;
   readonly phases?: (data: T, length: number) => readonly PhaseSpan[];
-  readonly phaseBoundaries?: (block: Placement<T>) => readonly number[];
+  readonly timelineGesture?: (
+    block: Placement<T>,
+    target: TimelineGestureTarget,
+    columnCount: number,
+    context?: TimelineGestureContext,
+  ) => TimelineGesture<T>;
   readonly onLengthChange?: (data: T, length: number) => T;
   readonly createExecution: (
     context: ExecutionContext,

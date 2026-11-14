@@ -9,7 +9,6 @@ import type { Placement } from "../model";
 import type { StageActions } from "../stage-state";
 import { durationField } from "./duration-data";
 import {
-  fadeBoundaries,
   mediaCarry,
   mediaFromCarry,
   mediaPhases,
@@ -17,7 +16,12 @@ import {
   type MediaData,
 } from "./media-data";
 import { mediaRenderBlock } from "./media-block";
-import { fadesField, mediaFadeHandles } from "./media-fades";
+import {
+  fadesField,
+  mediaFadeTitle,
+  mediaGesture,
+  MEDIA_TIMELINE_CLASS,
+} from "./media-fades";
 
 export interface AnimationPlayback {
   readonly positionMs: number;
@@ -149,14 +153,10 @@ const animation: BlockDefinitionSpec<MediaData, AnimationPayload> = {
   convertFrom: mediaFromCarry,
   renderStage: AnimationStage,
   renderBlock: mediaRenderBlock,
-  fadeHandles: mediaFadeHandles,
+  timelineClassName: MEDIA_TIMELINE_CLASS,
+  timelineTitle: mediaFadeTitle,
   phases: (data, length) => mediaPhases(data.fadeIn, data.fadeOut, length),
-  phaseBoundaries: (block) =>
-    fadeBoundaries(
-      block.data.fadeIn,
-      block.data.fadeOut,
-      block.length,
-    ).map((boundary) => boundary.offset),
+  timelineGesture: mediaGesture,
   onLengthChange: onMediaLengthChange,
   createExecution: (context, block) =>
     new MediaExecution(

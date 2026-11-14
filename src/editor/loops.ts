@@ -338,6 +338,18 @@ export function blockLoopEdges(
   };
 }
 
+export function blockLoopPath(
+  loops: readonly LoopNode[],
+  start: number,
+  length: number,
+): readonly string[] {
+  const end = start + length;
+  return loops
+    .filter((loop) => loop.start <= start && loop.end >= end && !containedByLoop(loop, start, end))
+    .sort((a, b) => a.start - b.start || b.end - a.end)
+    .map((loop) => loop.id);
+}
+
 export function blocksRespectLoops(
   placements: readonly Placement[],
   regions: readonly LoopRegion[],

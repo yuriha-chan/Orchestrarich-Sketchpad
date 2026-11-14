@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   allLoops,
   blockLoopEdges,
+  blockLoopPath,
   blocksRespectLoops,
   boundaryGapPaths,
   insertLoop,
@@ -413,6 +414,33 @@ describe("blockLoopEdges", () => {
     });
     expect(blockLoopEdges(nested, 4, 4)).toEqual({ left: null, right: null });
     expect(blockLoopEdges(nested, 0, 10)).toEqual({ left: [], right: [] });
+  });
+});
+
+describe("blockLoopPath", () => {
+  it("returns no path when there is no loop", () => {
+    expect(blockLoopPath([], 3, 2)).toEqual([]);
+  });
+
+  it("returns enclosing loops outer-to-inner when strictly inside nested loops", () => {
+    const loops = allLoops([loop("outer", 0, 20, [loop("inner", 4, 12)])]);
+
+    expect(blockLoopPath(loops, 6, 2)).toEqual(["outer", "inner"]);
+  });
+
+  it("excludes loops contained by a block inside an outer loop", () => {
+    const loops = allLoops([
+      loop("outer", 0, 20, [
+        loop("inside", 4, 8),
+        loop("nested", 12, 16, [loop("deep", 13, 15)]),
+      ]),
+    ]);
+
+    expect(blockLoopPath(loops, 2, 16)).toEqual(["outer"]);
+  });
+
+  it("returns no path for a block equal to a loop", () => {
+    expect(blockLoopPath([loop("whole", 2, 8)], 2, 6)).toEqual([]);
   });
 });
 
