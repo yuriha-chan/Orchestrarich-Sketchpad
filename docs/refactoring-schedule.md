@@ -63,7 +63,8 @@ snapping and tests. Phase E is complete: see `phase-e-gap-traversal.md` for
 shared semantic gap traversal and the preserved terminal-horizon limitation.
 Phase F is complete: see `phase-f-isolation.md` for the relocation, stage API,
 generic timeline fades, runtime isolation evidence and icon bundle tradeoff.
-Phase G is next.
+Phase G is complete: see `phase-g-tests.md` for the test corrections and
+explicitly deferred command-boundary and rail-composition observations.
 
 ### A. Execution lifecycle correctness — R1/R2, T1/T3
 

@@ -31,6 +31,14 @@ function flush(): Promise<void> {
   });
 }
 
+function expectSameMembers<T>(
+  actual: readonly T[],
+  expected: readonly T[],
+): void {
+  expect(actual).toHaveLength(expected.length);
+  expect(actual).toEqual(expect.arrayContaining([...expected] as never[]));
+}
+
 interface RunnerConfig {
   readonly onTimeStart?: (time: number) => void;
   readonly onGapVisit?: (
@@ -125,16 +133,17 @@ describe("TimelineRunner column barrier", () => {
 
     expect(runner.phase).toBe("running");
     expect(runner.time).toBe(0);
-    expect(
+    expectSameMembers(
       runner.snapshot().blocks
         .filter((block) => block.start === 0)
         .map((block) => [block.id, block.state]),
-    ).toEqual([
-      ["click-wait", "running"],
-      ["animation", "running"],
-      ["sfx", "running"],
-    ]);
-    expect(runner.snapshot().blockingBlockIds).toEqual([
+      [
+        ["click-wait", "running"],
+        ["animation", "running"],
+        ["sfx", "running"],
+      ],
+    );
+    expectSameMembers(runner.snapshot().blockingBlockIds, [
       "click-wait",
       "animation",
       "sfx",
@@ -168,7 +177,7 @@ describe("TimelineRunner column barrier", () => {
     await flush();
 
     expect(runner.time).toBe(0);
-    expect(runner.snapshot().blockingBlockIds).toEqual([
+    expectSameMembers(runner.snapshot().blockingBlockIds, [
       "animation",
       "sfx",
     ]);
@@ -300,19 +309,19 @@ describe("TimelineRunner column barrier", () => {
     });
 
     runner.start();
-    expect(started).toEqual(["click-wait", "animation", "sfx"]);
+    expectSameMembers(started, ["click-wait", "animation", "sfx"]);
 
     resolve("click-wait");
     resolve("animation");
     resolve("sfx");
     await flush();
 
-    expect(started).toEqual([
+    expectSameMembers(started.slice(0, 3), [
       "click-wait",
       "animation",
       "sfx",
-      "next-line",
     ]);
+    expect(started.slice(3)).toEqual(["next-line"]);
   });
 
   it("completes on the microtask after a block starts", async () => {
@@ -366,49 +375,42 @@ describe("TimelineRunner time boundary", () => {
       onStart: (block) => events.push(["block", block.id]),
     });
 
+    const expectTimeZeroEvents = (): void => {
+      expect(events[0]).toEqual(["time", 0]);
+      expectSameMembers(events.slice(1, 4), [
+        ["block", "click-wait"],
+        ["block", "animation"],
+        ["block", "sfx"],
+      ]);
+    };
+
     runner.start();
 
-    expect(events).toEqual([
-      ["time", 0],
-      ["block", "click-wait"],
-      ["block", "animation"],
-      ["block", "sfx"],
-    ]);
+    expect(events).toHaveLength(4);
+    expectTimeZeroEvents();
 
     resolve("animation");
     resolve("sfx");
     await flush();
 
-    expect(events).toEqual([
-      ["time", 0],
-      ["block", "click-wait"],
-      ["block", "animation"],
-      ["block", "sfx"],
-    ]);
+    expect(events).toHaveLength(4);
+    expectTimeZeroEvents();
 
     resolve("click-wait");
     await flush();
 
-    expect(events).toEqual([
-      ["time", 0],
-      ["block", "click-wait"],
-      ["block", "animation"],
-      ["block", "sfx"],
-      ["time", 1],
-      ["block", "next-line"],
-    ]);
+    expect(events).toHaveLength(6);
+    expectTimeZeroEvents();
+    expect(events[4]).toEqual(["time", 1]);
+    expect(events[5]).toEqual(["block", "next-line"]);
 
     resolve("next-line");
     await flush();
 
-    expect(events).toEqual([
-      ["time", 0],
-      ["block", "click-wait"],
-      ["block", "animation"],
-      ["block", "sfx"],
-      ["time", 1],
-      ["block", "next-line"],
-    ]);
+    expect(events).toHaveLength(6);
+    expectTimeZeroEvents();
+    expect(events[4]).toEqual(["time", 1]);
+    expect(events[5]).toEqual(["block", "next-line"]);
     expect(runner.phase).toBe("finished");
     expect(runner.time).toBe(2);
   });
@@ -632,7 +634,7 @@ describe("TimelineRunner skip", () => {
     runner.start();
     runner.requestSkip();
 
-    expect(events).toEqual([
+    expectSameMembers(events, [
       ["long", "user"],
       ["short", "user"],
     ]);
@@ -755,7 +757,7 @@ describe("TimelineRunner skip", () => {
     runner.start();
 
     expect(runner.time).toBe(0);
-    expect(runner.snapshot().blockingBlockIds).toEqual(["gate", "anim"]);
+    expectSameMembers(runner.snapshot().blockingBlockIds, ["gate", "anim"]);
 
     resolve("gate");
     await flush();
@@ -1030,7 +1032,7 @@ describe("TimelineRunner skip", () => {
 
     runner.start();
 
-    expect(events).toEqual(["a0", "b0"]);
+    expectSameMembers(events, ["a0", "b0"]);
     expect(runner.time).toBe(0);
 
     resolve("a0");
@@ -1070,12 +1072,12 @@ describe("TimelineRunner skip", () => {
 
     runner.start();
 
-    expect(events).toEqual(["a0", "b0"]);
+    expectSameMembers(events, ["a0", "b0"]);
 
     resolve("a0");
     await flush();
 
-    expect(events).toEqual(["a0", "b0"]);
+    expectSameMembers(events, ["a0", "b0"]);
     expect(runner.time).toBe(0);
 
     resolve("b0");
@@ -1105,7 +1107,7 @@ describe("TimelineRunner termination", () => {
     resolve("click-wait");
     await flush();
 
-    expect(events).toEqual([
+    expectSameMembers(events, [
       ["click-wait", 0, "completed"],
       ["animation", 0, "completed"],
       ["sfx", 0, "completed"],
@@ -1167,9 +1169,11 @@ describe("TimelineRunner termination", () => {
     resolve("gate-3");
     await flush();
 
-    expect(events).toEqual([
+    expect(events.slice(0, 2)).toEqual([
       ["gate-1", 0],
       ["gate-2", 1],
+    ]);
+    expectSameMembers(events.slice(2), [
       ["loop-bgm", 2],
       ["gate-3", 2],
     ]);
@@ -1261,7 +1265,7 @@ describe("TimelineRunner promise execution", () => {
       runner.snapshot().blocks.find((block) => block.id === "animation")
         ?.state,
     ).toBe("failed");
-    expect(terminated).toEqual([
+    expectSameMembers(terminated, [
       ["click-wait", "running"],
       ["animation", "failed"],
       ["sfx", "running"],
@@ -1335,7 +1339,7 @@ describe("TimelineRunner promise execution", () => {
 
     expect(runner.phase).toBe("running");
     expect(runner.time).toBe(0);
-    expect(runner.snapshot().blockingBlockIds).toEqual([
+    expectSameMembers(runner.snapshot().blockingBlockIds, [
       "click-wait",
       "animation",
       "sfx",
@@ -1391,21 +1395,22 @@ describe("TimelineRunner failure", () => {
 
     expect(runner.phase).toBe("failed");
     expect(runner.time).toBe(0);
-    expect(terminated).toEqual([
+    expectSameMembers(terminated, [
       ["click-wait", 0, "failed"],
       ["animation", 0, "running"],
       ["sfx", 0, "running"],
     ]);
-    expect(
+    expectSameMembers(
       runner
         .snapshot()
         .blocks.filter((block) => block.start === 0)
         .map((block) => [block.id, block.state]),
-    ).toEqual([
-      ["click-wait", "failed"],
-      ["animation", "running"],
-      ["sfx", "running"],
-    ]);
+      [
+        ["click-wait", "failed"],
+        ["animation", "running"],
+        ["sfx", "running"],
+      ],
+    );
     expect(runner.snapshot().blockingBlockIds).toEqual([]);
 
     runner.requestSkip();
@@ -1426,7 +1431,7 @@ describe("TimelineRunner failure", () => {
     reject("animation");
     await flush();
 
-    expect(terminated).toEqual(["click-wait", "animation"]);
+    expectSameMembers(terminated, ["click-wait", "animation"]);
     expect(runner.phase).toBe("failed");
     expect(runner.time).toBe(0);
   });

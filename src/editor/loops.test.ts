@@ -138,13 +138,13 @@ describe("setLoopSpan", () => {
     expect(setLoopSpan([loop("a", 2, 5)], "a", 1.5, 5)).toBeNull();
   });
 
-  it("rejects a change that leaves a child outside", () => {
+  it("rejects a change that partially cuts a child", () => {
     const existing = [loop("outer", 0, 10, [loop("inner", 4, 6)])];
     expect(setLoopSpan(existing, "outer", 5, 10)).toBeNull();
     expect(setLoopSpan(existing, "outer", 0, 5)).toBeNull();
   });
 
-  it("rejects a change that overlaps a sibling", () => {
+  it("rejects a partial sibling cut", () => {
     const existing = [loop("left", 0, 2), loop("right", 4, 6)];
     expect(setLoopSpan(existing, "left", 0, 5)).toBeNull();
   });

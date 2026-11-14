@@ -153,8 +153,8 @@ describe("block data conversion", () => {
     };
     const carried = sound.carryOver?.(media);
     expect(carried?.fades).toEqual({ fadeIn: 1, fadeOut: 2 });
-    expect(animation.convertFrom(carried ?? {}, 2)).toEqual(media);
-    expect(camera.convertFrom(carried ?? {}, 2)).toEqual({
+    expect(animation.convertFrom(carried ?? {}, 3)).toEqual(media);
+    expect(camera.convertFrom(carried ?? {}, 3)).toEqual({
       duration: 3,
       durationUnit: "seconds",
       syncBeatsToCellSpan: false,
@@ -178,14 +178,25 @@ describe("block data conversion", () => {
     });
   });
 
-  it("declares carry-over only for kinds that contribute shared data", () => {
-    expect(dialogue.carryOver).toBeUndefined();
-    expect(addition.carryOver).toBeUndefined();
+  it("carries shared data through contributing kinds and resets it for others", () => {
     expect(camera.carryOver).toBeTypeOf("function");
     expect(wait.carryOver).toBeTypeOf("function");
     expect(sound.carryOver).toBeTypeOf("function");
     expect(animation.carryOver).toBeTypeOf("function");
     expect(rectangle.carryOver).toBeTypeOf("function");
+
+    const duration = {
+      duration: 3,
+      durationUnit: "seconds" as const,
+      syncBeatsToCellSpan: false,
+    };
+    const carried = camera.carryOver?.(duration);
+    expect(carried).toEqual({ duration });
+    expect(dialogue.convertFrom(carried ?? {}, 4)).toEqual({});
+    expect(addition.convertFrom(carried ?? {}, 4)).toEqual({
+      inputA: 0,
+      inputB: 0,
+    });
   });
 });
 
@@ -253,7 +264,30 @@ describe("derived block panel", () => {
     expect(additionSections[2].fields.map((field) => field.key)).toEqual(["out"]);
   });
 
-  it("keeps the block section for blocks without panel fields", () => {
+  it("keeps the block section even when no fields belong to it", () => {
+    const inputOnly: BlockDefinition<FreshInputData> = {
+      kind: "fresh-input-only",
+      label: "Fresh Input Only",
+      color: "#123456",
+      icon: "Calculator",
+      slotProperties: [],
+      fields: [freshLeftInput, freshRightInput],
+      createData: () => ({ firstAmount: 0, secondAmount: 0 }),
+      convertFrom: () => ({ firstAmount: 0, secondAmount: 0 }),
+      createExecution: () => {
+        throw new Error("unused");
+      },
+    };
+    const inputOnlySections = panelSections(inputOnly);
+    expect(inputOnlySections.map((section) => section.section)).toEqual([
+      "input",
+      "block",
+    ]);
+    expect(inputOnlySections[1].fields).toEqual([]);
+    const emptySections = panelSections({ ...inputOnly, fields: [] });
+    expect(emptySections.map((section) => section.section)).toEqual(["block"]);
+    expect(emptySections[0].fields).toEqual([]);
+
     const cameraSections = panelSections(blockDefinition("camera"));
     expect(cameraSections.map((section) => section.section)).toEqual(["block"]);
     expect(cameraSections[0].fields.map((field) => field.kind)).toEqual([
@@ -262,13 +296,48 @@ describe("derived block panel", () => {
     expect(panelSections(blockDefinition("dialogue"))[0].fields).toHaveLength(1);
   });
 
-  it("covers every declared field exactly once in definition order", () => {
+  it("groups each declared field once without reordering within a section", () => {
     for (const definition of BLOCK_DEFINITIONS) {
-      const sectioned = panelSections(definition).flatMap(
-        (section) => section.fields,
+      const sections = panelSections(definition);
+      expect(sections.map((section) => section.section)).toEqual(
+        ["input", "block", "output"].filter(
+          (section) =>
+            section === "block" ||
+            definition.fields.some((field) => field.section === section),
+        ),
       );
-      expect(sectioned).toEqual([...definition.fields]);
+      for (const section of sections) {
+        expect(section.fields).toEqual(
+          definition.fields.filter((field) => field.section === section.section),
+        );
+      }
+      expect(sections.flatMap((section) => section.fields)).toHaveLength(
+        definition.fields.length,
+      );
     }
+
+    const interleaved: BlockDefinition<FreshInputData> = {
+      kind: "fresh-interleaved",
+      label: "Fresh Interleaved",
+      color: "#123456",
+      icon: "Calculator",
+      slotProperties: [],
+      fields: [freshTotalOutput, freshRightInput, freshLeftInput],
+      createData: () => ({ firstAmount: 0, secondAmount: 0 }),
+      convertFrom: () => ({ firstAmount: 0, secondAmount: 0 }),
+      createExecution: () => {
+        throw new Error("unused");
+      },
+    };
+    const sections = panelSections(interleaved);
+    expect(sections.map((section) => section.section)).toEqual([
+      "input",
+      "block",
+      "output",
+    ]);
+    expect(sections[0].fields).toEqual([freshRightInput, freshLeftInput]);
+    expect(sections[1].fields).toEqual([]);
+    expect(sections[2].fields).toEqual([freshTotalOutput]);
   });
 
   it("derives slot properties from input and output fields", () => {

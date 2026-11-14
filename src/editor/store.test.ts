@@ -347,6 +347,20 @@ describe("slot initialization", () => {
     expect(slotById(slotId).initializations).toEqual([]);
   });
 
+  it("rejects initialization with a non-finite value", () => {
+    const slotId = addSlot(null);
+
+    for (const value of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      useExperimentStore.getState().initializeSlot(slotId, 0, [], value);
+    }
+
+    expect(slotById(slotId).initializations).toEqual([]);
+  });
+
   it("initializes only the requested slot", () => {
     const first = addSlot(null);
     const second = addSlot(null);
@@ -779,6 +793,23 @@ describe("track removal", () => {
     useExperimentStore.getState().removeTrack(DEFAULT_TRACKS[1].id);
 
     expect(useExperimentStore.getState().selectedId).toBe(rectangleId);
+  });
+
+  it("removes the final track with its blocks and slots", () => {
+    const [first, second, last] = useExperimentStore.getState().tracks;
+    useExperimentStore.getState().removeTrack(first.id);
+    useExperimentStore.getState().removeTrack(second.id);
+    const rectangleId = createRectangle(last.id, 0);
+    addSlot(last.id);
+    useExperimentStore.getState().select(rectangleId);
+
+    useExperimentStore.getState().removeTrack(last.id);
+
+    const state = useExperimentStore.getState();
+    expect(state.tracks).toEqual([]);
+    expect(state.blocks).toEqual([]);
+    expect(state.slots).toEqual([]);
+    expect(state.selectedId).toBeNull();
   });
 });
 
@@ -1837,7 +1868,7 @@ describe("gap-keyed slot initializations", () => {
     ]);
   });
 
-  it("rejects a path that is not a gap at the boundary", () => {
+  it("accepts a path that is a gap at the boundary", () => {
     const loopId = addLoopAt(2, 5);
     const slotId = addSlot(null);
 
@@ -1921,7 +1952,7 @@ describe("block kind changes", () => {
     });
   });
 
-  it("keeps an addition's data when another kind becomes an addition", () => {
+  it("creates the addition's default data when another kind becomes an addition", () => {
     useExperimentStore.getState().create(DEFAULT_TRACKS[2].id, "wait", 0, 2);
 
     const waitId = useExperimentStore.getState().blocks[0].id;
