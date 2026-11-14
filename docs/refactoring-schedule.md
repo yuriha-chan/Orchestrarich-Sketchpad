@@ -59,7 +59,9 @@ coverage, consultation outcome and verification. Phase B is complete: see
 see `phase-c-inputs.md` for the connected declarations, typed packing boundary,
 unit-preserving operations and production-test migration. Phase D is complete:
 see `phase-d-structure.md` for phase ownership, layout, loop constraints, fade
-snapping and tests. Phase E is next.
+snapping and tests. Phase E is complete: see `phase-e-gap-traversal.md` for
+shared semantic gap traversal and the preserved terminal-horizon limitation.
+Phase F is next.
 
 ### A. Execution lifecycle correctness — R1/R2, T1/T3
 

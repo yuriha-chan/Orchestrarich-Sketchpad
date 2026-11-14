@@ -20,7 +20,7 @@ import {
 } from "../core/slots/numeric-slots.ts";
 import { type Placement, type Track } from "./model";
 import { blockDefinition, boundSlotProperties } from "./builtin-blocks";
-import { allLoops, boundaryGapPaths, type LoopNode } from "./loops";
+import { allLoops, type LoopNode } from "./loops";
 import { liveNumericSlots } from "./slot-gaps";
 import { compilePlacement, definitionBlocks, type ExecutionDefinition } from "./execution-definition";
 import type { StageActions } from "./stage-state";
@@ -55,7 +55,7 @@ function compileTimeline(
 ): {
   readonly timeline: TimelineDefinition;
   readonly definitionByBlockId: Readonly<Record<string, CompiledBlock>>;
-  readonly loopPaths: ReadonlyMap<LoopDefinition, readonly string[]>;
+  readonly loopIds: ReadonlyMap<LoopDefinition, string>;
 } {
   const regions = allLoops(loops);
   for (const placement of placements) {
@@ -65,16 +65,15 @@ function compileTimeline(
       end: placement.start + placement.length,
     }, regions);
   }
-  const loopPaths = new Map<LoopDefinition, readonly string[]>();
-  const toLoop = (node: LoopNode, ancestors: readonly string[]): LoopDefinition => {
-    const path = [...ancestors, node.id];
+  const loopIds = new Map<LoopDefinition, string>();
+  const toLoop = (node: LoopNode): LoopDefinition => {
     const definition: LoopDefinition = {
       start: node.start,
       end: node.end,
       iterations: LOOP_ITERATIONS,
-      loops: node.children.map((child) => toLoop(child, path)),
+      loops: node.children.map(toLoop),
     };
-    loopPaths.set(definition, path);
+    loopIds.set(definition, node.id);
     return definition;
   };
   const definitions = placements.map(compilePlacement);
@@ -89,9 +88,9 @@ function compileTimeline(
           return block;
         })),
     })),
-    loops: loops.map((node) => toLoop(node, [])),
+    loops: loops.map(toLoop),
   };
-  return { timeline, definitionByBlockId: byBlock, loopPaths };
+  return { timeline, definitionByBlockId: byBlock, loopIds };
 }
 
 export function toTimelineDefinition(
@@ -132,11 +131,9 @@ export class TimelineSession {
   private readonly options: TimelineSessionOptions;
   private readonly bpm: number;
   private readonly placements: readonly Placement[];
-  private readonly loops: readonly LoopNode[];
   private readonly slots: readonly NumericSlot[];
-  private readonly loopPaths: ReadonlyMap<LoopDefinition, readonly string[]>;
+  private readonly loopIds: ReadonlyMap<LoopDefinition, string>;
   private readonly runtimeSlots = new Map<string, number>();
-  private skipInitializationTime: number | undefined;
   private lastPhase: TimelinePhase = "idle";
 
   constructor(
@@ -150,17 +147,15 @@ export class TimelineSession {
     this.options = options;
     this.bpm = bpm;
     this.placements = placements;
-    this.loops = loops;
     this.slots = liveNumericSlots(options.slots ?? [], loops);
     const compiled = compileTimeline(tracks, placements, loops);
-    this.loopPaths = compiled.loopPaths;
+    this.loopIds = compiled.loopIds;
     this.definitionByBlockId = compiled.definitionByBlockId;
     this.runner = new TimelineRunner(
       compiled.timeline,
       {
-        onTimeStart: (time) => this.applyTimeStart(time),
-        onLoopRepeat: (loop, endTime, startTime) =>
-          this.applyLoopRepeat(loop, endTime, startTime),
+        onGapVisit: (time, path) =>
+          this.applyContext(time, path.map((loop) => this.loopIds.get(loop)!)),
         onBlockStart: (block) => this.startBlock(block),
         onBlockTerminate: (block, outputs) =>
           this.terminateBlock(block, outputs),
@@ -225,46 +220,6 @@ export class TimelineSession {
       }
     }
     this.activeExecutions.clear();
-  }
-
-  private applyTimeStart(time: number): void {
-    if (this.skipInitializationTime === time) {
-      this.skipInitializationTime = undefined;
-      return;
-    }
-    for (const context of boundaryGapPaths(this.loops, time)) {
-      this.applyContext(time, context);
-    }
-  }
-
-  private applyLoopRepeat(
-    loop: LoopDefinition,
-    endTime: number,
-    startTime: number,
-  ): void {
-    const path = this.loopPaths.get(loop)!;
-    const parentKey = initializationPathKey(path.slice(0, -1));
-    const endContexts = boundaryGapPaths(this.loops, endTime);
-    const endIndex = endContexts.findIndex(
-      (context) => initializationPathKey(context) === parentKey,
-    );
-    if (endIndex < 0) {
-      throw new Error("Loop parent context is missing at the loop end");
-    }
-    for (const context of endContexts.slice(0, endIndex)) {
-      this.applyContext(endTime, context);
-    }
-    const startContexts = boundaryGapPaths(this.loops, startTime);
-    const startIndex = startContexts.findIndex(
-      (context) => initializationPathKey(context) === parentKey,
-    );
-    if (startIndex < 0) {
-      throw new Error("Loop parent context is missing at the loop start");
-    }
-    for (const context of startContexts.slice(startIndex + 1)) {
-      this.applyContext(startTime, context);
-    }
-    this.skipInitializationTime = startTime;
   }
 
   private applyContext(boundary: number, path: readonly string[]): void {

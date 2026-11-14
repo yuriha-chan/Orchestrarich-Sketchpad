@@ -33,6 +33,10 @@ function flush(): Promise<void> {
 
 interface RunnerConfig {
   readonly onTimeStart?: (time: number) => void;
+  readonly onGapVisit?: (
+    boundary: number,
+    path: readonly LoopDefinition[],
+  ) => void;
   readonly onStart?: (block: BlockSnapshot) => void;
   readonly onSkip?: (
     block: BlockSnapshot,
@@ -71,6 +75,7 @@ function createRunner(
 
   const runner = new TimelineRunner(definition, {
     onTimeStart: config.onTimeStart,
+    onGapVisit: config.onGapVisit,
     onLoopRepeat: config.onLoopRepeat,
     onBlockStart: (block) => {
       config.onStart?.(block);
@@ -2130,5 +2135,411 @@ describe("TimelineRunner loop playback", () => {
 
     expect(runner.barrierSpan(0)).toEqual({ start: 0, end: 1 });
     expect(runner.barrierSpan(1)).toEqual({ start: 1, end: 5 });
+  });
+});
+
+describe("TimelineRunner gap visits", () => {
+  function recordedGapVisits(
+    labels: ReadonlyMap<LoopDefinition, string>,
+  ): {
+    visits: Array<[number, readonly string[]]>;
+    onGapVisit: (
+      boundary: number,
+      path: readonly LoopDefinition[],
+    ) => void;
+  } {
+    const visits: Array<[number, readonly string[]]> = [];
+    return {
+      visits,
+      onGapVisit: (boundary, path) => {
+        visits.push([
+          boundary,
+          path.map(
+            (loop) =>
+              labels.get(loop) ?? `unknown(${loop.start}-${loop.end})`,
+          ),
+        ]);
+      },
+    };
+  }
+
+  it("visits the outer context at normal boundaries without loops", async () => {
+    const visits: Array<[number, readonly LoopDefinition[]]> = [];
+    const { runner, resolve } = createRunner(createTimeline(), {
+      onGapVisit: (boundary, path) => visits.push([boundary, [...path]]),
+    });
+
+    runner.start();
+    expect(visits).toEqual([[0, []]]);
+
+    resolve("click-wait");
+    resolve("animation");
+    resolve("sfx");
+    await flush();
+
+    expect(runner.time).toBe(1);
+    expect(visits).toEqual([
+      [0, []],
+      [1, []],
+    ]);
+
+    resolve("next-line");
+    await flush();
+
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(2);
+  });
+
+  it("visits gap contexts before starting blocks at the same boundary", () => {
+    const events: string[] = [];
+    const { runner } = createRunner(createTimeline(), {
+      onGapVisit: (boundary, path) =>
+        events.push(`visit:${boundary}:${path.length}`),
+      onStart: (block) => events.push(`start:${block.id}`),
+    });
+
+    runner.start();
+
+    const visit = events.indexOf("visit:0:0");
+    expect(visit).toBe(0);
+    for (const id of ["click-wait", "animation", "sfx"]) {
+      expect(events.indexOf(`start:${id}`)).toBeGreaterThan(visit);
+    }
+  });
+
+  it("visits repeat end and start contexts without repeating the jump entry", async () => {
+    const loop: LoopDefinition = { start: 0, end: 2, iterations: 3 };
+    const { visits, onGapVisit } = recordedGapVisits(
+      new Map([[loop, "loop"]]),
+    );
+    const { runner, resolve } = createRunner(
+      {
+        tracks: [{ id: "t", blocks: [{ id: "body", start: 0, length: 2 }] }],
+        loops: [loop],
+      },
+      { onGapVisit },
+    );
+
+    runner.start();
+    expect(visits).toEqual([
+      [0, []],
+      [0, ["loop"]],
+      [1, ["loop"]],
+    ]);
+
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      resolve("body");
+      await flush();
+    }
+
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(2);
+    expect(visits).toEqual([
+      [0, []],
+      [0, ["loop"]],
+      [1, ["loop"]],
+      [2, ["loop"]],
+      [0, ["loop"]],
+      [1, ["loop"]],
+      [2, ["loop"]],
+      [0, ["loop"]],
+      [1, ["loop"]],
+    ]);
+  });
+
+  it("visits nested contexts from the inside up to the shared parent", async () => {
+    const inner: LoopDefinition = { start: 2, end: 4, iterations: 2 };
+    const outer: LoopDefinition = {
+      start: 0,
+      end: 4,
+      iterations: 2,
+      loops: [inner],
+    };
+    const { visits, onGapVisit } = recordedGapVisits(
+      new Map<LoopDefinition, string>([
+        [outer, "outer"],
+        [inner, "inner"],
+      ]),
+    );
+    const { runner, resolve } = createRunner(
+      {
+        tracks: [
+          {
+            id: "t",
+            blocks: [
+              { id: "b0", start: 0, length: 2 },
+              { id: "b1", start: 2, length: 2 },
+            ],
+          },
+        ],
+        loops: [outer],
+      },
+      { onGapVisit },
+    );
+
+    runner.start();
+    let guard = 0;
+    while (runner.phase === "running" && guard < 20) {
+      guard += 1;
+      const blocking = runner.snapshot().blockingBlockIds;
+      if (blocking.length === 0) {
+        await flush();
+        continue;
+      }
+      for (const id of blocking) {
+        resolve(id);
+      }
+      await flush();
+    }
+
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(4);
+    expect(visits).toEqual([
+      [0, []],
+      [0, ["outer"]],
+      [1, ["outer"]],
+      [2, ["outer"]],
+      [2, ["outer", "inner"]],
+      [3, ["outer", "inner"]],
+      [4, ["outer", "inner"]],
+      [2, ["outer", "inner"]],
+      [3, ["outer", "inner"]],
+      [4, ["outer", "inner"]],
+      [4, ["outer"]],
+      [0, ["outer"]],
+      [1, ["outer"]],
+      [2, ["outer"]],
+      [2, ["outer", "inner"]],
+      [3, ["outer", "inner"]],
+      [4, ["outer", "inner"]],
+      [2, ["outer", "inner"]],
+      [3, ["outer", "inner"]],
+    ]);
+  });
+
+  it("visits touching sibling loops with close-then-open contexts across repeats", async () => {
+    const first: LoopDefinition = { start: 0, end: 2, iterations: 2 };
+    const second: LoopDefinition = { start: 2, end: 4, iterations: 2 };
+    const { visits, onGapVisit } = recordedGapVisits(
+      new Map<LoopDefinition, string>([
+        [first, "first"],
+        [second, "second"],
+      ]),
+    );
+    const { runner, resolve } = createRunner(
+      {
+        tracks: [
+          {
+            id: "t",
+            blocks: [
+              { id: "first-body", start: 0, length: 2 },
+              { id: "second-body", start: 2, length: 2 },
+            ],
+          },
+        ],
+        loops: [first, second],
+      },
+      { onGapVisit },
+    );
+
+    runner.start();
+    let guard = 0;
+    while (runner.phase === "running" && guard < 20) {
+      guard += 1;
+      const blocking = runner.snapshot().blockingBlockIds;
+      if (blocking.length === 0) {
+        await flush();
+        continue;
+      }
+      for (const id of blocking) {
+        resolve(id);
+      }
+      await flush();
+    }
+
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(4);
+    expect(visits).toEqual([
+      [0, []],
+      [0, ["first"]],
+      [1, ["first"]],
+      [2, ["first"]],
+      [0, ["first"]],
+      [1, ["first"]],
+      [2, ["first"]],
+      [2, []],
+      [2, ["second"]],
+      [3, ["second"]],
+      [4, ["second"]],
+      [2, ["second"]],
+      [3, ["second"]],
+    ]);
+  });
+
+  it("visits simultaneous nested starts from the outer context inward", async () => {
+    const inner: LoopDefinition = { start: 0, end: 2, iterations: 2 };
+    const outer: LoopDefinition = {
+      start: 0,
+      end: 4,
+      iterations: 2,
+      loops: [inner],
+    };
+    const { visits, onGapVisit } = recordedGapVisits(
+      new Map<LoopDefinition, string>([
+        [outer, "outer"],
+        [inner, "inner"],
+      ]),
+    );
+    const { runner, resolve } = createRunner(
+      {
+        tracks: [
+          {
+            id: "t",
+            blocks: [
+              { id: "inner-body", start: 0, length: 2 },
+              { id: "outer-body", start: 2, length: 2 },
+            ],
+          },
+        ],
+        loops: [outer],
+      },
+      { onGapVisit },
+    );
+
+    runner.start();
+    let guard = 0;
+    while (runner.phase === "running" && guard < 30) {
+      guard += 1;
+      const blocking = runner.snapshot().blockingBlockIds;
+      if (blocking.length === 0) {
+        await flush();
+        continue;
+      }
+      for (const id of blocking) {
+        resolve(id);
+      }
+      await flush();
+    }
+
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(4);
+    expect(visits).toEqual([
+      [0, []],
+      [0, ["outer"]],
+      [0, ["outer", "inner"]],
+      [1, ["outer", "inner"]],
+      [2, ["outer", "inner"]],
+      [0, ["outer", "inner"]],
+      [1, ["outer", "inner"]],
+      [2, ["outer", "inner"]],
+      [2, ["outer"]],
+      [3, ["outer"]],
+      [4, ["outer"]],
+      [0, ["outer"]],
+      [0, ["outer", "inner"]],
+      [1, ["outer", "inner"]],
+      [2, ["outer", "inner"]],
+      [0, ["outer", "inner"]],
+      [1, ["outer", "inner"]],
+      [2, ["outer", "inner"]],
+      [2, ["outer"]],
+      [3, ["outer"]],
+    ]);
+  });
+
+  it("stops the loop jump and later visits when disposed from a repeat-end gap visit", async () => {
+    const loop: LoopDefinition = { start: 0, end: 2, iterations: 2 };
+    const visits: Array<[number, readonly string[]]> = [];
+    const started: string[] = [];
+    let runner: TimelineRunner;
+    const created = createRunner(
+      {
+        tracks: [
+          { id: "t", blocks: [{ id: "body", start: 0, length: 2 }] },
+        ],
+        loops: [loop],
+      },
+      {
+        onGapVisit: (boundary, path) => {
+          visits.push([
+            boundary,
+            path.map((entry) => (entry === loop ? "repeat" : "unexpected")),
+          ]);
+          if (boundary === loop.end) {
+            runner.dispose();
+          }
+        },
+        onStart: (block) => started.push(block.id),
+      },
+    );
+    runner = created.runner;
+
+    runner.start();
+    created.resolve("body");
+    await flush();
+
+    expect(visits).toEqual([
+      [0, []],
+      [0, ["repeat"]],
+      [1, ["repeat"]],
+      [2, ["repeat"]],
+    ]);
+    expect(started).toEqual(["body"]);
+    expect(runner.isDisposed).toBe(true);
+    expect(runner.time).toBe(1);
+    expect(runner.phase).toBe("running");
+  });
+
+  it("stops later gap visits and block starts when disposed from a gap visit", () => {
+    const loop: LoopDefinition = { start: 0, end: 1, iterations: 1 };
+    const visits: Array<[number, readonly LoopDefinition[]]> = [];
+    const started: string[] = [];
+    let runner: TimelineRunner;
+    const created = createRunner(
+      {
+        tracks: [{ id: "t", blocks: [{ id: "body", start: 0, length: 1 }] }],
+        loops: [loop],
+      },
+      {
+        onGapVisit: (boundary, path) => {
+          visits.push([boundary, [...path]]);
+          runner.dispose();
+        },
+        onStart: (block) => started.push(block.id),
+      },
+    );
+    runner = created.runner;
+
+    runner.start();
+
+    expect(visits).toHaveLength(1);
+    expect(visits[0]).toEqual([0, []]);
+    expect(started).toEqual([]);
+    expect(runner.isDisposed).toBe(true);
+    expect(runner.time).toBe(0);
+  });
+
+  it("does not visit the terminal horizon on ordinary completion", async () => {
+    const visits: Array<[number, readonly LoopDefinition[]]> = [];
+    const { runner, resolve } = createRunner(
+      { tracks: [{ id: "t", blocks: [{ id: "only", start: 0, length: 2 }] }] },
+      { onGapVisit: (boundary, path) => visits.push([boundary, [...path]]) },
+    );
+
+    runner.start();
+    expect(visits).toEqual([
+      [0, []],
+      [1, []],
+    ]);
+
+    resolve("only");
+    await flush();
+
+    expect(runner.phase).toBe("finished");
+    expect(runner.time).toBe(2);
+    expect(visits).toEqual([
+      [0, []],
+      [1, []],
+    ]);
   });
 });

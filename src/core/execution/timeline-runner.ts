@@ -1,3 +1,5 @@
+import { boundaryGapContexts } from "./gap-contexts.ts";
+
 export type BlockState = "pending" | "running" | "completed" | "failed";
 
 export type TimelinePhase = "idle" | "running" | "failed" | "finished";
@@ -80,6 +82,10 @@ export interface BlockStartResult {
 
 export interface TimelineRunnerOptions {
   readonly onTimeStart?: (time: number) => void;
+  readonly onGapVisit?: (
+    boundary: number,
+    path: readonly LoopDefinition[],
+  ) => void;
   readonly onLoopRepeat?: (
     loop: LoopDefinition,
     endTime: number,
@@ -208,6 +214,7 @@ export class TimelineRunner {
   private pumping = false;
   private disposed = false;
   private lastTimeStart: number | undefined;
+  private skipNextGapEntry = false;
 
   constructor(
     definition: TimelineDefinition,
@@ -384,13 +391,32 @@ export class TimelineRunner {
         this.resetBlocksInside(frame.loop);
         this.options.onLoopRepeat?.(frame.loop, frame.loop.end, frame.loop.start);
         if (this.disposed) return;
+        const parent = this.loopStack.slice(0, -1).map((entry) => entry.loop);
+        const isParent = (path: readonly LoopDefinition[]) =>
+          path.length === parent.length && path.every((loop, index) => loop === parent[index]);
+        const endContexts = boundaryGapContexts(this.loops, frame.loop.end);
+        const startContexts = boundaryGapContexts(this.loops, frame.loop.start);
+        const endIndex = endContexts.findIndex(isParent);
+        const startIndex = startContexts.findIndex(isParent);
+        if (endIndex < 0 || startIndex < 0) throw new Error("Loop parent context is missing");
+        this.visitGaps(frame.loop.end, endContexts.slice(0, endIndex));
+        this.visitGaps(frame.loop.start, startContexts.slice(startIndex + 1));
+        if (this.disposed) return;
         this.currentTime = frame.loop.start;
         this.lastTimeStart = undefined;
+        this.skipNextGapEntry = true;
         return;
       }
       this.loopStack.pop();
     }
     this.currentTime = endTime;
+  }
+
+  private visitGaps(time: number, paths: readonly (readonly LoopDefinition[])[]): void {
+    for (const path of paths) {
+      if (this.disposed) break;
+      this.options.onGapVisit?.(time, path);
+    }
   }
 
   private invokeBlockStart(placement: BlockExecution): void {
@@ -553,6 +579,12 @@ export class TimelineRunner {
           this.lastTimeStart !== this.currentTime
         ) {
           this.lastTimeStart = this.currentTime;
+          if (this.skipNextGapEntry) {
+            this.skipNextGapEntry = false;
+          } else {
+            this.visitGaps(this.currentTime, boundaryGapContexts(this.loops, this.currentTime));
+          }
+          if (this.disposed) break;
           this.options.onTimeStart?.(this.currentTime);
         }
 
